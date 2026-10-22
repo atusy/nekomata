@@ -6,6 +6,7 @@ use felis_protocol::messages::{InputMsg, RequestedDims};
 
 use crate::{
     layout::{Axis, Layout},
+    resize::PaneResize,
     session::Session,
 };
 
@@ -16,6 +17,7 @@ const ACCENT: Color32 = Color32::from_rgb(163, 190, 140);
 struct Pane {
     session: Session,
     dims: (u16, u16),
+    resize: PaneResize,
     selection: Option<(usize, usize)>,
     reported_focus: Option<bool>,
     scroll_remainder: f32,
@@ -101,6 +103,7 @@ impl App {
             Pane {
                 session: Session::new(&self.runtime, ctx.clone(), attach),
                 dims: (0, 0),
+                resize: PaneResize::default(),
                 selection: None,
                 reported_focus: None,
                 scroll_remainder: 0.0,
@@ -290,6 +293,7 @@ impl eframe::App for App {
                     &mut self.panes,
                     &mut tab.focused,
                     self.font_size,
+                    false,
                 );
             });
         let focused = self.tabs[self.active].focused;
@@ -351,10 +355,18 @@ fn draw_layout(
     panes: &mut BTreeMap<u64, Pane>,
     focused: &mut u64,
     font_size: f32,
+    resizing: bool,
 ) {
     let rect = ui.max_rect();
     match layout {
-        Layout::Pane(id) => draw_pane(ui, *id, panes.get_mut(id).unwrap(), focused, font_size),
+        Layout::Pane(id) => draw_pane(
+            ui,
+            *id,
+            panes.get_mut(id).unwrap(),
+            focused,
+            font_size,
+            resizing,
+        ),
         Layout::Split {
             axis,
             ratio,
@@ -389,6 +401,7 @@ fn draw_layout(
             } else {
                 egui::CursorIcon::ResizeVertical
             });
+            let resizing = resizing || response.dragged();
             if response.dragged() && extent > 0.0 {
                 let delta = ui.input(|i| i.pointer.delta());
                 *ratio =
@@ -404,16 +417,23 @@ fn draw_layout(
                 },
             );
             ui.scope_builder(egui::UiBuilder::new().id_salt("first").max_rect(a), |ui| {
-                draw_layout(ui, first, panes, focused, font_size)
+                draw_layout(ui, first, panes, focused, font_size, resizing)
             });
             ui.scope_builder(egui::UiBuilder::new().id_salt("second").max_rect(b), |ui| {
-                draw_layout(ui, second, panes, focused, font_size)
+                draw_layout(ui, second, panes, focused, font_size, resizing)
             });
         }
     }
 }
 
-fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
+fn draw_pane(
+    ui: &mut egui::Ui,
+    id: u64,
+    pane: &mut Pane,
+    focused: &mut u64,
+    font_size: f32,
+    resizing: bool,
+) {
     let rect = ui.max_rect();
     let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
@@ -440,17 +460,16 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let ch = (font_size * 1.4).ceil();
     let cols = (text_rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
     let rows = (text_rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
-    if pane.dims != (rows, cols) {
-        pane.dims = (rows, cols);
+    pane.dims = (rows, cols);
+    let dims = RequestedDims {
+        rows: rows.into(),
+        cols: cols.into(),
+        pixel_w: (text_rect.width().max(0.0) * ui.ctx().pixels_per_point()) as u32,
+        pixel_h: (text_rect.height().max(0.0) * ui.ctx().pixels_per_point()) as u32,
+    };
+    if let Some(dims) = pane.resize.update(dims, resizing) {
         pane.selection = None;
-        pane.session.send(InputMsg::Resize {
-            dims: RequestedDims {
-                rows: rows.into(),
-                cols: cols.into(),
-                pixel_w: (text_rect.width().max(0.0) * ui.ctx().pixels_per_point()) as u32,
-                pixel_h: (text_rect.height().max(0.0) * ui.ctx().pixels_per_point()) as u32,
-            },
-        });
+        pane.session.send(InputMsg::Resize { dims });
     }
     let state = pane.session.state.lock().unwrap();
     let shadow = &state.screen;
