@@ -8,6 +8,7 @@ use crate::{
     layout::{Axis, Layout},
     picker::SessionPicker,
     session::Session,
+    shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG},
 };
 
@@ -35,17 +36,9 @@ pub struct App {
     font_size: f32,
     picker: SessionPicker,
     help: bool,
-}
-
-#[derive(Clone, Copy)]
-enum Action {
-    NewTab,
-    Split(Axis),
-    ClosePane,
-    CloseTab,
-    NextPane,
-    NextTab,
-    PreviousTab,
+    shortcuts: Shortcuts,
+    palette: bool,
+    palette_query: String,
 }
 
 impl App {
@@ -89,6 +82,9 @@ impl App {
             font_size: 15.0,
             picker: SessionPicker::default(),
             help: false,
+            shortcuts: Shortcuts::default(),
+            palette: false,
+            palette_query: String::new(),
         };
         if pick {
             app.picker.open(&app.runtime, &cc.egui_ctx);
@@ -98,13 +94,18 @@ impl App {
         app
     }
 
-    fn add_pane(&mut self, ctx: &egui::Context, attach: Option<String>) -> u64 {
+    fn add_pane(
+        &mut self,
+        ctx: &egui::Context,
+        attach: Option<String>,
+        cwd: Option<String>,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.panes.insert(
             id,
             Pane {
-                session: Session::new(&self.runtime, ctx.clone(), attach),
+                session: Session::new(&self.runtime, ctx.clone(), attach, cwd),
                 dims: (0, 0),
                 selection: None,
                 reported_focus: None,
@@ -116,7 +117,7 @@ impl App {
     }
 
     fn add_tab(&mut self, ctx: &egui::Context, attach: Option<String>) {
-        let id = self.add_pane(ctx, attach);
+        let id = self.add_pane(ctx, attach, None);
         self.tabs.push(Tab {
             name: format!("Terminal {id}"),
             layout: Layout::Pane(id),
@@ -155,9 +156,32 @@ impl App {
 
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         match action {
+            Action::Palette => {
+                self.palette = true;
+                self.palette_query.clear();
+            }
+            Action::FontScale(scale) => self.font_size = (self.font_size * scale).clamp(6.0, 72.0),
+            Action::FontReset => self.font_size = 15.0,
+            Action::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+            Action::Focus(direction) => {
+                let tab = &mut self.tabs[self.active];
+                if let Some(id) = tab.layout.neighbor(tab.focused, direction) {
+                    tab.focused = id;
+                }
+            }
             Action::NewTab => self.add_tab(ctx, None),
             Action::Split(axis) => {
-                let id = self.add_pane(ctx, None);
+                let source = self.tabs[self.active].focused;
+                let cwd = self.panes[&source]
+                    .session
+                    .state
+                    .lock()
+                    .unwrap()
+                    .screen
+                    .cwd()
+                    .map(felis_client_core::pipe::local_cwd_from_osc7)
+                    .filter(|path| !path.is_empty());
+                let id = self.add_pane(ctx, None, cwd);
                 let tab = &mut self.tabs[self.active];
                 tab.layout.split(tab.focused, id, axis);
                 tab.focused = id;
@@ -211,30 +235,15 @@ impl eframe::App for App {
             return;
         }
         let mut action = None;
-        // Consume shortcuts before terminal input sees the events.
-        if !self.picker.visible && !self.help {
-            ctx.input_mut(|input| {
-                let mods = if cfg!(target_os = "macos") {
-                    egui::Modifiers::COMMAND
-                } else {
-                    egui::Modifiers::CTRL | egui::Modifiers::SHIFT
-                };
-                for (key, command) in [
-                    (egui::Key::T, Action::NewTab),
-                    (egui::Key::D, Action::Split(Axis::Horizontal)),
-                    (egui::Key::W, Action::ClosePane),
-                    (egui::Key::N, Action::NextPane),
-                    (egui::Key::ArrowRight, Action::NextTab),
-                    (egui::Key::ArrowLeft, Action::PreviousTab),
-                ] {
-                    if input.consume_key(mods, key) {
-                        action = Some(command);
-                    }
+        // Consume application shortcuts before forwarding terminal events.
+        if !self.picker.visible && !self.help && !self.palette {
+            let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
+            for action in actions {
+                self.action(ctx, action);
+                if self.tabs.is_empty() {
+                    return;
                 }
-                if input.consume_key(mods, egui::Key::E) {
-                    action = Some(Action::Split(Axis::Vertical));
-                }
-            });
+            }
         }
         let mut menu_open = false;
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
@@ -272,11 +281,11 @@ impl eframe::App for App {
                     }
                     ui.separator();
                     if ui.button("Smaller text").clicked() {
-                        self.font_size = (self.font_size - 1.0).max(9.0);
+                        self.font_size = (self.font_size / 1.1).max(6.0);
                         ui.close();
                     }
                     if ui.button("Larger text").clicked() {
-                        self.font_size = (self.font_size + 1.0).min(32.0);
+                        self.font_size = (self.font_size * 1.1).min(72.0);
                         ui.close();
                     }
                     ui.separator();
@@ -318,7 +327,7 @@ impl eframe::App for App {
         if self.tabs.is_empty() {
             return;
         }
-        let modal = self.picker.visible || self.help || menu_open;
+        let modal = self.picker.visible || self.help || self.palette || menu_open;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG).inner_margin(6))
             .show(ctx, |ui| {
@@ -354,17 +363,54 @@ impl eframe::App for App {
         }
         if self.help {
             egui::Window::new("About nekomata").open(&mut self.help).show(ctx, |ui| {
-                let modifier = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl+Shift" };
-                ui.label("A home for your felis sessions.");
-                for (key, text) in [("T", "New tab"), ("D", "Split left / right"), ("E", "Split top / bottom"),
-                    ("N", "Next pane"), ("W", "Close pane (detach)"), ("← / →", "Previous / next tab")] {
-                    ui.label(format!("{modifier}+{key}    {text}"));
-                }
-                ui.label("Drag a divider to resize. Drag text to select; copy with Cmd+C / Ctrl+Shift+C.");
-                ui.label("Scroll to browse history. Shift+drag selects when mouse reporting is active.");
-                ui.separator();
+                ui.label("Alt+C: new tab · Alt+T / Alt+Shift+T: next / previous tab");
+                ui.label("Alt+W, then Alt+S / Alt+V: split top/bottom / left/right");
+                ui.label("Alt+W, then C: close pane · H/J/K/L: focus left/down/up/right");
+                ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
+                ui.label("Alt+Shift+P: command palette");
+                ui.label("Drag a divider to resize. Shift+drag selects when mouse reporting is active.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
             });
+        }
+        if self.palette {
+            let mut chosen = None;
+            let enter =
+                ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            egui::Window::new("Command palette")
+                .open(&mut self.palette)
+                .show(ctx, |ui| {
+                    let response = ui.text_edit_singleline(&mut self.palette_query);
+                    if !response.has_focus() {
+                        response.request_focus();
+                    }
+                    for (label, command) in [
+                        ("New tab", Action::NewTab),
+                        ("Split left / right", Action::Split(Axis::Horizontal)),
+                        ("Split top / bottom", Action::Split(Axis::Vertical)),
+                        ("Next tab", Action::NextTab),
+                        ("Previous tab", Action::PreviousTab),
+                        ("Close pane (detach)", Action::ClosePane),
+                        ("Close tab (detach)", Action::CloseTab),
+                        ("Reset font size", Action::FontReset),
+                    ] {
+                        if label
+                            .to_lowercase()
+                            .contains(&self.palette_query.to_lowercase())
+                        {
+                            let clicked = ui.button(label).clicked();
+                            if clicked || (enter && chosen.is_none()) {
+                                chosen = Some(command);
+                            }
+                        }
+                    }
+                });
+            if let Some(action) = chosen {
+                self.palette = false;
+                self.action(ctx, action);
+            }
+            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                self.palette = false;
+            }
         }
         ctx.request_repaint_after(Duration::from_millis(250));
     }

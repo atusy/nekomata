@@ -3,6 +3,7 @@ mod cli;
 mod layout;
 mod picker;
 mod session;
+mod shortcuts;
 mod theme;
 
 fn main() -> eframe::Result {

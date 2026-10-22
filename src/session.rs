@@ -35,6 +35,7 @@ impl Session {
         runtime: &tokio::runtime::Runtime,
         ctx: egui::Context,
         attach: Option<String>,
+        cwd: Option<String>,
     ) -> Self {
         let state = Arc::new(Mutex::new(State {
             screen: ShadowScreen::new(24, 80),
@@ -47,7 +48,7 @@ impl Session {
         let (tx, rx) = mpsc::channel(256);
         let shared = state.clone();
         let task = runtime.spawn(async move {
-            let result = run(shared.clone(), ctx.clone(), rx, attach).await;
+            let result = run(shared.clone(), ctx.clone(), rx, attach, cwd).await;
             let mut state = shared.lock().unwrap();
             state.connected = false;
             state.error = if state.detached || state.exited {
@@ -89,6 +90,7 @@ async fn run(
     ctx: egui::Context,
     mut rx: mpsc::Receiver<InputMsg>,
     attach: Option<String>,
+    cwd: Option<String>,
 ) -> Result<()> {
     let socket = felis_client_core::local_socket::resolve_local_socket(None)?;
     let mut conn = connect_or_spawn_daemon(&socket, Offer::window(false)).await?;
@@ -99,7 +101,10 @@ async fn run(
         conn.create_with(SpawnArgs {
             command: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
             args: vec![],
-            cwd: std::env::current_dir()?.to_string_lossy().into_owned(),
+            cwd: match cwd {
+                Some(cwd) => cwd,
+                None => std::env::current_dir()?.to_string_lossy().into_owned(),
+            },
             env: vec![("NEKOMATA_SHELL_INTEGRATION".into(), "1".into())],
             dims: None,
             env_base: felis_client_core::env_base::capture(),
@@ -233,10 +238,20 @@ mod tests {
         ctx.set_request_repaint_callback(move |_| {
             let _ = tx.send(());
         });
-        let session = Session::new(&runtime, ctx.clone(), None);
-        let sibling = Session::new(&runtime, ctx.clone(), None);
+        let cwd = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let session = Session::new(&runtime, ctx.clone(), None, Some(cwd.clone()));
+        let sibling = Session::new(&runtime, ctx.clone(), None, None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         wait_for(&sibling, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(
+            b"printf '\\033]2;%s\\007' \"$PWD\"\r".to_vec(),
+        ));
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.title() == Some(cwd.as_str())
+        });
         session.send(InputMsg::KeyBytes(b"exit\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             state.exited && !state.connected
@@ -258,7 +273,7 @@ mod tests {
         ctx.set_request_repaint_callback(move |_| {
             let _ = tx.send(());
         });
-        let session = Session::new(&runtime, ctx.clone(), None);
+        let session = Session::new(&runtime, ctx.clone(), None, None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         let id = session.state.lock().unwrap().session_id.unwrap();
         session.send(InputMsg::Resize {
@@ -277,7 +292,7 @@ mod tests {
         ));
         wait_for(&session, &ctx, &repaints, has_red_marker);
         drop(session);
-        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
         wait_for(&session, &ctx, &repaints, has_red_marker);
         assert_eq!(session.state.lock().unwrap().session_id, Some(id));
         let executable = std::env::current_exe()
@@ -357,7 +372,7 @@ mod tests {
         ctx.set_request_repaint_callback(move |_| {
             let _ = tx.send(());
         });
-        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
@@ -396,7 +411,7 @@ mod tests {
         ctx.set_request_repaint_callback(move |_| {
             let _ = tx.send(());
         });
-        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
