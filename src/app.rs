@@ -18,6 +18,8 @@ struct Pane {
     dims: (u16, u16),
     selection: Option<(usize, usize)>,
     reported_focus: Option<bool>,
+    scroll_remainder: f32,
+    mouse_capture: Option<felis_protocol::messages::MouseButton>,
 }
 
 struct Tab {
@@ -101,6 +103,8 @@ impl App {
                 dims: (0, 0),
                 selection: None,
                 reported_focus: None,
+                scroll_remainder: 0.0,
+                mouse_capture: None,
             },
         );
         id
@@ -187,11 +191,6 @@ impl eframe::App for App {
                     if input.consume_key(mods, key) {
                         action = Some(command);
                     }
-                }
-                if input.consume_key(mods | egui::Modifiers::SHIFT, egui::Key::D)
-                    && cfg!(target_os = "macos")
-                {
-                    action = Some(Action::Split(Axis::Vertical));
                 }
                 if input.consume_key(mods, egui::Key::E) {
                     action = Some(Action::Split(Axis::Vertical));
@@ -316,6 +315,8 @@ impl eframe::App for App {
         if !modal {
             let pane = self.panes.get_mut(&focused).unwrap();
             terminal_input(ctx, &mut pane.selection, &pane.session);
+        } else {
+            ctx.output_mut(|output| output.ime = None);
         }
         if self.show_attach {
             let mut open = true;
@@ -532,6 +533,15 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         }
     }
     let cursor = screen.cursor();
+    if *focused == id {
+        let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
+        ui.output_mut(|output| {
+            output.ime = Some(egui::output::IMEOutput {
+                rect: text_rect,
+                cursor_rect: Rect::from_min_size(pos, Vec2::new(cw, ch)),
+            })
+        });
+    }
     if *focused == id && cursor.visible && shadow.viewport() == 0 && state.connected {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         painter.rect_stroke(
@@ -593,15 +603,134 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             pane.selection = None;
         }
     }
-    if response.hovered() {
-        let delta = ui.input(|i| i.smooth_scroll_delta.y);
-        if delta.abs() >= 1.0 {
-            let offset = (i64::from(shadow.viewport()) + (delta / ch).round() as i64).max(0) as u32;
-            pane.session.send(InputMsg::Viewport {
-                lines_from_bottom: offset,
-            });
+    let report_mouse = mouse_mode && !ui.input(|i| i.modifiers.shift);
+    if report_mouse && (response.hovered() || response.dragged() || pane.mouse_capture.is_some()) {
+        use felis_protocol::messages::{MouseAction, MouseButton};
+        for event in ui.input(|i| i.events.clone()) {
+            let (pos, button, action) = match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button,
+                    pressed,
+                    ..
+                } => {
+                    let button = match button {
+                        egui::PointerButton::Primary => MouseButton::Left,
+                        egui::PointerButton::Secondary => MouseButton::Right,
+                        egui::PointerButton::Middle => MouseButton::Middle,
+                        _ => continue,
+                    };
+                    pane.mouse_capture = if pressed { Some(button) } else { None };
+                    (
+                        pos,
+                        Some(button),
+                        if pressed {
+                            MouseAction::Press
+                        } else {
+                            MouseAction::Release
+                        },
+                    )
+                }
+                egui::Event::PointerMoved(pos) => {
+                    let button = ui.input(|i| {
+                        if i.pointer.primary_down() {
+                            Some(MouseButton::Left)
+                        } else if i.pointer.secondary_down() {
+                            Some(MouseButton::Right)
+                        } else if i.pointer.middle_down() {
+                            Some(MouseButton::Middle)
+                        } else {
+                            None
+                        }
+                    });
+                    (
+                        pos,
+                        button,
+                        if button.is_some() {
+                            MouseAction::Drag
+                        } else {
+                            MouseAction::Motion
+                        },
+                    )
+                }
+                _ => continue,
+            };
+            pane.session.send(mouse_input(
+                ui, text_rect, pos, cw, ch, pane.dims, button, action,
+            ));
         }
     }
+    if response.hovered() {
+        let delta = ui.input(|i| i.smooth_scroll_delta.y);
+        pane.scroll_remainder += delta / ch;
+        let lines = pane.scroll_remainder.trunc() as i32;
+        pane.scroll_remainder -= lines as f32;
+        if lines != 0 {
+            pane.selection = None;
+            if report_mouse {
+                use felis_protocol::messages::{MouseAction, MouseButton};
+                let pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(text_rect.min);
+                let button = if lines > 0 {
+                    MouseButton::WheelUp
+                } else {
+                    MouseButton::WheelDown
+                };
+                for _ in 0..lines.unsigned_abs().min(100) {
+                    pane.session.send(mouse_input(
+                        ui,
+                        text_rect,
+                        pos,
+                        cw,
+                        ch,
+                        pane.dims,
+                        Some(button),
+                        MouseAction::Press,
+                    ));
+                }
+            } else {
+                let offset = (i64::from(shadow.viewport()) + i64::from(lines)).max(0) as u32;
+                pane.session.send(InputMsg::Viewport {
+                    lines_from_bottom: offset,
+                });
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mouse_input(
+    ui: &egui::Ui,
+    rect: Rect,
+    pos: Pos2,
+    cw: f32,
+    ch: f32,
+    dims: (u16, u16),
+    button: Option<felis_protocol::messages::MouseButton>,
+    action: felis_protocol::messages::MouseAction,
+) -> InputMsg {
+    use felis_protocol::messages::{InputMods, MouseEvent};
+    let modifiers = ui.input(|i| i.modifiers);
+    let mut mods = InputMods::empty();
+    mods.set(InputMods::SHIFT, modifiers.shift);
+    mods.set(InputMods::ALT, modifiers.alt);
+    mods.set(InputMods::CTRL, modifiers.ctrl);
+    InputMsg::Mouse(MouseEvent {
+        button,
+        action,
+        mods,
+        x: ((pos.x - rect.left()) / cw)
+            .floor()
+            .clamp(0.0, f32::from(dims.1 - 1)) as u16
+            + 1,
+        y: ((pos.y - rect.top()) / ch)
+            .floor()
+            .clamp(0.0, f32::from(dims.0 - 1)) as u16
+            + 1,
+        px: (((pos.x - rect.left()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
+            .saturating_add(1),
+        py: (((pos.y - rect.top()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
+            .saturating_add(1),
+    })
 }
 
 fn color(color: Color, default: Color32) -> Color32 {
@@ -648,12 +777,21 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
         .iter()
         .any(|event| matches!(event, egui::Event::Text(_)));
     let mods = ctx.input(|i| i.modifiers);
-    let mut key_mods = KeyMods::empty();
-    key_mods.set(KeyMods::CTRL, mods.ctrl);
-    key_mods.set(KeyMods::SHIFT, mods.shift);
-    key_mods.set(KeyMods::ALT, mods.alt);
-    key_mods.set(KeyMods::SUPER, mods.mac_cmd);
     for event in events {
+        let event_mods = match &event {
+            egui::Event::Key { modifiers, .. } => *modifiers,
+            _ => mods,
+        };
+        let mut key_mods = KeyMods::empty();
+        key_mods.set(KeyMods::CTRL, event_mods.ctrl);
+        key_mods.set(KeyMods::SHIFT, event_mods.shift);
+        key_mods.set(KeyMods::ALT, event_mods.alt);
+        key_mods.set(KeyMods::SUPER, event_mods.mac_cmd);
+        let kind = match &event {
+            egui::Event::Key { repeat: true, .. } => KeyEventKind::Repeat,
+            _ => KeyEventKind::Press,
+        };
+
         if let Some(control) = clipboard_control(&event, mods, cfg!(target_os = "macos")) {
             *selection = None;
             session.send(control);
@@ -695,7 +833,7 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
             egui::Event::Text(text) => Some((Key::Character(text.clone()), Some(text))),
             egui::Event::Key {
                 key, pressed: true, ..
-            } => physical_key(key, mods, has_text).map(|key| (key, None)),
+            } => physical_key(key, event_mods, has_text).map(|key| (key, None)),
             egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                 session.send(InputMsg::KeyBytes(text.into_bytes()));
                 continue;
@@ -711,7 +849,7 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
                 key,
                 text,
                 mods: key_mods,
-                kind: KeyEventKind::Press,
+                kind,
                 location: KeyLocation::Standard,
             }));
         }
@@ -738,6 +876,7 @@ fn physical_key(
 ) -> Option<felis_protocol::messages::Key> {
     use felis_protocol::messages::{FKey, Key, NamedKey};
     let named = match key {
+        egui::Key::Space if mods.ctrl || (mods.alt && !has_text) => Some(NamedKey::Space),
         egui::Key::Enter => Some(NamedKey::Enter),
         egui::Key::Tab => Some(NamedKey::Tab),
         egui::Key::Escape => Some(NamedKey::Escape),
