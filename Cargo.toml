@@ -1,0 +1,15 @@
+[package]
+name = "nekomata"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "A tabbed and split-pane GUI for felis sessions"
+
+[dependencies]
+anyhow = "1"
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+felis-client-core = { git = "https://git.natsukium.com/natsukium/felis", rev = "1761d2a035d6ccf26da004f395e38b93da2f5686" }
+felis-grid = { git = "https://git.natsukium.com/natsukium/felis", rev = "1761d2a035d6ccf26da004f395e38b93da2f5686" }
+felis-protocol = { git = "https://git.natsukium.com/natsukium/felis", rev = "1761d2a035d6ccf26da004f395e38b93da2f5686" }
+felis-transport = { git = "https://git.natsukium.com/natsukium/felis", rev = "1761d2a035d6ccf26da004f395e38b93da2f5686" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
