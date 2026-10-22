@@ -353,7 +353,6 @@ impl eframe::App for App {
             .frame(egui::Frame::NONE.fill(BG))
             .show(ctx, |ui| {
                 let tab = &mut self.tabs[self.active];
-                let show_border = matches!(tab.layout, Layout::Split { .. });
                 let previous = tab.focused;
                 draw_layout(
                     ui,
@@ -361,7 +360,6 @@ impl eframe::App for App {
                     &mut self.panes,
                     &mut tab.focused,
                     self.font_size,
-                    show_border,
                 );
                 if tab.focused != previous {
                     tab.focus(tab.focused);
@@ -447,18 +445,13 @@ fn draw_layout(
     panes: &mut BTreeMap<u64, Pane>,
     focused: &mut u64,
     font_size: f32,
-    show_border: bool,
-) {
+) -> Option<Rect> {
     let rect = ui.max_rect();
     match layout {
-        Layout::Pane(id) => draw_pane(
-            ui,
-            *id,
-            panes.get_mut(id).unwrap(),
-            focused,
-            font_size,
-            show_border,
-        ),
+        Layout::Pane(id) => {
+            draw_pane(ui, *id, panes.get_mut(id).unwrap(), focused, font_size);
+            (*focused == *id).then_some(rect)
+        }
         Layout::Split {
             axis,
             ratio,
@@ -471,23 +464,23 @@ fn draw_layout(
             } else {
                 rect.height()
             };
-            let split = (extent - 4.0).max(0.0) * *ratio;
+            let split = (extent - 1.0).max(0.0) * *ratio;
             let (a, divider, b) = if horizontal {
                 let x = rect.left() + split;
                 (
                     Rect::from_min_max(rect.min, Pos2::new(x, rect.bottom())),
-                    Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(x + 4.0, rect.bottom())),
-                    Rect::from_min_max(Pos2::new(x + 4.0, rect.top()), rect.max),
+                    Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(x + 1.0, rect.bottom())),
+                    Rect::from_min_max(Pos2::new(x + 1.0, rect.top()), rect.max),
                 )
             } else {
                 let y = rect.top() + split;
                 (
                     Rect::from_min_max(rect.min, Pos2::new(rect.right(), y)),
-                    Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + 4.0)),
-                    Rect::from_min_max(Pos2::new(rect.left(), y + 4.0), rect.max),
+                    Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + 1.0)),
+                    Rect::from_min_max(Pos2::new(rect.left(), y + 1.0), rect.max),
                 )
             };
-            let response = ui.interact(divider, ui.id().with("divider"), Sense::drag());
+            let response = ui.interact(divider.expand(2.0), ui.id().with("divider"), Sense::drag());
             let response = response.on_hover_cursor(if horizontal {
                 egui::CursorIcon::ResizeHorizontal
             } else {
@@ -498,56 +491,51 @@ fn draw_layout(
                 *ratio =
                     (*ratio + if horizontal { delta.x } else { delta.y } / extent).clamp(0.1, 0.9);
             }
-            ui.painter().rect_filled(
-                divider.shrink(1.0),
-                2,
-                if response.hovered() {
-                    ACCENT
+            let first_focus = ui
+                .scope_builder(egui::UiBuilder::new().id_salt("first").max_rect(a), |ui| {
+                    draw_layout(ui, first, panes, focused, font_size)
+                })
+                .inner;
+            let second_focus = ui
+                .scope_builder(egui::UiBuilder::new().id_salt("second").max_rect(b), |ui| {
+                    draw_layout(ui, second, panes, focused, font_size)
+                })
+                .inner;
+            let painter = ui.painter();
+            painter.rect_filled(divider, 0, Color32::from_gray(45));
+            let focus_rect = first_focus.or(second_focus);
+            if let Some(focus_rect) = focus_rect {
+                let touches = if horizontal {
+                    focus_rect.right() == a.right() || focus_rect.left() == b.left()
                 } else {
-                    Color32::from_gray(50)
-                },
-            );
-            ui.scope_builder(egui::UiBuilder::new().id_salt("first").max_rect(a), |ui| {
-                draw_layout(ui, first, panes, focused, font_size, show_border)
-            });
-            ui.scope_builder(egui::UiBuilder::new().id_salt("second").max_rect(b), |ui| {
-                draw_layout(ui, second, panes, focused, font_size, show_border)
-            });
+                    focus_rect.bottom() == a.bottom() || focus_rect.top() == b.top()
+                };
+                if touches {
+                    let mut highlight = divider;
+                    if horizontal {
+                        highlight.min.y = focus_rect.top();
+                        highlight.max.y = focus_rect.bottom();
+                    } else {
+                        highlight.min.x = focus_rect.left();
+                        highlight.max.x = focus_rect.right();
+                    }
+                    painter.rect_filled(highlight, 0, ACCENT.gamma_multiply(0.7));
+                }
+            }
+            focus_rect
         }
     }
 }
 
-fn draw_pane(
-    ui: &mut egui::Ui,
-    id: u64,
-    pane: &mut Pane,
-    focused: &mut u64,
-    font_size: f32,
-    show_border: bool,
-) {
+fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
     let rect = ui.max_rect().shrink(2.0);
     let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
         *focused = id;
     }
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 4, BG);
-    if show_border {
-        painter.rect_stroke(
-            rect.shrink(0.5),
-            4,
-            Stroke::new(
-                1.0_f32,
-                if *focused == id {
-                    ACCENT.gamma_multiply(0.7)
-                } else {
-                    Color32::from_gray(45)
-                },
-            ),
-            egui::StrokeKind::Inside,
-        );
-    }
-    let text_rect = rect.shrink(if show_border { 2.0 } else { 0.0 });
+    painter.rect_filled(rect, 0, BG);
+    let text_rect = rect;
     let font = FontId::monospace(font_size);
     let cw = ui.fonts_mut(|f| f.glyph_width(&font, 'M'));
     let ch = (font_size * 1.4).ceil();
