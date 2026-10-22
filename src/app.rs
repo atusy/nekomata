@@ -557,8 +557,10 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let shadow = &state.screen;
     let screen = shadow.screen();
     let painter = painter.with_clip_rect(text_rect);
-    for row in 0..screen.rows().min(rows) {
-        for col in 0..screen.cols().min(cols) {
+    let visible_rows = screen.rows().min(rows);
+    let visible_cols = screen.cols().min(cols);
+    for row in 0..visible_rows {
+        for col in 0..visible_cols {
             let Some(cell) = screen.cell(row, col) else {
                 continue;
             };
@@ -576,7 +578,21 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                 bg = Color32::from_rgb(64, 78, 94);
             }
             let pos = text_rect.min + Vec2::new(f32::from(col) * cw, f32::from(row) * ch);
-            painter.rect_filled(Rect::from_min_size(pos, Vec2::new(cw, ch)), 0, bg);
+            // A terminal has whole cells, but the pane can have a fractional
+            // final row/column. Continue the edge backgrounds into that space.
+            let max = Pos2::new(
+                if col + 1 == visible_cols {
+                    text_rect.right()
+                } else {
+                    pos.x + cw
+                },
+                if row + 1 == visible_rows {
+                    text_rect.bottom()
+                } else {
+                    pos.y + ch
+                },
+            );
+            painter.rect_filled(Rect::from_min_max(pos, max), 0, bg);
         }
     }
     for row in 0..screen.rows().min(rows) {
