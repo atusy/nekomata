@@ -25,6 +25,33 @@ struct Tab {
     name: String,
     layout: Layout,
     focused: u64,
+    focus_history: Vec<u64>,
+}
+
+impl Tab {
+    fn focus(&mut self, id: u64) {
+        self.focused = id;
+        self.focus_history.retain(|previous| *previous != id);
+        self.focus_history.push(id);
+    }
+
+    fn remove_pane(&mut self, id: u64) -> bool {
+        self.focus_history.retain(|previous| *previous != id);
+        let layout = std::mem::replace(&mut self.layout, Layout::Pane(id));
+        let Some(layout) = layout.remove(id) else {
+            return false;
+        };
+        if self.focused == id {
+            self.focus(
+                self.focus_history
+                    .last()
+                    .copied()
+                    .unwrap_or_else(|| layout.panes()[0]),
+            );
+        }
+        self.layout = layout;
+        true
+    }
 }
 
 pub struct App {
@@ -122,6 +149,7 @@ impl App {
             name: format!("Terminal {id}"),
             layout: Layout::Pane(id),
             focused: id,
+            focus_history: vec![id],
         });
         self.active = self.tabs.len() - 1;
     }
@@ -134,14 +162,7 @@ impl App {
         else {
             return;
         };
-        let tab = &mut self.tabs[index];
-        let layout = std::mem::replace(&mut tab.layout, Layout::Pane(id));
-        if let Some(layout) = layout.remove(id) {
-            if tab.focused == id {
-                tab.focused = layout.panes()[0];
-            }
-            tab.layout = layout;
-        } else {
+        if !self.tabs[index].remove_pane(id) {
             self.tabs.remove(index);
             if index < self.active {
                 self.active -= 1;
@@ -166,7 +187,7 @@ impl App {
             Action::Focus(direction) => {
                 let tab = &mut self.tabs[self.active];
                 if let Some(id) = tab.layout.neighbor(tab.focused, direction) {
-                    tab.focused = id;
+                    tab.focus(id);
                 }
             }
             Action::NewTab => self.add_tab(ctx, None),
@@ -184,7 +205,7 @@ impl App {
                 let id = self.add_pane(ctx, None, cwd);
                 let tab = &mut self.tabs[self.active];
                 tab.layout.split(tab.focused, id, axis);
-                tab.focused = id;
+                tab.focus(id);
             }
             Action::ClosePane => self.close_pane(ctx, self.tabs[self.active].focused),
             Action::CloseTab => {
@@ -202,7 +223,7 @@ impl App {
                 let tab = &mut self.tabs[self.active];
                 let ids = tab.layout.panes();
                 let pos = ids.iter().position(|id| *id == tab.focused).unwrap_or(0);
-                tab.focused = ids[(pos + 1) % ids.len()];
+                tab.focus(ids[(pos + 1) % ids.len()]);
             }
             Action::NextTab => self.active = (self.active + 1) % self.tabs.len(),
             Action::PreviousTab => {
@@ -333,6 +354,7 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 let tab = &mut self.tabs[self.active];
                 let show_border = matches!(tab.layout, Layout::Split { .. });
+                let previous = tab.focused;
                 draw_layout(
                     ui,
                     &mut tab.layout,
@@ -341,6 +363,9 @@ impl eframe::App for App {
                     self.font_size,
                     show_border,
                 );
+                if tab.focused != previous {
+                    tab.focus(tab.focused);
+                }
             });
         let focused = self.tabs[self.active].focused;
         let os_focused = ctx.input(|i| i.focused);
@@ -992,6 +1017,46 @@ fn key_character(key: egui::Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn split_tab() -> Tab {
+        let mut layout = Layout::Pane(1);
+        layout.split(1, 2, Axis::Horizontal);
+        layout.split(2, 3, Axis::Vertical);
+        Tab {
+            name: "test".into(),
+            layout,
+            focused: 1,
+            focus_history: vec![1],
+        }
+    }
+
+    #[test]
+    fn closing_focused_panes_retraces_tab_focus_history() {
+        let mut tab = split_tab();
+        tab.focus(3);
+        tab.focus(2);
+        tab.focus(3);
+        assert!(tab.remove_pane(3));
+        assert_eq!(tab.focused, 2);
+        assert!(tab.remove_pane(2));
+        assert_eq!(tab.focused, 1);
+        assert!(!tab.remove_pane(1));
+    }
+
+    #[test]
+    fn closing_background_panes_prunes_only_their_tabs_history() {
+        let mut tab = split_tab();
+        let mut other = split_tab();
+        tab.focus(2);
+        tab.focus(3);
+        other.focus(2);
+        assert!(tab.remove_pane(2));
+        assert_eq!(tab.focused, 3);
+        assert!(tab.remove_pane(3));
+        assert_eq!(tab.focused, 1);
+        assert_eq!(other.focused, 2);
+        assert_eq!(other.focus_history, vec![1, 2]);
+    }
 
     #[test]
     fn linux_control_c_interrupts_instead_of_copying() {
