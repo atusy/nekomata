@@ -56,20 +56,25 @@ impl App {
         style.visuals.selection.bg_fill = ACCENT.gamma_multiply(0.3);
         style.spacing.button_padding = Vec2::new(12.0, 7.0);
         cc.egui_ctx.set_style(style);
-        // egui's bundled fonts lack CJK. Load an installed fallback when available.
+        // Nix supplies UDEV Gothic NF; system CJK fonts remain a fallback.
         let mut fonts = egui::FontDefinitions::default();
         let candidates = [
             std::env::var("NEKOMATA_FONT").unwrap_or_default(),
             "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc".into(),
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc".into(),
         ];
-        for path in candidates {
+        for (index, path) in candidates.into_iter().enumerate() {
             if let Ok(bytes) = std::fs::read(path) {
                 fonts
                     .font_data
                     .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
                 for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
-                    fonts.families.entry(family).or_default().push("cjk".into());
+                    let family = fonts.families.entry(family).or_default();
+                    if index == 0 {
+                        family.insert(0, "cjk".into());
+                    } else {
+                        family.push("cjk".into());
+                    }
                 }
                 break;
             }
