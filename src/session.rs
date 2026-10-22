@@ -141,3 +141,99 @@ async fn run(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use felis_grid::{Color, Grapheme};
+    use felis_protocol::messages::RequestedDims;
+    use std::{
+        sync::mpsc as sync_mpsc,
+        time::{Duration, Instant},
+    };
+
+    fn wait_for(
+        session: &Session,
+        ctx: &egui::Context,
+        repaints: &sync_mpsc::Receiver<()>,
+        predicate: impl Fn(&State) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            // Acknowledge the repaint before examining state so a racing update
+            // either satisfies the predicate or leaves a wakeup for the next pass.
+            let _ = ctx.run(egui::RawInput::default(), |_| {});
+            {
+                let state = session.state.lock().unwrap();
+                assert!(state.error.is_none(), "{:?}", state.error);
+                if predicate(&state) {
+                    return;
+                }
+            }
+            repaints
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("timed out waiting for a felis screen update");
+        }
+    }
+
+    fn has_red_marker(state: &State) -> bool {
+        let screen = state.screen.screen();
+        (0..screen.rows()).any(|row| {
+            let text: String = (0..screen.cols())
+                .filter_map(|col| {
+                    let cell = screen.cell(row, col)?;
+                    if screen.style(cell.style).fg != Color::Indexed(1) {
+                        return None;
+                    }
+                    match cell.grapheme {
+                        Grapheme::Ascii(b) => Some(char::from(b)),
+                        _ => None,
+                    }
+                })
+                .collect();
+            text.contains("NEKOMATA_READY")
+        })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_session_input_resize_and_reattach() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), None);
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        let id = session.state.lock().unwrap().session_id.unwrap();
+        session.send(InputMsg::Resize {
+            dims: RequestedDims {
+                rows: 12,
+                cols: 60,
+                pixel_w: 600,
+                pixel_h: 240,
+            },
+        });
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.screen().rows() == 12 && state.screen.screen().cols() == 60
+        });
+        session.send(InputMsg::KeyBytes(
+            b"printf '\\033[31mNEKOMATA_READY\\033[0m\\n'\r".to_vec(),
+        ));
+        wait_for(&session, &ctx, &repaints, has_red_marker);
+        drop(session);
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
+        wait_for(&session, &ctx, &repaints, has_red_marker);
+        assert_eq!(session.state.lock().unwrap().session_id, Some(id));
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
+    }
+}
