@@ -642,8 +642,11 @@ fn color(color: Color, default: Color32) -> Color32 {
 }
 
 fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, session: &Session) {
-    use felis_protocol::messages::{Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods, NamedKey};
+    use felis_protocol::messages::{Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods};
     let events = ctx.input(|i| i.events.clone());
+    let has_text = events
+        .iter()
+        .any(|event| matches!(event, egui::Event::Text(_)));
     let mods = ctx.input(|i| i.modifiers);
     let mut key_mods = KeyMods::empty();
     key_mods.set(KeyMods::CTRL, mods.ctrl);
@@ -692,32 +695,7 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
             egui::Event::Text(text) => Some((Key::Character(text.clone()), Some(text))),
             egui::Event::Key {
                 key, pressed: true, ..
-            } => {
-                let named = match key {
-                    egui::Key::Enter => Some(NamedKey::Enter),
-                    egui::Key::Tab => Some(NamedKey::Tab),
-                    egui::Key::Escape => Some(NamedKey::Escape),
-                    egui::Key::Backspace => Some(NamedKey::Backspace),
-                    egui::Key::Insert => Some(NamedKey::Insert),
-                    egui::Key::Delete => Some(NamedKey::Delete),
-                    egui::Key::Home => Some(NamedKey::Home),
-                    egui::Key::End => Some(NamedKey::End),
-                    egui::Key::PageUp => Some(NamedKey::PageUp),
-                    egui::Key::PageDown => Some(NamedKey::PageDown),
-                    egui::Key::ArrowUp => Some(NamedKey::ArrowUp),
-                    egui::Key::ArrowDown => Some(NamedKey::ArrowDown),
-                    egui::Key::ArrowLeft => Some(NamedKey::ArrowLeft),
-                    egui::Key::ArrowRight => Some(NamedKey::ArrowRight),
-                    _ => None,
-                };
-                if let Some(named) = named {
-                    Some((Key::Named(named), None))
-                } else if mods.ctrl || mods.alt {
-                    Some((Key::Character(key_character(key)), None))
-                } else {
-                    None
-                }
-            }
+            } => physical_key(key, mods, has_text).map(|key| (key, None)),
             egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                 session.send(InputMsg::KeyBytes(text.into_bytes()));
                 continue;
@@ -753,6 +731,38 @@ fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) ->
     Some(InputMsg::KeyBytes(vec![byte]))
 }
 
+fn physical_key(
+    key: egui::Key,
+    mods: egui::Modifiers,
+    has_text: bool,
+) -> Option<felis_protocol::messages::Key> {
+    use felis_protocol::messages::{Key, NamedKey};
+    let named = match key {
+        egui::Key::Enter => Some(NamedKey::Enter),
+        egui::Key::Tab => Some(NamedKey::Tab),
+        egui::Key::Escape => Some(NamedKey::Escape),
+        egui::Key::Backspace => Some(NamedKey::Backspace),
+        egui::Key::Insert => Some(NamedKey::Insert),
+        egui::Key::Delete => Some(NamedKey::Delete),
+        egui::Key::Home => Some(NamedKey::Home),
+        egui::Key::End => Some(NamedKey::End),
+        egui::Key::PageUp => Some(NamedKey::PageUp),
+        egui::Key::PageDown => Some(NamedKey::PageDown),
+        egui::Key::ArrowUp => Some(NamedKey::ArrowUp),
+        egui::Key::ArrowDown => Some(NamedKey::ArrowDown),
+        egui::Key::ArrowLeft => Some(NamedKey::ArrowLeft),
+        egui::Key::ArrowRight => Some(NamedKey::ArrowRight),
+        _ => None,
+    };
+    if let Some(named) = named {
+        Some(Key::Named(named))
+    } else if mods.ctrl || (mods.alt && !has_text) {
+        Some(Key::Character(key_character(key)))
+    } else {
+        None
+    }
+}
+
 fn key_character(key: egui::Key) -> String {
     key.symbol_or_name().to_lowercase()
 }
@@ -772,5 +782,9 @@ mod tests {
     #[test]
     fn control_bracket_keeps_the_character_needed_for_escape() {
         assert_eq!(key_character(egui::Key::OpenBracket), "[");
+    }
+    #[test]
+    fn composed_alt_text_does_not_emit_a_second_physical_character() {
+        assert_eq!(physical_key(egui::Key::E, egui::Modifiers::ALT, true), None);
     }
 }
