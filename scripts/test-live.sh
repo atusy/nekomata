@@ -11,4 +11,4 @@ cleanup() {
   rm -rf "$test_directory"
 }
 trap cleanup EXIT
-cargo test --locked live_session_input_resize_and_reattach -- --ignored --nocapture
+cargo test --locked live_ -- --ignored --nocapture

@@ -1,6 +1,6 @@
 # nekomata
 
-[felis](https://git.natsukium.com/natsukium/felis) のセッションに、タブと分割ペインを備えたネイティブGUIを提供します。
+[felis](https://git.natsukium.com/felis-terminal/felis) のセッションに、タブと分割ペインを備えたネイティブGUIを提供します。
 Rust / egui でウィンドウを描画し、felis の公開クライアントライブラリを通じて画面差分を受信します。シェル・PTY・端末の解析・スクロールバックは felis デーモンが管理します。
 
 ## 起動
@@ -18,7 +18,9 @@ nix build
 ./result/bin/nekomata
 ```
 
-felis デーモンも Nix パッケージに含まれ、初回接続時に自動起動します。GUIとデーモンのソースリビジョンは `1761d2a035d6ccf26da004f395e38b93da2f5686` に固定しています。
+felis デーモンも Nix パッケージに含まれ、初回接続時に自動起動します。GUIとデーモンのソースリビジョンは `71f4a5ca11ed9bee3422444c52fc425e88e00a81` に固定しています。[上流のプロンプト再描画修正](https://git.natsukium.com/felis-terminal/felis/pulls/38)を含み、ペインをライブリサイズしても以前の幅のプロンプトが残る問題を解消します。
+
+旧版のデーモンがすでに動いている場合は、既存のシェルを終了してから `nix develop --command felis daemon stop` を実行し、nekomata を起動し直してください。GUIの再起動だけではデーモンのコードは切り替わりません。
 
 flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。開発時のビルド・実デーモン接続は `aarch64-darwin` で検証しています。Linux のGUIには X11 または Wayland と OpenGL が必要です。
 
@@ -88,4 +90,4 @@ IMEやOSクリップボードの操作、TUIのマウス操作、GUIの見た目
 
 ## ライセンス
 
-Apache-2.0。端末エンジンには [felis](https://git.natsukium.com/natsukium/felis)（Apache-2.0）を利用しています。上流を変更せず、固定したGit依存として参照しています。
+Apache-2.0。端末エンジンには [felis](https://git.natsukium.com/felis-terminal/felis)（Apache-2.0）を利用しています。上流を変更せず、固定したGit依存として参照しています。

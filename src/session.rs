@@ -236,4 +236,67 @@ mod tests {
             ops.destroy_session(format!("{id:032x}")).await.unwrap();
         });
     }
+    fn contains_text(state: &State, needle: &str) -> bool {
+        let screen = state.screen.screen();
+        (0..screen.rows()).any(|row| {
+            let text: String = (0..screen.cols())
+                .filter_map(|col| match screen.cell(row, col)?.grapheme {
+                    Grapheme::Ascii(b) => Some(char::from(b)),
+                    _ => None,
+                })
+                .collect();
+            text.contains(needle)
+        })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_resize_blanks_the_active_prompt_without_erasing_output() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
+            ops.spawn_session(SpawnArgs {
+                command: "bash".into(), args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
+                    r#"read -r line; printf '\033]133;C\007KEEP_OUTPUT\n\033]133;D;0\007\033]133;A\007ACTIVE_PROMPT /long/path/to/a/project/with/a/branch\n$ \033]133;B\007\033]2;fixture-ready\007'; read -r line"#.into()],
+                dims: Some(RequestedDims { rows: 24, cols: 80, pixel_w: 800, pixel_h: 480 }),
+                env_base: felis_client_core::env_base::capture(), ..Default::default()
+            }).await.unwrap().id
+        });
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.title() == Some("fixture-ready")
+        });
+        assert!(contains_text(
+            &session.state.lock().unwrap(),
+            "ACTIVE_PROMPT"
+        ));
+        session.send(InputMsg::Resize {
+            dims: RequestedDims {
+                rows: 24,
+                cols: 30,
+                pixel_w: 300,
+                pixel_h: 480,
+            },
+        });
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.screen().cols() == 30 && !contains_text(state, "ACTIVE_PROMPT")
+        });
+        assert!(contains_text(&session.state.lock().unwrap(), "KEEP_OUTPUT"));
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
+    }
 }
