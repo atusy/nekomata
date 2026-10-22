@@ -713,7 +713,7 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
                 if let Some(named) = named {
                     Some((Key::Named(named), None))
                 } else if mods.ctrl || mods.alt {
-                    Some((Key::Character(key.name().to_lowercase()), None))
+                    Some((Key::Character(key_character(key)), None))
                 } else {
                     None
                 }
@@ -753,6 +753,10 @@ fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) ->
     Some(InputMsg::KeyBytes(vec![byte]))
 }
 
+fn key_character(key: egui::Key) -> String {
+    key.symbol_or_name().to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,5 +767,10 @@ mod tests {
             clipboard_control(&egui::Event::Copy, egui::Modifiers::CTRL, false),
             Some(InputMsg::KeyBytes(vec![3]))
         );
+    }
+
+    #[test]
+    fn control_bracket_keeps_the_character_needed_for_escape() {
+        assert_eq!(key_character(egui::Key::OpenBracket), "[");
     }
 }
