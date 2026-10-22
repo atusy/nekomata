@@ -500,7 +500,7 @@ fn draw_pane(
     font_size: f32,
     show_border: bool,
 ) {
-    let rect = ui.max_rect().shrink(if show_border { 2.0 } else { 0.0 });
+    let rect = ui.max_rect().shrink(2.0);
     let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
         *focused = id;
