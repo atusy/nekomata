@@ -197,15 +197,65 @@ impl eframe::App for App {
                 }
             });
         }
+        let mut menu_open = false;
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("nekomata").strong().color(ACCENT));
+                let menu = ui.menu_button("≡", |ui| {
+                    for (label, command) in [
+                        ("+ Tab", Action::NewTab),
+                        ("Split ↔", Action::Split(Axis::Horizontal)),
+                        ("Split ↕", Action::Split(Axis::Vertical)),
+                        ("Next pane", Action::NextPane),
+                    ] {
+                        if ui.button(label).clicked() {
+                            action = Some(command);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    for (label, command) in [
+                        ("Close pane", Action::ClosePane),
+                        ("Close tab", Action::CloseTab),
+                    ] {
+                        if ui
+                            .button(label)
+                            .on_hover_text("Detach; keep the shell running")
+                            .clicked()
+                        {
+                            action = Some(command);
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Attach…").clicked() {
+                        self.show_attach = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Smaller text").clicked() {
+                        self.font_size = (self.font_size - 1.0).max(9.0);
+                        ui.close();
+                    }
+                    if ui.button("Larger text").clicked() {
+                        self.font_size = (self.font_size + 1.0).min(32.0);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("Help").clicked() {
+                        self.help = true;
+                        ui.close();
+                    }
+                });
+                menu_open = menu.inner.is_some();
                 ui.separator();
                 egui::ScrollArea::horizontal()
                     .id_salt("tab-scroll")
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             for (i, tab) in self.tabs.iter().enumerate() {
+                                if i > 0 {
+                                    ui.separator();
+                                }
                                 let title = self.panes[&tab.focused]
                                     .session
                                     .state
@@ -221,40 +271,6 @@ impl eframe::App for App {
                             }
                         });
                     });
-            });
-            ui.horizontal(|ui| {
-                if ui.button("+ Tab").clicked() {
-                    action = Some(Action::NewTab);
-                }
-                if ui.button("Split ↔").clicked() {
-                    action = Some(Action::Split(Axis::Horizontal));
-                }
-                if ui.button("Split ↕").clicked() {
-                    action = Some(Action::Split(Axis::Vertical));
-                }
-                if ui
-                    .button("Close pane")
-                    .on_hover_text("Detach; keep the shell running")
-                    .clicked()
-                {
-                    action = Some(Action::ClosePane);
-                }
-                if ui.button("Close tab").clicked() {
-                    action = Some(Action::CloseTab);
-                }
-                ui.separator();
-                if ui.button("Attach…").clicked() {
-                    self.show_attach = true;
-                }
-                if ui.button("−").clicked() {
-                    self.font_size = (self.font_size - 1.0).max(9.0);
-                }
-                if ui.button("+").clicked() {
-                    self.font_size = (self.font_size + 1.0).min(32.0);
-                }
-                if ui.button("?").clicked() {
-                    self.help = !self.help;
-                }
             });
         });
         if let Some(action) = action {
@@ -289,7 +305,7 @@ impl eframe::App for App {
                 ui.label("Close to detach · sessions stay alive");
             });
         });
-        let modal = self.show_attach || self.help;
+        let modal = self.show_attach || self.help || menu_open;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG).inner_margin(6))
             .show(ctx, |ui| {
