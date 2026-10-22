@@ -114,6 +114,7 @@ async fn run(
         state.session_id = Some(info.id);
         state.connected = true;
     }
+    conn.writer.send(&crate::theme::configure()).await?;
     ctx.request_repaint();
     conn.writer
         .send(&InputMsg::ColorScheme { dark: true })
@@ -334,6 +335,45 @@ mod tests {
                 .collect();
             text.contains(needle)
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_background_query_matches_the_rendered_theme() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
+            ops.spawn_session(SpawnArgs {
+                command: "bash".into(),
+                args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
+                    r#"read -r line; stty raw -echo; printf '\033]11;?\007'; IFS= read -r -t 3 -d '\' reply; stty sane; reply=${reply%$'\033'}; printf 'COLOR_REPLY=%s\n' "${reply#*rgb:}"; read -r line"#.into()],
+                env_base: felis_client_core::env_base::capture(), ..Default::default()
+            }).await.unwrap().id
+        });
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "COLOR_REPLY=")
+        });
+        assert!(contains_text(
+            &session.state.lock().unwrap(),
+            "COLOR_REPLY=1414/1717/1f1f"
+        ));
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
     }
 
     #[test]

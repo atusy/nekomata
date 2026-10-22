@@ -8,11 +8,8 @@ use crate::{
     layout::{Axis, Layout},
     picker::SessionPicker,
     session::Session,
+    theme::{ACCENT, BG, FG},
 };
-
-const BG: Color32 = Color32::from_rgb(20, 23, 31);
-const FG: Color32 = Color32::from_rgb(216, 222, 233);
-const ACCENT: Color32 = Color32::from_rgb(163, 190, 140);
 
 struct Pane {
     session: Session,
