@@ -321,12 +321,14 @@ impl eframe::App for App {
             .frame(egui::Frame::NONE.fill(BG).inner_margin(6))
             .show(ctx, |ui| {
                 let tab = &mut self.tabs[self.active];
+                let show_border = matches!(tab.layout, Layout::Split { .. });
                 draw_layout(
                     ui,
                     &mut tab.layout,
                     &mut self.panes,
                     &mut tab.focused,
                     self.font_size,
+                    show_border,
                 );
             });
         let focused = self.tabs[self.active].focused;
@@ -372,10 +374,18 @@ fn draw_layout(
     panes: &mut BTreeMap<u64, Pane>,
     focused: &mut u64,
     font_size: f32,
+    show_border: bool,
 ) {
     let rect = ui.max_rect();
     match layout {
-        Layout::Pane(id) => draw_pane(ui, *id, panes.get_mut(id).unwrap(), focused, font_size),
+        Layout::Pane(id) => draw_pane(
+            ui,
+            *id,
+            panes.get_mut(id).unwrap(),
+            focused,
+            font_size,
+            show_border,
+        ),
         Layout::Split {
             axis,
             ratio,
@@ -425,16 +435,23 @@ fn draw_layout(
                 },
             );
             ui.scope_builder(egui::UiBuilder::new().id_salt("first").max_rect(a), |ui| {
-                draw_layout(ui, first, panes, focused, font_size)
+                draw_layout(ui, first, panes, focused, font_size, show_border)
             });
             ui.scope_builder(egui::UiBuilder::new().id_salt("second").max_rect(b), |ui| {
-                draw_layout(ui, second, panes, focused, font_size)
+                draw_layout(ui, second, panes, focused, font_size, show_border)
             });
         }
     }
 }
 
-fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
+fn draw_pane(
+    ui: &mut egui::Ui,
+    id: u64,
+    pane: &mut Pane,
+    focused: &mut u64,
+    font_size: f32,
+    show_border: bool,
+) {
     let rect = ui.max_rect();
     let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
@@ -442,19 +459,21 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     }
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 4, BG);
-    painter.rect_stroke(
-        rect.shrink(0.5),
-        4,
-        Stroke::new(
-            1.0_f32,
-            if *focused == id {
-                ACCENT.gamma_multiply(0.7)
-            } else {
-                Color32::from_gray(45)
-            },
-        ),
-        egui::StrokeKind::Inside,
-    );
+    if show_border {
+        painter.rect_stroke(
+            rect.shrink(0.5),
+            4,
+            Stroke::new(
+                1.0_f32,
+                if *focused == id {
+                    ACCENT.gamma_multiply(0.7)
+                } else {
+                    Color32::from_gray(45)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+    }
     let text_rect = rect.shrink(9.0);
     let font = FontId::monospace(font_size);
     let cw = ui.fonts_mut(|f| f.glyph_width(&font, 'M'));
