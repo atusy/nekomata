@@ -329,7 +329,7 @@ impl eframe::App for App {
         }
         let modal = self.picker.visible || self.help || self.palette || menu_open;
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(BG).inner_margin(6))
+            .frame(egui::Frame::NONE.fill(BG))
             .show(ctx, |ui| {
                 let tab = &mut self.tabs[self.active];
                 let show_border = matches!(tab.layout, Layout::Split { .. });
@@ -446,20 +446,20 @@ fn draw_layout(
             } else {
                 rect.height()
             };
-            let split = (extent - 6.0).max(0.0) * *ratio;
+            let split = (extent - 4.0).max(0.0) * *ratio;
             let (a, divider, b) = if horizontal {
                 let x = rect.left() + split;
                 (
                     Rect::from_min_max(rect.min, Pos2::new(x, rect.bottom())),
-                    Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(x + 6.0, rect.bottom())),
-                    Rect::from_min_max(Pos2::new(x + 6.0, rect.top()), rect.max),
+                    Rect::from_min_max(Pos2::new(x, rect.top()), Pos2::new(x + 4.0, rect.bottom())),
+                    Rect::from_min_max(Pos2::new(x + 4.0, rect.top()), rect.max),
                 )
             } else {
                 let y = rect.top() + split;
                 (
                     Rect::from_min_max(rect.min, Pos2::new(rect.right(), y)),
-                    Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + 6.0)),
-                    Rect::from_min_max(Pos2::new(rect.left(), y + 6.0), rect.max),
+                    Rect::from_min_max(Pos2::new(rect.left(), y), Pos2::new(rect.right(), y + 4.0)),
+                    Rect::from_min_max(Pos2::new(rect.left(), y + 4.0), rect.max),
                 )
             };
             let response = ui.interact(divider, ui.id().with("divider"), Sense::drag());
@@ -474,7 +474,7 @@ fn draw_layout(
                     (*ratio + if horizontal { delta.x } else { delta.y } / extent).clamp(0.1, 0.9);
             }
             ui.painter().rect_filled(
-                divider.shrink(2.0),
+                divider.shrink(1.0),
                 2,
                 if response.hovered() {
                     ACCENT
@@ -522,7 +522,7 @@ fn draw_pane(
             egui::StrokeKind::Inside,
         );
     }
-    let text_rect = rect.shrink(9.0);
+    let text_rect = rect.shrink(if show_border { 1.0 } else { 0.0 });
     let font = FontId::monospace(font_size);
     let cw = ui.fonts_mut(|f| f.glyph_width(&font, 'M'));
     let ch = (font_size * 1.4).ceil();
