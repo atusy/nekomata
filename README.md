@@ -47,17 +47,26 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 
 ## セッションへの再接続
 
-`felis sessions list` でセッションIDを確認できます。`≡` メニューの `Attach…` でそのIDを入力すると、新しいタブで再接続します。
+インストールすると、次のコマンドを利用できます。
 
 ```sh
-nix run . -- --attach SESSION_ID
+nix profile install .
+nekomata sessions list
+nekomata sessions attach
+nekomata sessions attach SESSION_ID
+nekomata sessions detach
+nekomata sessions detach SESSION_ID
 ```
 
-felis CLI も開発環境内で使えます。
+`attach` はIDを省略するとセッション選択画面を開きます。`≡` メニューの `Attach…` からも選択できます。`detach` はIDを省略すると、コマンドを実行した端末のセッション（`FELIS_SESSION_ID`）を対象にします。対象セッションの全ビューを切断し、nekomata では対応するペインを閉じます。シェルは動いたままなので、後から再接続できます。
+
+インストールせずに使う場合:
 
 ```sh
-nix develop --command felis sessions list
-nix develop --command felis sessions kill SESSION_ID
+nix run . -- sessions list
+nix run . -- sessions attach
+nix run . -- sessions attach SESSION_ID
+nix run . -- sessions detach SESSION_ID
 ```
 
 `FELIS_SOCKET` を指定すると、通常とは別のローカルデーモンに接続できます。

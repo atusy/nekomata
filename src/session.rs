@@ -19,6 +19,7 @@ pub struct State {
     pub session_id: Option<u128>,
     pub error: Option<String>,
     pub connected: bool,
+    pub detached: bool,
 }
 
 pub struct Session {
@@ -39,6 +40,7 @@ impl Session {
             session_id: None,
             error: None,
             connected: false,
+            detached: false,
         }));
         let (tx, rx) = mpsc::channel(256);
         let shared = state.clone();
@@ -46,10 +48,16 @@ impl Session {
             let result = run(shared.clone(), ctx.clone(), rx, attach).await;
             let mut state = shared.lock().unwrap();
             state.connected = false;
-            state.error = Some(match result {
-                Ok(()) => "Session disconnected. The shell may still be running in felis.".into(),
-                Err(err) => format!("{err:#}"),
-            });
+            state.error = if state.detached {
+                None
+            } else {
+                Some(match result {
+                    Ok(()) => {
+                        "Session disconnected. The shell may still be running in felis.".into()
+                    }
+                    Err(err) => format!("{err:#}"),
+                })
+            };
             ctx.request_repaint();
         });
         Self {
@@ -130,7 +138,11 @@ async fn run(
                             let _ = conn.driver.decode::<felis_protocol::messages::ImageMsg>(&payload)?;
                         }
                         MessageKind::Push => {
-                            let _ = conn.driver.decode::<felis_protocol::messages::PushMsg>(&payload)?;
+                            if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::PushMsg>(&payload)?
+                                && matches!(delivery.msg, felis_protocol::messages::PushMsg::Evicted { .. }) {
+                                shared.lock().unwrap().detached = true;
+                                return Ok(());
+                            }
                         }
                         other => bail!("Unexpected felis message: {other:?}"),
                     },
@@ -228,11 +240,47 @@ mod tests {
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")));
         wait_for(&session, &ctx, &repaints, has_red_marker);
         assert_eq!(session.state.lock().unwrap().session_id, Some(id));
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        let listed = std::process::Command::new(&executable)
+            .args(["sessions", "list", "--format", "json"])
+            .output()
+            .unwrap();
+        assert!(
+            listed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&listed.stderr)
+        );
+        assert!(String::from_utf8_lossy(&listed.stdout).contains(&format!("{id:032x}")));
+        let detached = std::process::Command::new(&executable)
+            .args(["sessions", "detach"])
+            .env("FELIS_SESSION_ID", format!("{id:032x}"))
+            .output()
+            .unwrap();
+        assert!(
+            detached.status.success(),
+            "{}",
+            String::from_utf8_lossy(&detached.stderr)
+        );
+        wait_for(&session, &ctx, &repaints, |state| state.detached);
         drop(session);
         runtime.block_on(async {
             let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
                 .await
                 .unwrap();
+            assert!(
+                ops.list_sessions()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|session| session.id == id),
+                "detach killed the session"
+            );
             ops.destroy_session(format!("{id:032x}")).await.unwrap();
         });
     }
@@ -273,12 +321,8 @@ mod tests {
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
-            state.screen.title() == Some("fixture-ready")
+            state.screen.title() == Some("fixture-ready") && contains_text(state, "ACTIVE_PROMPT")
         });
-        assert!(contains_text(
-            &session.state.lock().unwrap(),
-            "ACTIVE_PROMPT"
-        ));
         session.send(InputMsg::Resize {
             dims: RequestedDims {
                 rows: 24,

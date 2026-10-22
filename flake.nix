@@ -55,7 +55,7 @@
               inherit cargoArtifacts;
               postFixup = ''
                 wrapProgram $out/bin/nekomata \
-                  --prefix PATH : ${pkgs.lib.makeBinPath [ felis.packages.${system}.felis ]} \
+                  --prefix PATH : "$out/bin:${pkgs.lib.makeBinPath [ felis.packages.${system}.felis ]}" \
                   ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}"}
               '';
             }

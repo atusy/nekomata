@@ -6,6 +6,7 @@ use felis_protocol::messages::{InputMsg, RequestedDims};
 
 use crate::{
     layout::{Axis, Layout},
+    picker::SessionPicker,
     session::Session,
 };
 
@@ -35,8 +36,7 @@ pub struct App {
     active: usize,
     next_id: u64,
     font_size: f32,
-    attach_input: String,
-    show_attach: bool,
+    picker: SessionPicker,
     help: bool,
 }
 
@@ -52,7 +52,7 @@ enum Action {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, attach: Option<String>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, attach: Option<String>, pick: bool) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
         style.visuals.panel_fill = BG;
@@ -85,11 +85,14 @@ impl App {
             active: 0,
             next_id: 1,
             font_size: 15.0,
-            attach_input: String::new(),
-            show_attach: false,
+            picker: SessionPicker::default(),
             help: false,
         };
-        app.add_tab(&cc.egui_ctx, attach);
+        if pick {
+            app.picker.open(&app.runtime, &cc.egui_ctx);
+        } else {
+            app.add_tab(&cc.egui_ctx, attach);
+        }
         app
     }
 
@@ -120,6 +123,34 @@ impl App {
         self.active = self.tabs.len() - 1;
     }
 
+    fn close_pane(&mut self, ctx: &egui::Context, id: u64) {
+        let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.layout.panes().contains(&id))
+        else {
+            return;
+        };
+        let tab = &mut self.tabs[index];
+        let layout = std::mem::replace(&mut tab.layout, Layout::Pane(id));
+        if let Some(layout) = layout.remove(id) {
+            if tab.focused == id {
+                tab.focused = layout.panes()[0];
+            }
+            tab.layout = layout;
+        } else {
+            self.tabs.remove(index);
+            if index < self.active {
+                self.active -= 1;
+            }
+            self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        }
+        self.panes.remove(&id);
+        if self.tabs.is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::NewTab => self.add_tab(ctx, None),
@@ -129,18 +160,7 @@ impl App {
                 tab.layout.split(tab.focused, id, axis);
                 tab.focused = id;
             }
-            Action::ClosePane => {
-                let tab = &mut self.tabs[self.active];
-                let id = tab.focused;
-                let layout = std::mem::replace(&mut tab.layout, Layout::Pane(id));
-                if let Some(layout) = layout.remove(id) {
-                    tab.focused = layout.panes()[0];
-                    tab.layout = layout;
-                    self.panes.remove(&id);
-                } else {
-                    self.action(ctx, Action::CloseTab);
-                }
-            }
+            Action::ClosePane => self.close_pane(ctx, self.tabs[self.active].focused),
             Action::CloseTab => {
                 let tab = self.tabs.remove(self.active);
                 for id in tab.layout.panes() {
@@ -168,12 +188,26 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let detached: Vec<_> = self
+            .panes
+            .iter()
+            .filter_map(|(&id, pane)| pane.session.state.lock().unwrap().detached.then_some(id))
+            .collect();
+        for id in detached {
+            self.close_pane(ctx, id);
+        }
         if self.tabs.is_empty() {
+            egui::CentralPanel::default().show(ctx, |_| {});
+            if let Some(id) = self.picker.show(&self.runtime, ctx) {
+                self.add_tab(ctx, Some(id));
+            } else if !self.picker.visible {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
             return;
         }
         let mut action = None;
         // Consume shortcuts before terminal input sees the events.
-        if !self.show_attach && !self.help {
+        if !self.picker.visible && !self.help {
             ctx.input_mut(|input| {
                 let mods = if cfg!(target_os = "macos") {
                     egui::Modifiers::COMMAND
@@ -228,7 +262,7 @@ impl eframe::App for App {
                     }
                     ui.separator();
                     if ui.button("Attach…").clicked() {
-                        self.show_attach = true;
+                        self.picker.open(&self.runtime, ctx);
                         ui.close();
                     }
                     ui.separator();
@@ -279,7 +313,7 @@ impl eframe::App for App {
         if self.tabs.is_empty() {
             return;
         }
-        let modal = self.show_attach || self.help || menu_open;
+        let modal = self.picker.visible || self.help || menu_open;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG).inner_margin(6))
             .show(ctx, |ui| {
@@ -308,24 +342,8 @@ impl eframe::App for App {
         } else {
             ctx.output_mut(|output| output.ime = None);
         }
-        if self.show_attach {
-            let mut open = true;
-            let mut attach = false;
-            egui::Window::new("Attach a felis session")
-                .open(&mut open)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    ui.label("Paste a session ID from `felis sessions list`.");
-                    ui.text_edit_singleline(&mut self.attach_input);
-                    attach = ui.button("Attach in new tab").clicked();
-                });
-            self.show_attach = open;
-            if attach && !self.attach_input.trim().is_empty() {
-                let id = self.attach_input.trim().to_owned();
-                self.add_tab(ctx, Some(id));
-                self.attach_input.clear();
-                self.show_attach = false;
-            }
+        if let Some(id) = self.picker.show(&self.runtime, ctx) {
+            self.add_tab(ctx, Some(id));
         }
         if self.help {
             egui::Window::new("About nekomata").open(&mut self.help).show(ctx, |ui| {
