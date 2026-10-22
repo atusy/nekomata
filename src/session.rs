@@ -100,7 +100,11 @@ async fn run(
     } else {
         conn.create_with(SpawnArgs {
             command: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
-            args: vec![],
+            args: if cfg!(target_os = "macos") {
+                vec!["-l".into()]
+            } else {
+                vec![]
+            },
             cwd: match cwd {
                 Some(cwd) => cwd,
                 None => std::env::current_dir()?.to_string_lossy().into_owned(),
@@ -246,12 +250,12 @@ mod tests {
         let sibling = Session::new(&runtime, ctx.clone(), None, None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         wait_for(&sibling, &ctx, &repaints, |state| state.connected);
-        session.send(InputMsg::KeyBytes(
-            b"printf '\\033]2;%s\\007' \"$PWD\"\r".to_vec(),
-        ));
-        wait_for(&session, &ctx, &repaints, |state| {
-            state.screen.title() == Some(cwd.as_str())
-        });
+        let command = format!(
+            "test \"$PWD\" = '{}' && printf '\\033[31mNEKOMATA_READY\\033[0m\\n'\r",
+            cwd.replace('\'', "'\\''")
+        );
+        session.send(InputMsg::KeyBytes(command.into_bytes()));
+        wait_for(&session, &ctx, &repaints, has_red_marker);
         session.send(InputMsg::KeyBytes(b"exit\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             state.exited && !state.connected
