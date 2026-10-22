@@ -98,7 +98,7 @@ async fn run(
             command: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
             args: vec![],
             cwd: std::env::current_dir()?.to_string_lossy().into_owned(),
-            env: vec![],
+            env: vec![("NEKOMATA_SHELL_INTEGRATION".into(), "1".into())],
             dims: None,
             env_base: felis_client_core::env_base::capture(),
             tags: vec!["nekomata".into()],

@@ -53,9 +53,15 @@
             common
             // {
               inherit cargoArtifacts;
+              postInstall = ''
+                install -Dm644 ${./share/fish/vendor_conf.d/nekomata.fish} \
+                  $out/share/fish/vendor_conf.d/nekomata.fish
+              '';
               postFixup = ''
                 wrapProgram $out/bin/nekomata \
                   --prefix PATH : "$out/bin:${pkgs.lib.makeBinPath [ felis.packages.${system}.felis ]}" \
+                  --set-default XDG_DATA_DIRS /usr/local/share:/usr/share \
+                  --prefix XDG_DATA_DIRS : "$out/share" \
                   ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}"}
               '';
             }
@@ -74,10 +80,14 @@
               rustc
               rustfmt
               clippy
+              fish
               rust-analyzer
               felis.packages.${system}.felis
             ];
             nativeBuildInputs = [ pkgs.pkg-config ];
+            shellHook = ''
+              export XDG_DATA_DIRS="${./share}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+            '';
             buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
               with pkgs;
               [
@@ -107,9 +117,28 @@
           };
         }
       );
-      checks = forAllSystems (system: {
-        build = self.packages.${system}.default;
-      });
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          build = self.packages.${system}.default;
+          fish-integration =
+            pkgs.runCommand "nekomata-fish-integration"
+              {
+                nativeBuildInputs = [
+                  pkgs.bash
+                  pkgs.fish
+                ];
+              }
+              ''
+                cp -r ${./share} ./share
+                bash ${./scripts/test-fish-integration.sh}
+                touch $out
+              '';
+        }
+      );
       formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixfmt);
     };
 }

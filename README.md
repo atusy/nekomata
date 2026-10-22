@@ -22,6 +22,8 @@ felis デーモンも Nix パッケージに含まれ、初回接続時に自動
 
 旧版のデーモンがすでに動いている場合は、既存のシェルを終了してから `nix develop --command felis daemon stop` を実行し、nekomata を起動し直してください。GUIの再起動だけではデーモンのコードは切り替わりません。
 
+Nixパッケージにはfish用の起動フックも含まれます。fishの初期化区間を端末に通知することで、まだコマンドを実行していない最初のプロンプトもライブリサイズ時に描き直せます。ユーザーのfish設定ファイルは変更せず、nekomataから起動するfishだけで有効になります（fish 4以降の `mark-prompt` 機能が必要です）。
+
 flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。開発時のビルド・実デーモン接続は `aarch64-darwin` で検証しています。Linux のGUIには X11 または Wayland と OpenGL が必要です。
 
 ## 操作

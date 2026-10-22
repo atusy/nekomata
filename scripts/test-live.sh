@@ -11,5 +11,6 @@ cleanup() {
   rm -rf "$test_directory"
 }
 trap cleanup EXIT
+bash scripts/test-fish-integration.sh
 cargo build --locked --bin nekomata
 cargo test --locked live_ -- --ignored --nocapture
