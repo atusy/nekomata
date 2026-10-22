@@ -500,7 +500,7 @@ fn draw_pane(
     font_size: f32,
     show_border: bool,
 ) {
-    let rect = ui.max_rect();
+    let rect = ui.max_rect().shrink(if show_border { 2.0 } else { 0.0 });
     let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
         *focused = id;
@@ -509,14 +509,14 @@ fn draw_pane(
     painter.rect_filled(rect, 4, BG);
     if show_border {
         painter.rect_stroke(
-            rect,
-            0,
+            rect.shrink(0.5),
+            4,
             Stroke::new(
-                2.0_f32,
+                1.0_f32,
                 if *focused == id {
-                    ACCENT
+                    ACCENT.gamma_multiply(0.7)
                 } else {
-                    Color32::from_gray(90)
+                    Color32::from_gray(45)
                 },
             ),
             egui::StrokeKind::Inside,
