@@ -266,6 +266,9 @@ impl eframe::App for App {
                 }
             }
         }
+        if !self.picker.visible && !self.help && !self.palette && !egui::Popup::is_any_open(ctx) {
+            focus_terminal(ctx);
+        }
         let mut menu_open = false;
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -352,6 +355,11 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(ctx, |ui| {
+                ui.interact(
+                    ui.max_rect(),
+                    terminal_focus_id(),
+                    Sense::focusable_noninteractive(),
+                );
                 let tab = &mut self.tabs[self.active];
                 let previous = tab.focused;
                 draw_layout(
@@ -437,6 +445,26 @@ impl eframe::App for App {
         }
         ctx.request_repaint_after(Duration::from_millis(250));
     }
+}
+
+fn terminal_focus_id() -> egui::Id {
+    egui::Id::new("terminal-keyboard-focus")
+}
+
+fn focus_terminal(ctx: &egui::Context) {
+    ctx.memory_mut(|memory| {
+        let id = terminal_focus_id();
+        memory.request_focus(id);
+        memory.set_focus_lock_filter(
+            id,
+            egui::EventFilter {
+                tab: true,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                escape: true,
+            },
+        );
+    });
 }
 
 fn draw_layout(
@@ -1021,6 +1049,48 @@ fn key_character(key: egui::Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_space_does_not_activate_a_previously_focused_menu() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.menu_button("≡", |_| {}).response.request_focus();
+            });
+        });
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::Key {
+                        key: egui::Key::Space,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::Text(" ".into()),
+                ],
+                ..Default::default()
+            },
+            |ctx| {
+                focus_terminal(ctx);
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    assert!(ui.menu_button("≡", |_| {}).inner.is_none());
+                    ui.interact(
+                        ui.max_rect(),
+                        terminal_focus_id(),
+                        Sense::focusable_noninteractive(),
+                    );
+                });
+                assert!(ctx.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Text(text) if text == " "))
+                }));
+            },
+        );
+    }
 
     fn split_tab() -> Tab {
         let mut layout = Layout::Pane(1);
