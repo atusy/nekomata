@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use felis_grid::{AttrFlags, Color, Grapheme};
+use felis_grid::{AttrFlags, Color, CursorStyle, Grapheme};
 use felis_protocol::messages::{InputMsg, RequestedDims};
 
 use crate::{
@@ -679,12 +679,25 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     }
     if *focused == id && cursor.visible && shadow.viewport() == 0 && state.connected {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
-        painter.rect_stroke(
-            Rect::from_min_size(pos, Vec2::new(cw, ch)),
-            0,
-            Stroke::new(1.5_f32, ACCENT),
-            egui::StrokeKind::Inside,
-        );
+        match screen.cursor_style() {
+            CursorStyle::Block => {
+                painter.rect_filled(
+                    Rect::from_min_size(pos, Vec2::new(cw, ch)),
+                    0,
+                    ACCENT.gamma_multiply(0.5),
+                );
+            }
+            CursorStyle::Bar => {
+                painter.rect_filled(Rect::from_min_size(pos, Vec2::new(2.0, ch)), 0, ACCENT);
+            }
+            CursorStyle::Underline => {
+                painter.rect_filled(
+                    Rect::from_min_size(pos + Vec2::new(0.0, ch - 2.0), Vec2::new(cw, 2.0)),
+                    0,
+                    ACCENT,
+                );
+            }
+        }
     }
     if pane
         .session
