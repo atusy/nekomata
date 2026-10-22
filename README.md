@@ -3,6 +3,8 @@
 [felis](https://git.natsukium.com/felis-terminal/felis) のセッションに、タブと分割ペインを備えたネイティブGUIを提供します。
 Rust / egui でウィンドウを描画し、felis の公開クライアントライブラリを通じて画面差分を受信します。シェル・PTY・端末の解析・スクロールバックは felis デーモンが管理します。
 
+felisの現行リポジトリは [felis-terminal/felis](https://git.natsukium.com/felis-terminal/felis) です。旧 [natsukium/felis](https://git.natsukium.com/natsukium/felis) はアーカイブされています。Cargo・Nixの依存定義とロックファイルは、いずれも移転先を参照しています。
+
 ## 起動
 
 Nix と flakes を有効にした環境で実行します。
