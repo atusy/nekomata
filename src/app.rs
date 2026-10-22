@@ -509,20 +509,20 @@ fn draw_pane(
     painter.rect_filled(rect, 4, BG);
     if show_border {
         painter.rect_stroke(
-            rect.shrink(0.5),
-            4,
+            rect,
+            0,
             Stroke::new(
-                1.0_f32,
+                2.0_f32,
                 if *focused == id {
-                    ACCENT.gamma_multiply(0.7)
+                    ACCENT
                 } else {
-                    Color32::from_gray(45)
+                    Color32::from_gray(90)
                 },
             ),
             egui::StrokeKind::Inside,
         );
     }
-    let text_rect = rect.shrink(if show_border { 1.0 } else { 0.0 });
+    let text_rect = rect.shrink(if show_border { 2.0 } else { 0.0 });
     let font = FontId::monospace(font_size);
     let cw = ui.fonts_mut(|f| f.glyph_width(&font, 'M'));
     let ch = (font_size * 1.4).ceil();
