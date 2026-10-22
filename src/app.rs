@@ -188,12 +188,15 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let detached: Vec<_> = self
+        let closed: Vec<_> = self
             .panes
             .iter()
-            .filter_map(|(&id, pane)| pane.session.state.lock().unwrap().detached.then_some(id))
+            .filter_map(|(&id, pane)| {
+                let state = pane.session.state.lock().unwrap();
+                (state.detached || state.exited).then_some(id)
+            })
             .collect();
-        for id in detached {
+        for id in closed {
             self.close_pane(ctx, id);
         }
         if self.tabs.is_empty() {

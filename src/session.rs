@@ -20,6 +20,7 @@ pub struct State {
     pub error: Option<String>,
     pub connected: bool,
     pub detached: bool,
+    pub exited: bool,
 }
 
 pub struct Session {
@@ -41,6 +42,7 @@ impl Session {
             error: None,
             connected: false,
             detached: false,
+            exited: false,
         }));
         let (tx, rx) = mpsc::channel(256);
         let shared = state.clone();
@@ -48,7 +50,7 @@ impl Session {
             let result = run(shared.clone(), ctx.clone(), rx, attach).await;
             let mut state = shared.lock().unwrap();
             state.connected = false;
-            state.error = if state.detached {
+            state.error = if state.detached || state.exited {
                 None
             } else {
                 Some(match result {
@@ -139,9 +141,19 @@ async fn run(
                         }
                         MessageKind::Push => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::PushMsg>(&payload)?
-                                && matches!(delivery.msg, felis_protocol::messages::PushMsg::Evicted { .. }) {
-                                shared.lock().unwrap().detached = true;
-                                return Ok(());
+                            {
+                                match delivery.msg {
+                                    felis_protocol::messages::PushMsg::Evicted { .. } => {
+                                        shared.lock().unwrap().detached = true;
+                                        return Ok(());
+                                    }
+                                    felis_protocol::messages::PushMsg::SessionExited { id }
+                                        if shared.lock().unwrap().session_id == Some(id) => {
+                                        shared.lock().unwrap().exited = true;
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
                         other => bail!("Unexpected felis message: {other:?}"),
@@ -205,6 +217,33 @@ mod tests {
                 .collect();
             text.contains("NEKOMATA_READY")
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_shell_exit_closes_only_its_pane() {
+        assert_eq!(
+            std::env::var("FELIS_SOCKET").unwrap(),
+            std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh")
+        );
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), None);
+        let sibling = Session::new(&runtime, ctx.clone(), None);
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&sibling, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(b"exit\r".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.exited && !state.connected
+        });
+        let state = sibling.state.lock().unwrap();
+        assert!(state.connected);
+        assert!(!state.exited);
+        assert!(state.error.is_none());
     }
 
     #[test]
