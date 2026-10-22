@@ -235,6 +235,11 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        for pane in self.panes.values() {
+            if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
+                ctx.copy_text(text);
+            }
+        }
         let closed: Vec<_> = self
             .panes
             .iter()

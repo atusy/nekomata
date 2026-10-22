@@ -21,6 +21,7 @@ pub struct State {
     pub connected: bool,
     pub detached: bool,
     pub exited: bool,
+    pub clipboard: Option<String>,
 }
 
 pub struct Session {
@@ -44,6 +45,7 @@ impl Session {
             connected: false,
             detached: false,
             exited: false,
+            clipboard: None,
         }));
         let (tx, rx) = mpsc::channel(256);
         let shared = state.clone();
@@ -140,7 +142,13 @@ async fn run(
                     Incoming::Payload(payload) => match payload.kind {
                         MessageKind::Grid => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<GridMsg>(&payload)? {
-                                shared.lock().unwrap().screen.apply(&delivery.msg)?;
+                                let mut state = shared.lock().unwrap();
+                                state.screen.apply(&delivery.msg)?;
+                                if let GridMsg::ClipboardSet { write } = &delivery.msg
+                                    && write.selection.contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
+                                    && let Ok(text) = std::str::from_utf8(&write.data) {
+                                    state.clipboard = Some(text.to_owned());
+                                }
                                 ctx.request_repaint();
                             }
                         }
@@ -354,6 +362,43 @@ mod tests {
                 .collect();
             text.contains(needle)
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_osc52_reaches_the_frontend_clipboard() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
+            ops.spawn_session(SpawnArgs {
+                command: "bash".into(),
+                args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
+                    r#"read -r line; printf '\033]52;c;TkVLT01BVEFfQ0xJUEJPQVJECg==\007'; read -r line"#.into()],
+                env_base: felis_client_core::env_base::capture(), ..Default::default()
+            }).await.unwrap().id
+        });
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| state.clipboard.is_some());
+        assert_eq!(
+            session.state.lock().unwrap().clipboard.take().as_deref(),
+            Some("NEKOMATA_CLIPBOARD\n")
+        );
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
     }
 
     #[test]
