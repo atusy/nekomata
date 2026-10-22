@@ -58,12 +58,32 @@
                   $out/share/fish/vendor_conf.d/nekomata.fish
               '';
               postFixup = ''
-                wrapProgram $out/bin/nekomata \
+                executable="$out/bin/nekomata"
+                ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                  app="$out/Applications/nekomata.app/Contents"
+                  mkdir -p "$app/MacOS"
+                  cp ${./share/macos/Info.plist} "$app/Info.plist"
+                  mv "$executable" "$app/MacOS/nekomata-bin"
+                  executable="$app/MacOS/nekomata-bin"
+                ''}
+                wrapperArgs=(
                   --prefix PATH : "$out/bin:${pkgs.lib.makeBinPath [ felis.packages.${system}.felis ]}" \
                   --set-default NEKOMATA_FONT "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf" \
                   --set-default XDG_DATA_DIRS /usr/local/share:/usr/share \
                   --prefix XDG_DATA_DIRS : "$out/share" \
                   ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}"}
+                )
+                ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                  makeWrapper "$executable" "$app/MacOS/nekomata" \
+                    "''${wrapperArgs[@]}" \
+                    --run 'nekomata_executable="$(cd "$(/usr/bin/dirname "$0")" && pwd)/nekomata-bin"' \
+                    --run 'cd "$HOME"' --run 'exec "$nekomata_executable" "$@"'
+                ''}
+                ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+                  mv "$executable" "$out/bin/nekomata-bin"
+                  executable="$out/bin/nekomata-bin"
+                ''}
+                makeWrapper "$executable" "$out/bin/nekomata" "''${wrapperArgs[@]}"
               '';
             }
           );

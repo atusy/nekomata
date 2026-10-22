@@ -18,6 +18,15 @@ nix build
 ./result/bin/nekomata
 ```
 
+macOSでDock / Finderから起動する場合:
+
+```sh
+bash scripts/install-macos.sh
+open ~/Applications/nekomata.app
+```
+
+`~/Applications/nekomata.app` をDockへドラッグすると固定できます。更新時も同じインストールコマンドを使います。Nixの依存を保持するリンクは `~/.local/share/nekomata/package`（`XDG_DATA_HOME`指定時はその配下）に作成します。アプリから起動するとホームディレクトリでシェルを開き、CLIから起動すると元のカレントディレクトリを使います。
+
 felis デーモンも Nix パッケージに含まれ、初回接続時に自動起動します。GUIとデーモンのソースリビジョンは `71f4a5ca11ed9bee3422444c52fc425e88e00a81` に固定しています。[上流のプロンプト再描画修正](https://git.natsukium.com/felis-terminal/felis/pulls/38)を含み、ペインをライブリサイズしても以前の幅のプロンプトが残る問題を解消します。
 
 旧版のデーモンがすでに動いている場合は、既存のシェルを終了してから `nix develop --command felis daemon stop` を実行し、nekomata を起動し直してください。GUIの再起動だけではデーモンのコードは切り替わりません。
