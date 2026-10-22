@@ -1,6 +1,5 @@
 mod app;
 mod layout;
-mod resize;
 mod session;
 
 fn main() -> eframe::Result {
