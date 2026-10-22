@@ -45,7 +45,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 
 ## セッションへの再接続
 
-ステータスバーのセッションIDをクリックすると、完全なIDをコピーできます。`Attach…` でそのIDを入力すると、新しいタブで再接続します。
+`felis sessions list` でセッションIDを確認できます。`≡` メニューの `Attach…` でそのIDを入力すると、新しいタブで再接続します。
 
 ```sh
 nix run . -- --attach SESSION_ID

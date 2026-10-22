@@ -279,32 +279,6 @@ impl eframe::App for App {
         if self.tabs.is_empty() {
             return;
         }
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            let tab = &self.tabs[self.active];
-            let state = self.panes[&tab.focused].session.state.lock().unwrap();
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(if state.connected { "●" } else { "○" }).color(ACCENT),
-                );
-                ui.label(format!(
-                    "Tab {} / {}   ·   {} panes",
-                    self.active + 1,
-                    self.tabs.len(),
-                    tab.layout.panes().len()
-                ));
-                if let Some(id) = state.session_id {
-                    let label = format!("{id:032x}");
-                    if ui
-                        .small_button(&label[..8])
-                        .on_hover_text("Copy full felis session ID")
-                        .clicked()
-                    {
-                        ctx.copy_text(label);
-                    }
-                }
-                ui.label("Close to detach · sessions stay alive");
-            });
-        });
         let modal = self.show_attach || self.help || menu_open;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG).inner_margin(6))
