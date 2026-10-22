@@ -651,6 +651,11 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
     key_mods.set(KeyMods::ALT, mods.alt);
     key_mods.set(KeyMods::SUPER, mods.mac_cmd);
     for event in events {
+        if let Some(control) = clipboard_control(&event, mods, cfg!(target_os = "macos")) {
+            *selection = None;
+            session.send(control);
+            continue;
+        }
         let key = match event {
             egui::Event::Paste(text) => {
                 session.send(InputMsg::Paste(text.into_bytes()));
@@ -732,5 +737,31 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
                 location: KeyLocation::Standard,
             }));
         }
+    }
+}
+
+fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) -> Option<InputMsg> {
+    if macos || !mods.ctrl || mods.shift || mods.alt {
+        return None;
+    }
+    let byte = match event {
+        egui::Event::Copy => 3,
+        egui::Event::Cut => 24,
+        egui::Event::Paste(_) => 22,
+        _ => return None,
+    };
+    Some(InputMsg::KeyBytes(vec![byte]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_control_c_interrupts_instead_of_copying() {
+        assert_eq!(
+            clipboard_control(&egui::Event::Copy, egui::Modifiers::CTRL, false),
+            Some(InputMsg::KeyBytes(vec![3]))
+        );
     }
 }
