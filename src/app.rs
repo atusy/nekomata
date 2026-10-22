@@ -736,7 +736,7 @@ fn physical_key(
     mods: egui::Modifiers,
     has_text: bool,
 ) -> Option<felis_protocol::messages::Key> {
-    use felis_protocol::messages::{Key, NamedKey};
+    use felis_protocol::messages::{FKey, Key, NamedKey};
     let named = match key {
         egui::Key::Enter => Some(NamedKey::Enter),
         egui::Key::Tab => Some(NamedKey::Tab),
@@ -752,7 +752,12 @@ fn physical_key(
         egui::Key::ArrowDown => Some(NamedKey::ArrowDown),
         egui::Key::ArrowLeft => Some(NamedKey::ArrowLeft),
         egui::Key::ArrowRight => Some(NamedKey::ArrowRight),
-        _ => None,
+        _ => key
+            .name()
+            .strip_prefix('F')
+            .and_then(|n| n.parse().ok())
+            .and_then(FKey::new)
+            .map(NamedKey::F),
     };
     if let Some(named) = named {
         Some(Key::Named(named))
@@ -786,5 +791,14 @@ mod tests {
     #[test]
     fn composed_alt_text_does_not_emit_a_second_physical_character() {
         assert_eq!(physical_key(egui::Key::E, egui::Modifiers::ALT, true), None);
+    }
+
+    #[test]
+    fn function_keys_reach_terminal_programs_without_text_events() {
+        use felis_protocol::messages::{FKey, Key, NamedKey};
+        assert_eq!(
+            physical_key(egui::Key::F1, egui::Modifiers::NONE, false),
+            Some(Key::Named(NamedKey::F(FKey::lit(1))))
+        );
     }
 }
