@@ -26,15 +26,15 @@ struct Pane {
 }
 
 impl Pane {
-    fn connect_placeholder(session: Option<Arc<Session>>) -> Option<Self> {
-        session.map(|session| Self {
+    fn from_session(session: Arc<Session>) -> Self {
+        Self {
             session,
             dims: (0, 0),
             selection: None,
             reported_focus: None,
             scroll_remainder: 0.0,
             mouse_capture: None,
-        })
+        }
     }
 
     fn connect(
@@ -53,21 +53,14 @@ impl Pane {
         if let Some(id) = workspace {
             env.push(("NEKOMATA_SESSION_ID".into(), id.to_string()));
         }
-        Self {
-            session: Arc::new(Session::start(
-                runtime,
-                ctx.clone(),
-                spec.target,
-                spec.session,
-                cwd,
-                env,
-            )),
-            dims: (0, 0),
-            selection: None,
-            reported_focus: None,
-            scroll_remainder: 0.0,
-            mouse_capture: None,
-        }
+        Self::from_session(Arc::new(Session::start(
+            runtime,
+            ctx.clone(),
+            spec.target,
+            spec.session,
+            cwd,
+            env,
+        )))
     }
 }
 
@@ -286,11 +279,10 @@ impl App {
                                             == Some(id)
                                 })
                             });
-                            let mut pane = Pane::connect_placeholder(
-                                existing.map(|pane| pane.session.clone()),
-                            );
-                            if pane.is_none() {
-                                pane = Some(Pane::connect(
+                            let pane = if let Some(existing) = existing {
+                                Pane::from_session(existing.session.clone())
+                            } else {
+                                Pane::connect(
                                     &self.runtime,
                                     ctx,
                                     self.control.window,
@@ -298,9 +290,9 @@ impl App {
                                     pane_id,
                                     spec.clone(),
                                     None,
-                                ));
-                            }
-                            (pane_id, pane.unwrap())
+                                )
+                            };
+                            (pane_id, pane)
                         })
                         .collect();
                     if let Some(pending) = &mut self.pending_workspace {
