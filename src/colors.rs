@@ -2,13 +2,21 @@
 use felis_protocol::messages::GridMsg;
 use felis_render_core::palette::Theme;
 
-#[derive(Default)]
 pub struct Colors {
+    base: Theme,
     runtime_theme: [Option<[u8; 3]>; 3],
     runtime_palette: std::collections::BTreeMap<u8, [u8; 3]>,
     revision: u64,
 }
 impl Colors {
+    pub fn new(base: Theme) -> Self {
+        Self {
+            base,
+            runtime_theme: [None; 3],
+            runtime_palette: Default::default(),
+            revision: 0,
+        }
+    }
     pub fn apply_grid(&mut self, msg: &GridMsg) {
         use felis_client_core::renderer_effect::{RendererEffect, renderer_effect};
         match renderer_effect(msg) {
@@ -41,11 +49,7 @@ impl Colors {
         for (&index, &rgb) in &self.runtime_palette {
             palette[usize::from(index)] = Some(rgb);
         }
-        felis_render_core::palette::effective_theme(
-            &crate::theme::terminal_theme(),
-            &self.runtime_theme,
-            &palette,
-        )
+        felis_render_core::palette::effective_theme(&self.base, &self.runtime_theme, &palette)
     }
 }
 
@@ -55,9 +59,13 @@ mod tests {
     use felis_protocol::messages::{PaletteAction, ThemeAction, ThemeChannel};
     use felis_render_core::palette::linear_rgba_to_srgb8;
 
+    fn default_colors() -> Colors {
+        Colors::new(crate::theme::TerminalTheme::default().render())
+    }
+
     #[test]
     fn runtime_palette_changes_override_the_configured_palette_until_reset() {
-        let mut colors = Colors::default();
+        let mut colors = default_colors();
         colors.apply_grid(&GridMsg::PaletteColor {
             index: 4,
             action: PaletteAction::Set { rgb: (12, 34, 56) },
@@ -74,7 +82,7 @@ mod tests {
     }
     #[test]
     fn rehydration_drops_colors_from_the_previous_session() {
-        let mut colors = Colors::default();
+        let mut colors = default_colors();
         colors.apply_grid(&GridMsg::ThemeColor {
             channel: ThemeChannel::Foreground,
             action: ThemeAction::Set { rgb: (1, 2, 3) },

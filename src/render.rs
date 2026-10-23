@@ -80,7 +80,7 @@ impl Renderer {
             cfg,
             (*load_fonts(ctx)?).clone(),
         )?;
-        gpu.set_theme(&crate::theme::terminal_theme());
+        gpu.set_theme(&crate::theme::current(ctx).render());
         let view = gpu
             .embedded_texture_view()
             .context("missing embedded GPU target")?;
@@ -307,7 +307,7 @@ mod tests {
             (*load_fonts(&ctx).unwrap()).clone(),
         )
         .unwrap();
-        gpu.set_theme(&crate::theme::terminal_theme());
+        gpu.set_theme(&crate::theme::TerminalTheme::default().render());
         gpu.set_window_focused(false);
         assert!(gpu.embedded_texture_view().is_some());
         let mut shadow = felis_client_core::ShadowScreen::new(2, 4);

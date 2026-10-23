@@ -1,4 +1,6 @@
-use eframe::egui::Color32;
+use std::{collections::BTreeMap, sync::Arc};
+
+use eframe::egui::{self, Color32};
 use felis_protocol::messages::SessionToDaemonMsg;
 
 pub const BG: Color32 = Color32::from_rgb(20, 23, 31);
@@ -27,21 +29,6 @@ pub const ANSI_PALETTE: [[u8; 3]; 16] = [
     [143, 188, 187],
     [236, 239, 244],
 ];
-
-pub fn terminal_theme() -> felis_render_core::palette::Theme {
-    use felis_render_core::palette::{Theme, srgb_to_linear_rgba};
-    let linear = |color: Color32| srgb_to_linear_rgba([color.r(), color.g(), color.b()], 1.0);
-    let mut theme = Theme {
-        fg: linear(FG),
-        bg: linear(BG),
-        cursor: Some(linear(ACCENT)),
-        ..Theme::default()
-    };
-    for (slot, rgb) in theme.palette.iter_mut().zip(ANSI_PALETTE) {
-        *slot = Some(rgb);
-    }
-    theme
-}
 
 pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
 pub const MENU_WIDTH: f32 = 256.0;
@@ -76,16 +63,72 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
-pub fn configure() -> SessionToDaemonMsg {
-    let rgb = |color: Color32| (color.r(), color.g(), color.b());
-    SessionToDaemonMsg::ConfigureTheme {
-        fg: Some(rgb(FG)),
-        bg: Some(rgb(BG)),
-        cursor: Some(rgb(ACCENT)),
-        palette: ANSI_PALETTE
-            .into_iter()
-            .enumerate()
-            .map(|(index, [r, g, b])| (index as u8, (r, g, b)))
-            .collect(),
+/// Colors that felis paints terminal cells with and reports to programs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerminalTheme {
+    fg: [u8; 3],
+    bg: [u8; 3],
+    cursor: [u8; 3],
+    palette: BTreeMap<u8, [u8; 3]>,
+}
+
+impl Default for TerminalTheme {
+    fn default() -> Self {
+        Self {
+            fg: rgb(FG),
+            bg: rgb(BG),
+            cursor: rgb(ACCENT),
+            palette: (0..).zip(ANSI_PALETTE).collect(),
+        }
     }
+}
+
+fn rgb(color: Color32) -> [u8; 3] {
+    [color.r(), color.g(), color.b()]
+}
+
+impl TerminalTheme {
+    /// The renderer's base theme, before programs override colors at runtime.
+    pub fn render(&self) -> felis_render_core::palette::Theme {
+        use felis_render_core::palette::{Theme, srgb_to_linear_rgba};
+        let mut theme = Theme {
+            fg: srgb_to_linear_rgba(self.fg, 1.0),
+            bg: srgb_to_linear_rgba(self.bg, 1.0),
+            cursor: Some(srgb_to_linear_rgba(self.cursor, 1.0)),
+            ..Theme::default()
+        };
+        for (&index, &rgb) in &self.palette {
+            theme.palette[usize::from(index)] = Some(rgb);
+        }
+        theme
+    }
+
+    /// Lets felis answer `OSC 4/10/11/12` queries with the painted colors.
+    pub fn configure(&self) -> SessionToDaemonMsg {
+        let tuple = |[r, g, b]: [u8; 3]| (r, g, b);
+        SessionToDaemonMsg::ConfigureTheme {
+            fg: Some(tuple(self.fg)),
+            bg: Some(tuple(self.bg)),
+            cursor: Some(tuple(self.cursor)),
+            palette: self
+                .palette
+                .iter()
+                .map(|(&index, &rgb)| (index, tuple(rgb)))
+                .collect(),
+        }
+    }
+}
+
+fn theme_id() -> egui::Id {
+    egui::Id::unique("nekomata-terminal-theme")
+}
+
+/// Shares the window's terminal theme with every pane and felis connection.
+pub fn install(ctx: &egui::Context, theme: TerminalTheme) {
+    ctx.data_mut(|data| data.insert_temp(theme_id(), Arc::new(theme)));
+}
+
+pub fn current(ctx: &egui::Context) -> Arc<TerminalTheme> {
+    ctx.data(|data| data.get_temp(theme_id()))
+        .unwrap_or_default()
 }

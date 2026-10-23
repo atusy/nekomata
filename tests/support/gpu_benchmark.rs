@@ -51,7 +51,7 @@ fn measure(host: &RenderState, panes: usize, rows: u16, cols: u16, dirty: &str) 
                 screen: ShadowScreen::new(rows, cols),
                 pull: PullScheduler::new(false),
                 redraw: RedrawScheduler::new(),
-                colors: Default::default(),
+                colors: crate::colors::Colors::new(crate::theme::TerminalTheme::default().render()),
                 images: ImageShadow::new(),
                 session_id: None,
                 error: None,

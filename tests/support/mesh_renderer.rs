@@ -75,7 +75,7 @@ impl Renderer {
             ),
             TextureOptions::NEAREST,
         );
-        let theme = crate::theme::terminal_theme();
+        let theme = crate::theme::TerminalTheme::default().render();
         Ok(Self {
             font_size,
             ppp,

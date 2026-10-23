@@ -150,6 +150,7 @@ impl App {
             }
         }
         cc.egui_ctx.set_fonts(fonts);
+        crate::theme::install(&cc.egui_ctx, crate::theme::TerminalTheme::default());
         crate::render::initialize(cc)?;
         Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
     }

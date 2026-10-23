@@ -198,7 +198,7 @@ impl Session {
             screen: ShadowScreen::new(24, 80),
             pull: felis_client_core::pull::PullScheduler::new(matches!(target, Target::Local(_))),
             redraw: felis_client_core::redraw::RedrawScheduler::new(),
-            colors: crate::colors::Colors::default(),
+            colors: crate::colors::Colors::new(crate::theme::current(&ctx).render()),
             images: felis_client_core::ImageShadow::new(),
             session_id: None,
             error: None,
@@ -286,6 +286,7 @@ async fn run(
     env: Vec<(String, String)>,
     input_failed: Arc<AtomicBool>,
 ) -> Result<()> {
+    let theme = crate::theme::current(&ctx);
     let (mut conn, info, mut relay) = tokio::time::timeout(Duration::from_secs(20), async {
         let carrier = target.carrier();
         if attach.is_none()
@@ -334,7 +335,7 @@ async fn run(
                 .await
                 .context("create felis session")?
         };
-        conn.writer.send(&crate::theme::configure()).await?;
+        conn.writer.send(&theme.configure()).await?;
         conn.writer
             .send(&InputMsg::ColorScheme { dark: true })
             .await?;
@@ -373,7 +374,7 @@ async fn run(
         drop(conn);
         drop(relay.take());
         let (mut recovered, child) = redial_target(&target, info.id).await?;
-        recovered.writer.send(&crate::theme::configure()).await?;
+        recovered.writer.send(&theme.configure()).await?;
         recovered
             .writer
             .send(&InputMsg::ColorScheme { dark: true })
