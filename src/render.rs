@@ -521,6 +521,53 @@ mod tests {
         assert_eq!(renderer.rows[0].backgrounds.calc_bounds().min, moved.min);
     }
     #[test]
+    fn atlas_recycling_invalidates_rows_that_did_not_receive_deltas() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        renderer.glyphs = GlyphIndex::new(
+            (*load_fonts(&ctx).unwrap()).clone(),
+            15.0,
+            NonZeroU32::new(32).unwrap(),
+        );
+        let mut shadow = ShadowScreen::new(3, 8);
+        write_row(&mut shadow, 0, "A");
+        let rect = Rect::from_min_size(Pos2::ZERO, renderer.cell_size() * Vec2::new(8.0, 3.0));
+        draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        // Each frame fits the atlas. Streaming different glyphs eventually
+        // recycles it, at which point the unchanged A row also needs new UVs.
+        for c in '!'..='~' {
+            let prior = renderer.rows[0].backgrounds.clone();
+            let generation = renderer.glyphs.atlas_resets();
+            write_row(&mut shadow, 1, &c.to_string());
+            draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+            if renderer.glyphs.atlas_resets() > generation {
+                assert_eq!(renderer.rows_painted, 3);
+                assert!(!Arc::ptr_eq(&prior, &renderer.rows[0].backgrounds));
+                assert!(!renderer.rows[0].glyphs.is_empty());
+                return;
+            }
+        }
+        panic!("the deliberately small atlas never recycled");
+    }
+
+    #[test]
+    fn physical_glyph_metrics_scale_with_display_density() {
+        let ctx = egui::Context::default();
+        let renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let dense = Renderer::new(&ctx, 15.0, 2.0).unwrap();
+        assert!(dense.matches(15.0, 2.0));
+        assert!(!dense.matches(15.0, 1.0));
+        assert!(!dense.matches(16.0, 2.0));
+        assert!((renderer.cell_size().x - dense.cell_size().x).abs() <= 1.0);
+        assert!((renderer.cell_size().y - dense.cell_size().y).abs() <= 1.0);
+        let m = dense.glyphs.cell_metrics();
+        assert_eq!(
+            dense.cell_size() * 2.0,
+            Vec2::new(m.width as f32, m.height as f32)
+        );
+    }
+
+    #[test]
     fn shared_renderer_preserves_the_existing_terminal_palette() {
         let ctx = egui::Context::default();
         let renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
