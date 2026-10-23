@@ -17,9 +17,9 @@ pub struct Loaded {
     pub font: FontConfig,
     /// `[font] size_px`, the default for sessions that were never zoomed.
     pub font_size: FontSize,
-    /// One line per problem, for the terminal that launched nekomata.
+    /// One entry per problem, for the terminal that launched nekomata.
     pub diagnostics: Vec<String>,
-    /// Set when the file was ignored, so the window can say why.
+    /// Set when the file was ignored, so the window can say why in one line.
     pub error: Option<String>,
 }
 
@@ -57,17 +57,18 @@ fn settle(path: &Path, config: EffectiveConfig, diagnostics: &ConfigDiagnostics)
         })
         .collect();
     let (config, error) = match diagnostics.errors().next() {
-        Some(first) if first.kind == DiagnosticKind::Io => (
-            EffectiveConfig::default(),
-            Some(format!("Used default settings: {first}")),
-        ),
-        Some(first) => (
-            EffectiveConfig::default(),
-            Some(format!(
-                "Ignored {} and used defaults: {first}",
-                path.display()
-            )),
-        ),
+        Some(first) => {
+            // A TOML syntax error carries a multi-line source excerpt; the
+            // window notice keeps its first line and stderr has the rest.
+            let problem = first.to_string();
+            let problem = problem.lines().next().unwrap_or_default();
+            let notice = if first.kind == DiagnosticKind::Io {
+                format!("Used default settings: {problem}")
+            } else {
+                format!("Ignored {} and used defaults: {problem}", path.display())
+            };
+            (EffectiveConfig::default(), Some(notice))
+        }
         None => (config, None),
     };
     let theme = TerminalTheme::from_config(&config, &mut |warning| {
@@ -251,6 +252,7 @@ mod tests {
                 error.starts_with("Ignored /config/felis/config.toml and used defaults: "),
                 "{error}"
             );
+            assert!(!error.contains('\n'), "{error:?}");
             assert!(
                 loaded
                     .diagnostics
