@@ -105,3 +105,27 @@ fn run_felis(command: &[&str], args: &[String]) -> ! {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_geometry_is_restored_from_the_app_id_store() {
+        let options = native_options();
+
+        assert!(options.persist_window);
+        assert!(options.persistence_path.is_none());
+        assert!(options.viewport.app_id.is_none());
+        let dir = eframe::storage_dir(APP_ID).expect("eframe persistence storage directory");
+        assert_eq!(dir.file_name(), Some(std::ffi::OsStr::new("nekomata")));
+    }
+
+    #[test]
+    fn first_launch_uses_the_default_window_size() {
+        let viewport = native_options().viewport;
+
+        assert_eq!(viewport.inner_size, Some([1100.0, 740.0].into()));
+        assert_eq!(viewport.min_inner_size, Some([480.0, 320.0].into()));
+    }
+}
