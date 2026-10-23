@@ -378,7 +378,7 @@ mod tests {
     };
     use felis_protocol::{RowPayload, messages::GridMsg};
 
-    fn write_row(shadow: &mut ShadowScreen, row: u16, text: &str) {
+    pub(super) fn write_row(shadow: &mut ShadowScreen, row: u16, text: &str) {
         let mut cells: Vec<Cell> = text
             .chars()
             .map(|c| Cell {
@@ -517,3 +517,7 @@ mod tests {
         assert_eq!(renderer.rows[0].backgrounds.calc_bounds().min, moved.min);
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/render_benchmark.rs"]
+mod benchmark;
