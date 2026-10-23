@@ -126,7 +126,7 @@ fn measure(host: &RenderState, panes: usize, rows: u16, cols: u16, dirty: &str) 
 }
 
 #[test]
-#[ignore = "release GPU submission benchmark; run in Vitro with --release --ignored --nocapture"]
+#[ignore = "release GPU submission benchmark; run with --release --ignored --nocapture"]
 fn benchmark_gpu_submission() {
     if cfg!(debug_assertions) {
         panic!("use --release");
@@ -155,15 +155,20 @@ fn benchmark_gpu_submission() {
         target_format: format,
         renderer,
     };
-    println!("panes,grid,damage,mesh_cpu_ms,gpu_submit_cpu_ms,ratio");
+    println!(
+        "panes,grid,damage,legacy_cpu_ms,mesh_cpu_ms,gpu_submit_cpu_ms,mesh_to_gpu,legacy_to_gpu"
+    );
     for (panes, rows, cols) in [(1, 24, 80), (1, 60, 200), (4, 40, 120)] {
         for dirty in ["none", "one row", "all rows"] {
+            let (legacy, _) =
+                crate::mesh_baseline::benchmark::measure(false, panes, rows, cols, dirty);
             let (mesh, _) =
                 crate::mesh_baseline::benchmark::measure(true, panes, rows, cols, dirty);
             let gpu = measure(&host, panes, rows, cols, dirty);
             println!(
-                "{panes},{cols}x{rows},{dirty},{mesh:.4},{gpu:.4},{:.2}",
-                mesh / gpu
+                "{panes},{cols}x{rows},{dirty},{legacy:.4},{mesh:.4},{gpu:.4},{:.2},{:.2}",
+                mesh / gpu,
+                legacy / gpu
             );
         }
     }
