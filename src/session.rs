@@ -7,8 +7,8 @@ use std::sync::{
 use anyhow::{Context, Result, bail};
 use eframe::egui;
 use felis_client_core::{
-    Carrier, CarrierConnection, Offer, RemoteSpawn, ShadowScreen, connect_carrier,
-    connect_or_spawn_daemon,
+    Carrier, CarrierConnection, Offer, OutgoingFrame, OutgoingQueue, RemoteSpawn, ShadowScreen,
+    connect_carrier, connect_or_spawn_daemon,
 };
 use felis_protocol::{
     MessageKind,
@@ -16,7 +16,7 @@ use felis_protocol::{
 };
 use felis_transport::{Delivery, Incoming};
 use std::{path::PathBuf, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(from = "StoredTarget")]
@@ -94,12 +94,41 @@ pub struct State {
     pub clipboard: Option<String>,
 }
 
+#[derive(Default)]
+struct InputQueue {
+    frames: Mutex<OutgoingQueue>,
+    ready: Notify,
+}
+
+impl InputQueue {
+    fn push(&self, msg: &InputMsg) -> Result<()> {
+        let frame = OutgoingFrame::input(msg)?;
+        self.frames
+            .lock()
+            .unwrap()
+            .push(frame)
+            .map_err(|full| anyhow::anyhow!("input queue exceeded {} bytes", full.cap))?;
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    async fn next(&self) -> OutgoingFrame {
+        loop {
+            let notified = self.ready.notified();
+            if let Some(frame) = self.frames.lock().unwrap().pop() {
+                return frame;
+            }
+            notified.await;
+        }
+    }
+}
+
 pub struct Session {
     pub state: Arc<Mutex<State>>,
     pub input_failed: AtomicBool,
     pub target: Target,
     pub attachment: Option<String>,
-    tx: mpsc::Sender<InputMsg>,
+    tx: Arc<InputQueue>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -138,7 +167,8 @@ impl Session {
             exited: false,
             clipboard: None,
         }));
-        let (tx, rx) = mpsc::channel(256);
+        let tx = Arc::new(InputQueue::default());
+        let rx = tx.clone();
         let attachment = attach.clone();
         let shared = state.clone();
         let destination = target.clone();
@@ -178,7 +208,7 @@ impl Session {
     }
 
     pub fn send(&self, msg: InputMsg) {
-        if self.tx.try_send(msg).is_err() {
+        if self.tx.push(&msg).is_err() {
             self.input_failed.store(true, Ordering::Relaxed);
         }
     }
@@ -194,7 +224,7 @@ impl Drop for Session {
 async fn run(
     shared: Arc<Mutex<State>>,
     ctx: egui::Context,
-    mut rx: mpsc::Receiver<InputMsg>,
+    rx: Arc<InputQueue>,
     target: Target,
     attach: Option<String>,
     cwd: Option<String>,
@@ -260,9 +290,8 @@ async fn run(
     ctx.request_repaint();
     loop {
         tokio::select! {
-            command = rx.recv() => {
-                let Some(command) = command else { return Ok(()) };
-                conn.writer.send(&command).await?;
+            command = rx.next() => {
+                conn.writer.send_checked(command.frame()).await?;
             }
             frame = conn.next_frame() => {
                 let frame = frame?.context("felis daemon closed the connection")?;
@@ -321,6 +350,36 @@ mod tests {
         sync::mpsc as sync_mpsc,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn resize_storms_keep_only_the_latest_unsent_size() {
+        use felis_protocol::messages::RequestedDims;
+        let queue = InputQueue::default();
+        for cols in 1..=1000 {
+            queue
+                .push(&InputMsg::Resize {
+                    dims: RequestedDims {
+                        rows: 24,
+                        cols,
+                        pixel_w: 0,
+                        pixel_h: 0,
+                    },
+                })
+                .unwrap();
+        }
+        let expected = OutgoingFrame::input(&InputMsg::Resize {
+            dims: RequestedDims {
+                rows: 24,
+                cols: 1000,
+                pixel_w: 0,
+                pixel_h: 0,
+            },
+        })
+        .unwrap();
+        let latest = queue.frames.lock().unwrap().pop().unwrap();
+        assert_eq!(latest.frame().body(), expected.frame().body());
+        assert!(queue.frames.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn retained_ssh_targets_accept_old_hosts_and_round_trip_remote_sockets() {
