@@ -1339,12 +1339,14 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     }
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 0, BG);
-    let text_rect = rect;
     let font = FontId::monospace(font_size);
     let cw = ui.fonts_mut(|f| f.glyph_width(&font, 'M'));
     let ch = (font_size * 1.4).ceil();
-    let cols = (text_rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
-    let rows = (text_rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
+    let cols = (rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
+    let rows = (rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
+    // Split the unused fractional row between the top and bottom margins.
+    let vertical_margin = ((rect.height() - f32::from(rows) * ch) / 2.0).max(0.0);
+    let text_rect = rect.shrink2(Vec2::new(0.0, vertical_margin));
     if pane.dims != (rows, cols) {
         pane.dims = (rows, cols);
         pane.selection = None;
@@ -1382,19 +1384,16 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                 bg = Color32::from_rgb(64, 78, 94);
             }
             let pos = text_rect.min + Vec2::new(f32::from(col) * cw, f32::from(row) * ch);
-            // A terminal has whole cells, but the pane can have a fractional
-            // final row/column. Continue the edge backgrounds into that space.
+            // Continue the last column's background to the right edge. Keep
+            // row heights fixed so bottom bars don't grow into the unused
+            // fractional row below the terminal grid.
             let max = Pos2::new(
                 if col + 1 == visible_cols {
                     text_rect.right()
                 } else {
                     pos.x + cw
                 },
-                if row + 1 == visible_rows {
-                    text_rect.bottom()
-                } else {
-                    pos.y + ch
-                },
+                pos.y + ch,
             );
             painter.rect_filled(Rect::from_min_max(pos, max), 0, bg);
         }
