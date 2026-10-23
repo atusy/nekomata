@@ -137,12 +137,15 @@ nekomata panes attach 2 --daemon /path/to/felis.sock --session SESSION_ID
 nekomata panes attach --ssh dev-server --session SESSION_ID
 nekomata panes attach 2 --ssh user@host --session SESSION_ID
 
+# SSH先の指定ソケットのdaemonへ切り替える
+nekomata panes attach --ssh dev-server --daemon /run/user/1000/felis.sock --session SESSION_ID
+
 # 複数のGUIがある場合はウィンドウを指定
 nekomata panes list --window WINDOW_ID
 nekomata panes attach 2 --window WINDOW_ID --session SESSION_ID
 ```
 
-ペインIDはnekomataセッション内のIDで、GUI再起動後も維持します。felisのセッションIDとは別です。省略すると、GUIが指示を受け取った時点のactiveなペインを使います。`--daemon` と `--ssh` を省略すると対象ペインの現在の接続先を引き継ぎます。ローカルソケットの相対パスは、CLIを実行したディレクトリを基準に解決します。セッションIDはfelisが一意に解決できる短縮形も使えます。
+ペインIDはnekomataセッション内のIDで、GUI再起動後も維持します。felisのセッションIDとは別です。省略すると、GUIが指示を受け取った時点のactiveなペインを使います。`--daemon` と `--ssh` を省略すると対象ペインの現在の接続先を引き継ぎます。`--daemon` だけを指定した場合はローカルソケットを使い、相対パスはCLIを実行したディレクトリを基準に解決します。`--ssh` と併用した場合はSSH先のソケットを使い、相対パスはリモートのrelay起動ディレクトリを基準に解決します。空白や引用符を含むパスも、リモートシェルで展開せずそのまま渡します。セッションIDはfelisが一意に解決できる短縮形も使えます。
 
 接続先のdaemonは起動済みで、指定セッションが存在している必要があります。接続とattachが成功してからペインを切り替え、元のセッションはdetachして残します。失敗した場合は元のペインを維持し、CLIがエラーを返します。同じペインへのattachが進行中の場合、次のattach要求はエラーになります。分割して新しいシェルを作るときも元ペインの接続先を引き継ぎます。新しいタブは起動時のローカルdaemonを使います。
 
@@ -150,7 +153,7 @@ nekomata panes attach 2 --window WINDOW_ID --session SESSION_ID
 
 SSHの指示はGUIと同じマシンで実行します。`~/.ssh/config` のホスト名や `user@host` を使えます。SSH先には互換性のある `felis-daemon` がPATH上に必要です。公開鍵・SSH agentなどによる非対話認証を使い、パスワード入力や初回ホスト鍵確認は事前に通常のsshで済ませてください。リモートで新規シェルを作る際には、ローカルのシェルパス・cwd・環境変数を転送しません。
 
-固定しているfelisの公開APIではSSH先のソケットを指定できないため、`--ssh` と `--daemon` の併用は未対応です。detach専用CLI、自動再接続は提供しません。
+SSH先の既定ソケットを使う場合は `--daemon` を省略します。接続先を省略した再attachや分割では、ホストとソケットの両方を引き継ぎます。detach専用CLI、自動再接続は提供しません。
 
 ## 開発・検証
 
