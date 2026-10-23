@@ -38,6 +38,7 @@ pub enum Request {
     Prepare(Selection),
     Finish { snapshot: Option<Snapshot> },
     Stop,
+    Detach,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,6 +365,12 @@ fn handle(
             *pending = None;
             Ok(Payload::Done)
         }
+        Request::Detach => {
+            registry.release(owner, current.take());
+            *pending = None;
+            *window = None;
+            Ok(Payload::Done)
+        }
         Request::Stop => {
             ensure!(
                 registry.sessions.values().all(|s| s.owner.is_none()),
@@ -610,5 +617,27 @@ mod tests {
             .unwrap();
         assert!(result.unwrap_err().to_string().contains("too large"));
         assert!(registry.lock().unwrap().sessions.is_empty());
+    }
+    #[tokio::test]
+    async fn acknowledged_detach_makes_the_session_available_before_the_connection_closes() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let (id, _) = session(
+            exchange(&mut client, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        exchange(&mut client, Request::Detach).await.unwrap();
+        let (mut replacement, replacement_task) = connection(&registry, 2);
+        let (restored, _) = session(
+            exchange(&mut replacement, Request::Open { window: 22 })
+                .await
+                .unwrap(),
+        );
+        assert_eq!(restored, id);
+        drop(client);
+        drop(replacement);
+        let _ = task.await;
+        let _ = replacement_task.await;
     }
 }
