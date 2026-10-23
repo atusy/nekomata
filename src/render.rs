@@ -309,7 +309,12 @@ fn encode(
         mesh.add_rect_with_uv(
             bounds(origin, ppp, g.origin_px, g.size_px),
             uv,
-            srgb(g.color, colors),
+            match g.atlas {
+                AtlasKind::Mono => srgb(g.color, colors),
+                AtlasKind::Color => {
+                    Color32::from_white_alpha((g.color[3].clamp(0.0, 1.0) * 255.0).round() as u8)
+                }
+            },
         );
     }
     if !mesh.is_empty() {
@@ -515,6 +520,42 @@ mod tests {
         draw(&ctx, &mut renderer, &mut shadow, moved, false, None);
         assert_eq!(renderer.rows_painted, 2);
         assert_eq!(renderer.rows[0].backgrounds.calc_bounds().min, moved.min);
+    }
+    #[test]
+    fn color_glyphs_keep_their_own_rgb_and_only_inherit_opacity() {
+        let ctx = egui::Context::default();
+        let texture = ctx.load_texture(
+            "test atlas",
+            ColorImage::filled([2, 2], Color32::WHITE),
+            TextureOptions::NEAREST,
+        );
+        let mut paint = RowPaint::default();
+        paint
+            .glyphs
+            .push(felis_render_core::display_list::GlyphDraw {
+                origin_px: [0.0, 0.0],
+                size_px: [1.0, 1.0],
+                atlas: AtlasKind::Color,
+                src_min_px: [0.0, 0.0],
+                src_max_px: [1.0, 1.0],
+                color: [1.0, 0.0, 0.0, 0.5],
+            });
+        let row = encode(
+            &paint,
+            RowFrame::plain(false),
+            Geometry {
+                rect: Rect::from_min_size(Pos2::ZERO, Vec2::splat(2.0)),
+                ppp: 1.0,
+                grid_width: 2.0,
+            },
+            &texture,
+            &texture,
+            &mut HashMap::new(),
+        );
+        assert_eq!(
+            row.glyphs[0].vertices[0].color,
+            Color32::from_white_alpha(128)
+        );
     }
 }
 
