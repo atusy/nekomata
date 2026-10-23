@@ -111,7 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn window_geometry_is_restored_from_the_app_id_store() {
+    fn window_geometry_persists_under_the_nekomata_app_id() {
         let options = native_options();
 
         assert!(options.persist_window);
