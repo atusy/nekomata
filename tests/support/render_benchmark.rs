@@ -22,7 +22,13 @@ fn configure_legacy_font(ctx: &egui::Context) {
     }
 }
 
-fn measure(shared: bool, panes: usize, rows: u16, cols: u16, dirty: &str) -> (f64, usize) {
+pub(crate) fn measure(
+    shared: bool,
+    panes: usize,
+    rows: u16,
+    cols: u16,
+    dirty: &str,
+) -> (f64, usize) {
     let ctx = egui::Context::default();
     configure_legacy_font(&ctx);
     let mut screens: Vec<_> = (0..panes).map(|_| ShadowScreen::new(rows, cols)).collect();

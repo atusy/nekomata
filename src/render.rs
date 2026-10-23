@@ -366,3 +366,7 @@ mod tests {
         assert_eq!(sample(3.5), [12, 34, 56, 255]);
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/gpu_benchmark.rs"]
+mod benchmark;

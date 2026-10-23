@@ -727,4 +727,4 @@ mod tests {
 
 #[cfg(test)]
 #[path = "render_benchmark.rs"]
-mod benchmark;
+pub(crate) mod benchmark;
