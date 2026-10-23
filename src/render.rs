@@ -27,6 +27,24 @@ pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result
         "terminal rendering requires compatible texture views; select a Vulkan, Metal or DX12 adapter"
     );
     let cfg = faces(font, std::env::var_os("NEKOMATA_FONT").map(Into::into));
+    if cfg.font_files.is_empty() && !named_families(&cfg).is_empty() {
+        // felis reports a missing family only through `tracing`, which
+        // nekomata does not install, and then silently skips it.
+        match felis_render_wgpu::installed_families() {
+            Ok(installed) => {
+                let installed: Vec<_> = installed.into_iter().map(|f| f.name).collect();
+                for (key, family) in missing_families(&cfg, &installed) {
+                    let instead = if key == "font.family" {
+                        "using the system monospace font"
+                    } else {
+                        "skipping it"
+                    };
+                    eprintln!("nekomata: warning: {key}: {family:?} is not installed; {instead}");
+                }
+            }
+            Err(error) => eprintln!("nekomata: warning: cannot list installed fonts: {error}"),
+        }
+    }
     cc.egui_ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone());
         data.insert_temp(faces_id(), Arc::new(cfg));
@@ -62,6 +80,44 @@ fn faces(font: &FontConfig, bundled: Option<PathBuf>) -> RendererConfig {
             .collect(),
         ..Default::default()
     }
+}
+
+/// `(config key, family)` for every family the configuration names.
+fn named_families(cfg: &RendererConfig) -> Vec<(&'static str, &str)> {
+    let mut named: Vec<_> = cfg
+        .font_family
+        .as_deref()
+        .map(|family| ("font.family", family))
+        .into_iter()
+        .collect();
+    named.extend(
+        cfg.font_fallbacks
+            .iter()
+            .filter_map(|face| face.family.as_deref())
+            .map(|family| ("font.fallback", family)),
+    );
+    for (key, face) in [
+        ("font.bold.family", &cfg.font_bold),
+        ("font.italic.family", &cfg.font_italic),
+        ("font.bold_italic.family", &cfg.font_bold_italic),
+    ] {
+        named.extend(face.family.as_deref().map(|family| (key, family)));
+    }
+    named
+}
+
+fn missing_families<'a>(
+    cfg: &'a RendererConfig,
+    installed: &[String],
+) -> Vec<(&'static str, &'a str)> {
+    named_families(cfg)
+        .into_iter()
+        .filter(|(_, family)| {
+            !installed
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(family))
+        })
+        .collect()
 }
 
 fn configured_faces(ctx: &egui::Context) -> Arc<RendererConfig> {
@@ -382,6 +438,30 @@ mod tests {
         );
         assert_eq!(cfg.font_bold_italic, FaceSpec::default());
         assert_eq!(cfg.font_size_physical_px, None);
+    }
+
+    #[test]
+    fn families_missing_from_the_system_are_reported_by_key() {
+        let loaded = crate::config::resolve(
+            r#"
+            [font]
+            family = "jetbrains mono"
+            fallback = [{ family = "Noto Sans CJK JP" }, { family = "Typo Sans" }]
+
+            [font.italic]
+            family = "Victor Mono"
+            "#,
+        );
+        let cfg = faces(&loaded.font, None);
+        let installed = ["JetBrains Mono".to_owned(), "Noto Sans CJK JP".to_owned()];
+        assert_eq!(
+            missing_families(&cfg, &installed),
+            [
+                ("font.fallback", "Typo Sans"),
+                ("font.italic.family", "Victor Mono"),
+            ]
+        );
+        assert!(named_families(&faces(&FontConfig::default(), None)).is_empty());
     }
 
     #[test]
