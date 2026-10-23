@@ -1,5 +1,54 @@
 use eframe::egui::{Color32, Painter, Rect, Vec2};
 
+/// Fit font fallback glyphs to the columns assigned by the terminal, keeping
+/// their height and texture coordinates intact.
+pub fn paint_text(
+    painter: &Painter,
+    text: &str,
+    font: eframe::egui::FontId,
+    cell: Rect,
+    color: Color32,
+    bold: bool,
+) {
+    let mut galley = painter.layout_no_wrap(text.to_owned(), font, color);
+    let bold_offset = if bold {
+        0.4_f32.min(cell.width() / 2.0)
+    } else {
+        0.0
+    };
+    let left = galley.mesh_bounds.left().min(0.0);
+    let right = galley.mesh_bounds.right().max(galley.rect.right());
+    let available = (cell.width() - bold_offset).max(0.0);
+    let width = right - left;
+    if width > 0.0 && (width > available || left < 0.0) {
+        let scale = (available / width).min(1.0);
+        let fit_x = |x: f32| (x - left) * scale;
+        let fit_rect = |mut rect: Rect| {
+            rect.min.x = fit_x(rect.min.x);
+            rect.max.x = fit_x(rect.max.x);
+            rect
+        };
+        // Clone only overflowing layouts; egui's shared layout cache stays intact.
+        let fitted = std::sync::Arc::make_mut(&mut galley);
+        fitted.rect = fit_rect(fitted.rect);
+        fitted.mesh_bounds = fit_rect(fitted.mesh_bounds);
+        for placed in &mut fitted.rows {
+            placed.pos.x *= scale;
+            let row = std::sync::Arc::make_mut(&mut placed.row);
+            row.size.x *= scale;
+            row.visuals.mesh_bounds = fit_rect(row.visuals.mesh_bounds);
+            for vertex in &mut row.visuals.mesh.vertices {
+                vertex.pos.x = fit_x(vertex.pos.x);
+            }
+        }
+    }
+    let painter = painter.with_clip_rect(cell);
+    painter.galley(cell.min, galley.clone(), color);
+    if bold {
+        painter.galley(cell.min + Vec2::new(bold_offset, 0.0), galley, color);
+    }
+}
+
 pub fn paint_braille(painter: &Painter, ch: char, cell: Rect, color: Color32) -> bool {
     if !('\u{2800}'..='\u{28ff}').contains(&ch) {
         return false;
@@ -26,6 +75,35 @@ pub fn paint_braille(painter: &Painter, ch: char, cell: Rect, color: Color32) ->
 mod tests {
     use super::*;
     use eframe::egui::{self, Pos2, Shape, Vec2};
+
+    #[test]
+    fn oversized_text_mesh_stays_inside_its_cell_even_when_bold() {
+        let ctx = egui::Context::default();
+        let cell = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(3.0, 30.0));
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            paint_text(
+                &ctx.layer_painter(egui::LayerId::background()),
+                "W",
+                egui::FontId::monospace(20.0),
+                cell,
+                Color32::RED,
+                true,
+            );
+        });
+        let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        assert!(!primitives.is_empty());
+        for primitive in primitives {
+            if let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive {
+                for vertex in mesh.vertices {
+                    assert!(
+                        vertex.pos.x >= cell.left() && vertex.pos.x <= cell.right(),
+                        "glyph escaped its allocated columns: {:?}",
+                        vertex.pos
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn braille_dots_render_without_a_font_in_unicode_positions() {
