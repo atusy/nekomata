@@ -109,6 +109,15 @@ impl App {
         style.visuals.panel_fill = BG;
         style.visuals.selection.bg_fill = ACCENT.gamma_multiply(0.3);
         style.spacing.button_padding = Vec2::new(12.0, 7.0);
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, FontId::proportional(14.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, FontId::proportional(14.0));
+        style.visuals.window_fill = TAB_BAR_BG;
+        style.visuals.window_stroke = Stroke::new(1.0_f32, crate::theme::MENU_BORDER);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(8);
         cc.egui_ctx.set_style(style);
         // Nix supplies UDEV Gothic NF; system CJK fonts remain a fallback.
         let mut fonts = egui::FontDefinitions::default();
@@ -122,9 +131,10 @@ impl App {
                 fonts
                     .font_data
                     .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
-                for family in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
-                    let family = fonts.families.entry(family).or_default();
-                    if index == 0 {
+                for kind in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
+                    let terminal = kind == egui::FontFamily::Monospace;
+                    let family = fonts.families.entry(kind).or_default();
+                    if index == 0 && terminal {
                         family.insert(0, "cjk".into());
                     } else {
                         family.push("cjk".into());
@@ -911,27 +921,48 @@ impl eframe::App for App {
                             .frame(false)
                             .min_size(Vec2::splat(30.0)),
                     )
+                    .config(
+                        egui::containers::menu::MenuConfig::new()
+                            .style(crate::theme::menu_style)
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                    )
                     .ui(ui, |ui| {
+                        ui.set_width(crate::theme::MENU_WIDTH);
                         for (label, command) in [
                             ("New session", Action::NewSession),
-                            ("Sessions…", Action::Sessions),
-                            ("+ Tab", Action::NewTab),
-                            ("Split ↔", Action::Split(Axis::Horizontal)),
-                            ("Split ↕", Action::Split(Axis::Vertical)),
-                            ("Next pane", Action::NextPane),
+                            ("Switch session…", Action::Sessions),
                         ] {
-                            if ui.button(label).clicked() {
+                            if menu_item(ui, label, "").clicked() {
                                 action = Some(command);
                                 ui.close();
                             }
                         }
-                        ui.separator();
-                        for (label, command) in [
-                            ("Close pane", Action::ClosePane),
-                            ("Close tab", Action::CloseTab),
+                        menu_separator(ui);
+                        for (label, shortcut, command) in [
+                            ("New tab", "Alt+C", Action::NewTab),
+                            (
+                                "Split right",
+                                "Alt+W  Alt+V",
+                                Action::Split(Axis::Horizontal),
+                            ),
+                            ("Split below", "Alt+W  Alt+S", Action::Split(Axis::Vertical)),
+                            ("Next pane", "", Action::NextPane),
                         ] {
-                            if ui
-                                .button(label)
+                            if menu_item(ui, label, shortcut).clicked() {
+                                action = Some(command);
+                                ui.close();
+                            }
+                        }
+                        if menu_item(ui, "Attach terminal…", "").clicked() {
+                            self.picker.open(&self.runtime, ctx);
+                            ui.close();
+                        }
+                        menu_separator(ui);
+                        for (label, shortcut, command) in [
+                            ("Close pane", "Alt+W  C", Action::ClosePane),
+                            ("Close tab", "", Action::CloseTab),
+                        ] {
+                            if menu_item(ui, label, shortcut)
                                 .on_hover_text("Detach; keep the shell running")
                                 .clicked()
                             {
@@ -939,22 +970,53 @@ impl eframe::App for App {
                                 ui.close();
                             }
                         }
-                        ui.separator();
-                        if ui.button("Attach…").clicked() {
-                            self.picker.open(&self.runtime, ctx);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Smaller text").clicked() {
-                            self.font_size = (self.font_size / 1.1).max(6.0);
-                            ui.close();
-                        }
-                        if ui.button("Larger text").clicked() {
-                            self.font_size = (self.font_size * 1.1).min(72.0);
-                            ui.close();
-                        }
-                        ui.separator();
-                        if ui.button("Help").clicked() {
+                        menu_separator(ui);
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.0);
+                            ui.label(
+                                egui::RichText::new("Text size")
+                                    .color(TAB_INACTIVE_FG)
+                                    .size(12.0),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .add_sized(
+                                            [30.0, 28.0],
+                                            egui::Button::new("+").fill(TAB_HOVER_BG),
+                                        )
+                                        .on_hover_text("Larger text")
+                                        .clicked()
+                                    {
+                                        self.font_size = (self.font_size * 1.1).min(72.0);
+                                    }
+                                    if ui
+                                        .add_sized(
+                                            [52.0, 28.0],
+                                            egui::Button::new(format!("{:.0} pt", self.font_size))
+                                                .fill(TAB_HOVER_BG),
+                                        )
+                                        .on_hover_text("Reset text size")
+                                        .clicked()
+                                    {
+                                        self.font_size = 15.0;
+                                    }
+                                    if ui
+                                        .add_sized(
+                                            [30.0, 28.0],
+                                            egui::Button::new("−").fill(TAB_HOVER_BG),
+                                        )
+                                        .on_hover_text("Smaller text")
+                                        .clicked()
+                                    {
+                                        self.font_size = (self.font_size / 1.1).max(6.0);
+                                    }
+                                },
+                            );
+                        });
+                        menu_separator(ui);
+                        if menu_item(ui, "Keyboard shortcuts", "").clicked() {
                             self.help = true;
                             ui.close();
                         }
@@ -1162,6 +1224,23 @@ fn focus_terminal(ctx: &egui::Context) {
             },
         );
     });
+}
+
+fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
+    ui.add_sized(
+        [ui.available_width(), crate::theme::MENU_ROW_HEIGHT],
+        egui::Button::new(label).shortcut_text(
+            egui::RichText::new(shortcut)
+                .size(11.0)
+                .color(TAB_INACTIVE_FG),
+        ),
+    )
+}
+
+fn menu_separator(ui: &mut egui::Ui) {
+    ui.add_space(5.0);
+    ui.separator();
+    ui.add_space(5.0);
 }
 
 fn draw_layout(
