@@ -1,6 +1,9 @@
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Gui,
+    DaemonRun,
+    DaemonStop,
+    SessionsList,
     List(Vec<String>),
     Help,
     Pane {
@@ -21,6 +24,8 @@ pub enum PaneAction {
 }
 
 pub const HELP: &str = "nekomata\n\
+nekomata sessions list\n\
+nekomata daemon stop\n\
 nekomata felis sessions list [--format human|json]\n\
 nekomata panes list [--window WINDOW_ID]\n\
 nekomata panes attach [PANE_ID] --session SESSION [--daemon SOCKET | --ssh HOST] [--window WINDOW_ID]";
@@ -33,6 +38,9 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         .as_slice()
     {
         [] => Ok(Command::Gui),
+        ["daemon", "run"] => Ok(Command::DaemonRun),
+        ["daemon", "stop"] => Ok(Command::DaemonStop),
+        ["sessions", "list"] => Ok(Command::SessionsList),
         ["--help" | "-h"]
         | ["felis", "--help" | "-h"]
         | ["felis", "sessions", "--help" | "-h"]
@@ -230,7 +238,6 @@ mod tests {
             Ok(Command::List(vec!["--format".into(), "json".into()]))
         );
         for command in [
-            vec!["sessions", "list"],
             vec!["sessions", "attach"],
             vec!["sessions", "detach", "abc"],
             vec!["--attach", "abc"],

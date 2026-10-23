@@ -45,13 +45,17 @@ pub struct Server {
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_MESSAGE: u64 = 65536;
 
-fn directory() -> Result<PathBuf> {
+pub(crate) fn directory() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("HOME is required for GUI discovery")?;
     let owner = std::fs::metadata(&home)?.uid();
     let mut hash = DefaultHasher::new();
     home.hash(&mut hash);
     // Keep Unix socket paths short, including on macOS.
-    let path = PathBuf::from("/tmp").join(format!("nekomata-{owner}-{:x}", hash.finish()));
+    let path = std::env::var_os("NEKOMATA_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from("/tmp").join(format!("nekomata-{owner}-{:x}", hash.finish()))
+        });
     match std::fs::DirBuilder::new().mode(0o700).create(&path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -172,7 +176,11 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
             let mut candidates = Vec::new();
             for entry in std::fs::read_dir(&directory)? {
                 let path = entry?.path();
-                if path.extension().is_some_and(|s| s == "sock")
+                if path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.parse::<u32>().is_ok())
+                    && path.extension().is_some_and(|s| s == "sock")
                     && matches!(
                         tokio::time::timeout(
                             Duration::from_millis(250),

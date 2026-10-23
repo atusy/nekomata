@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod control;
+mod daemon;
 mod glyph;
 mod layout;
 mod picker;
@@ -17,6 +18,23 @@ fn main() -> eframe::Result {
     });
     match command {
         cli::Command::Gui => {}
+        cli::Command::DaemonRun => {
+            if let Err(error) = daemon::run() {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        cli::Command::DaemonStop | cli::Command::SessionsList => {
+            match daemon::command(matches!(command, cli::Command::DaemonStop)) {
+                Ok(output) => println!("{output}"),
+                Err(error) => {
+                    eprintln!("{error:#}");
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
         cli::Command::Pane { window, action } => {
             match control::run(window, action) {
                 Ok(output) => println!("{output}"),

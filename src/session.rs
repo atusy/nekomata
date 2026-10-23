@@ -18,7 +18,7 @@ use felis_transport::{Delivery, Incoming};
 use std::{path::PathBuf, time::Duration};
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Target {
     Local(PathBuf),
     Ssh(String),
