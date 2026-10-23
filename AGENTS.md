@@ -38,6 +38,8 @@ Rust tests live in inline `#[cfg(test)]` modules. Use descriptive behavior-orien
 
 ## Commit & Pull Request Guidelines
 
+Always commit incrementally as work progresses. Create a small, cohesive commit for each completed logical change; do not accumulate unrelated changes into a single final commit. Preserve pre-existing worktree changes unless explicitly asked to include them.
+
 Make small, behavior-focused commits using Conventional Commits, such as `fix: honor the terminal cursor shape` or `docs: clarify upstream location`. Explain motivation in the commit body. Review staged diffs and run relevant checks before committing.
 
 PRs should describe the problem, resulting behavior, and validation. Link related issues when applicable; include screenshots for visual changes and disclose unverified platform behavior. Closing a pane detaches its session; preserve that contract unless explicitly changing it.
