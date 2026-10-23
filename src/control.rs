@@ -163,12 +163,39 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
             }
         }
     };
+    let session = window
+        .is_none()
+        .then(|| {
+            std::env::var("NEKOMATA_SESSION_ID")
+                .ok()
+                .and_then(|id| id.parse::<u64>().ok())
+        })
+        .flatten();
     let window = window.or_else(|| {
         std::env::var("NEKOMATA_WINDOW_ID")
             .ok()
             .and_then(|id| id.parse().ok())
     });
     tokio::runtime::Runtime::new()?.block_on(async {
+        let window = if let Some(id) = session {
+            let mut stream = UnixStream::connect(crate::daemon::socket()?)
+                .await
+                .context("connect to the shell's nekomata session daemon")?;
+            let crate::daemon::Payload::Sessions(sessions) =
+                crate::daemon::exchange(&mut stream, crate::daemon::Request::List).await?
+            else {
+                bail!("unexpected session list response");
+            };
+            Some(
+                sessions
+                    .into_iter()
+                    .find(|session| session.id == id)
+                    .and_then(|session| session.window)
+                    .context("the shell's nekomata session is not attached to a window")?,
+            )
+        } else {
+            window
+        };
         let directory = directory()?;
         let path = if let Some(id) = window {
             directory.join(format!("{id}.sock"))

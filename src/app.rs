@@ -30,22 +30,20 @@ impl Pane {
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
         window: u32,
+        workspace: Option<u64>,
         id: u64,
         spec: PaneSpec,
         cwd: Option<String>,
     ) -> Self {
+        let mut env = vec![
+            ("NEKOMATA_WINDOW_ID".into(), window.to_string()),
+            ("NEKOMATA_PANE_ID".into(), id.to_string()),
+        ];
+        if let Some(id) = workspace {
+            env.push(("NEKOMATA_SESSION_ID".into(), id.to_string()));
+        }
         Self {
-            session: Session::start(
-                runtime,
-                ctx.clone(),
-                spec.target,
-                spec.session,
-                cwd,
-                vec![
-                    ("NEKOMATA_WINDOW_ID".into(), window.to_string()),
-                    ("NEKOMATA_PANE_ID".into(), id.to_string()),
-                ],
-            ),
+            session: Session::start(runtime, ctx.clone(), spec.target, spec.session, cwd, env),
             dims: (0, 0),
             selection: None,
             reported_focus: None,
@@ -177,7 +175,15 @@ impl App {
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
-                Pane::connect(&self.runtime, ctx, self.control.window, id, spec, None),
+                Pane::connect(
+                    &self.runtime,
+                    ctx,
+                    self.control.window,
+                    self.workspace_id,
+                    id,
+                    spec,
+                    None,
+                ),
             );
         }
         if self.tabs.is_empty() {
@@ -236,6 +242,7 @@ impl App {
                 &self.runtime,
                 ctx,
                 self.control.window,
+                self.workspace_id,
                 id,
                 PaneSpec {
                     target,
@@ -1430,6 +1437,34 @@ mod tests {
         assert_eq!(replacement.snapshot(), before);
         assert_eq!(replacement.tabs.len(), 2);
         assert_eq!(replacement.panes.len(), 3);
+
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        let id = session_id.unwrap();
+        let repaint = ctx.clone();
+        let command = replacement.runtime.spawn(async move {
+            let result = tokio::process::Command::new(executable)
+                .args(["panes", "list"])
+                .env("NEKOMATA_SESSION_ID", id.to_string())
+                .env("NEKOMATA_WINDOW_ID", u32::MAX.to_string())
+                .output()
+                .await
+                .unwrap();
+            repaint.request_repaint();
+            result
+        });
+        pump(&mut replacement, &|_| command.is_finished());
+        let output = replacement.runtime.block_on(command).unwrap();
+        assert!(
+            output.status.success(),
+            "restored shell CLI routing failed: {:?}",
+            output
+        );
         let ids: Vec<_> = replacement
             .panes
             .values()
