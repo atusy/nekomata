@@ -9,7 +9,7 @@ The Rust modules, shaders and README are copied from that revision. Cargo.toml
 resolves upstream workspace dependencies against the same pinned git source.
 Only src/lib.rs has an application integration patch:
 
-- `new_embedded` accepts the host Device/Queue and uses staged uploads, without
+- `new_embedded` accepts the host Device/Queue and shared FontStack, and uses staged uploads without
   enabling device features or requesting another adapter.
 - The offscreen texture can be sampled, with an Rgba8Unorm compatible view.
 - `embedded_texture_view` exposes that view for egui's native texture registry.
@@ -22,3 +22,7 @@ those policies. There is no CPU frame capture on the interactive path.
 On upstream updates, compare every vendored file to the pinned source, then
 reapply and validate this seam. Remove the copy when an equivalent public
 upstream embedding API becomes available.
+
+Upstream benchmarks, proptest regression seeds and binary golden test fixtures
+are not vendored. Dependency unit tests are not part of the application test
+suite; see `docs/felis-rendering-reuse-audit.md` for the integration audit.

@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | accepted |
+| Status | superseded |
 | Date | 2026-10-24 |
 | Decision-makers | atusy |
 
@@ -71,3 +71,6 @@ ASCII workloads. Ordinary tests, isolated local/SSH integration, rustfmt,
 clippy, macOS Nix package checks and all-system flake evaluation passed.
 Linux runtime behavior was not tested. See [the measurement report](../rendering-performance.md)
 for the benchmark's scope and the native macOS screenshot's validation limits.
+
+Superseded by [shared client policies and GPU rendering](20261024-180000-share-felis-client-and-gpu.md).
+The mesh implementation is retained only as a benchmark fixture.

@@ -1,14 +1,26 @@
 # Shared felis rendering
 
-nekomata uses `felis-render-core` at revision
-`2a3030b237947497708b962ba6be8c2adade4951` for cell appearance, shaping,
-rasterization, glyph atlases and terminal decorations. The adapter in
-`src/render.rs` uploads new atlas regions to egui textures and caches row meshes.
-Screen damage invalidates changed rows; cursor, selection and reverse-video
-state invalidate affected rows. Resizing, zooming, DPI changes and atlas
-recycling invalidate the geometry that depends on them.
+nekomata embeds `felis-render-wgpu` from felis 0.3.1, revision
+`2a3030b237947497708b962ba6be8c2adade4951`. Each pane uses the application's
+wgpu 30 device/queue and contributes one sampled GPU texture to egui. Upstream
+owns shaping, row invalidation, glyph/image atlases, decorations and GPU passes.
+The interactive path never calls `read_frame`; pixel readback is test-only.
+The local embedding seam and upstream attribution are documented in
+[`vendor/felis-render-wgpu/UPSTREAM.md`](../vendor/felis-render-wgpu/UPSTREAM.md).
 
-## CPU rendering comparison
+`PullScheduler` keeps at most one local frame request outstanding. The frontend
+retains the last complete texture while a compose cycle or rehydrate burst is
+arriving. Only visible panes request another frame after GPU submission; the
+host eframe loop owns surface presentation and vsync. This bounds requests but
+does not claim to acknowledge successful surface presentation. SSH remains
+push-driven to avoid adding a network round trip per frame. `RedrawScheduler`
+lets UI-only redraws reuse the terminal texture without resubmitting its passes.
+
+See [Vitro validation and GPU submission measurements](vitro-rendering-validation.md)
+for the shared-device path. The figures below document the earlier mesh adapter,
+which is now retained only under `tests/support` as a comparison fixture.
+
+## Historical CPU mesh comparison
 
 Run the same-process comparison in the Nix development environment:
 
@@ -48,7 +60,7 @@ it does not measure CJK/emoji atlas churn or continually arriving new glyphs.
 Hardware and workload affect the results, so the benchmark reports timings
 without a flaky speed threshold assertion.
 
-## Native visual check
+## Historical native visual check
 
 A development macOS window was connected to private felis and nekomata daemons.
 Run `bash scripts/show-rendering-fixture.sh` inside nekomata to reproduce the
