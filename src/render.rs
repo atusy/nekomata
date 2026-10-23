@@ -106,17 +106,22 @@ fn named_families(cfg: &RendererConfig) -> Vec<(&'static str, &str)> {
     named
 }
 
+/// Names compare ignoring case and blanks, as fontconfig matches them;
+/// the installed list keeps only one spelling of each such family.
 fn missing_families<'a>(
     cfg: &'a RendererConfig,
     installed: &[String],
 ) -> Vec<(&'static str, &'a str)> {
+    let key = |name: &str| -> String {
+        name.chars()
+            .filter(|c| !c.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let installed: std::collections::HashSet<_> = installed.iter().map(|name| key(name)).collect();
     named_families(cfg)
         .into_iter()
-        .filter(|(_, family)| {
-            !installed
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(family))
-        })
+        .filter(|(_, family)| !installed.contains(&key(family)))
         .collect()
 }
 
@@ -445,7 +450,7 @@ mod tests {
         let loaded = crate::config::resolve(
             r#"
             [font]
-            family = "jetbrains mono"
+            family = "jetbrainsmono"
             fallback = [{ family = "Noto Sans CJK JP" }, { family = "Typo Sans" }]
 
             [font.italic]
