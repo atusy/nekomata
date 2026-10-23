@@ -19,7 +19,7 @@ use tokio::{
 
 use crate::workspace::Snapshot;
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -483,7 +483,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        snapshot.font_size = 21.0;
+        snapshot.font_size = Some(21.0);
         exchange(&mut first, Request::Save(snapshot.clone()))
             .await
             .unwrap();
@@ -530,7 +530,7 @@ mod tests {
             .await
             .unwrap();
         let snapshot = Snapshot {
-            font_size: 19.0,
+            font_size: Some(19.0),
             ..Default::default()
         };
         exchange(

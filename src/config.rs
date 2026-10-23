@@ -3,7 +3,7 @@ use std::path::Path;
 
 use felis_client_core::{ConfigDiagnostics, EffectiveConfig, Severity, config::FontConfig};
 
-use crate::theme::TerminalTheme;
+use crate::{theme::TerminalTheme, workspace::FontSize};
 
 /// Selects the `[client.nekomata]` overlay in the shared felis file.
 pub const CLIENT_ID: &str = "nekomata";
@@ -13,6 +13,8 @@ pub struct Loaded {
     pub theme: TerminalTheme,
     /// `[font]` faces; the size is applied separately as a default.
     pub font: FontConfig,
+    /// `[font] size_px`, the default for sessions that were never zoomed.
+    pub font_size: FontSize,
     /// One line per problem, for the terminal that launched nekomata.
     pub diagnostics: Vec<String>,
     /// Set when the file was ignored, so the window can say why.
@@ -60,8 +62,19 @@ fn settle(path: &Path, config: EffectiveConfig, diagnostics: &ConfigDiagnostics)
     let theme = TerminalTheme::from_config(&config, &mut |warning| {
         lines.push(line("warning", &warning));
     });
+    let font_size = config.font.sanitized_font_size_logical_px();
+    if let Some(size) = font_size {
+        let used = FontSize::new(Some(size)).get();
+        if used != size {
+            lines.push(line(
+                "warning",
+                &format!("font.size_px: {size} is outside nekomata's 6..=72 band; using {used}"),
+            ));
+        }
+    }
     Loaded {
         theme,
+        font_size: FontSize::new(font_size),
         font: config.font,
         diagnostics: lines,
         error,
@@ -142,6 +155,27 @@ mod tests {
             loaded.diagnostics,
             [
                 "nekomata: /config/felis/config.toml: warning: theme.backgrund: unknown key ignored (typo, or written for another client?)"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_configured_font_size_becomes_the_default() {
+        let loaded = resolve("[font]\nsize_px = 13.0\n\n[client.nekomata.font]\nsize_px = 18.0\n");
+        assert_eq!(loaded.font_size, FontSize::new(Some(18.0)));
+        assert_eq!(loaded.font_size.zoom, None);
+        assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
+        assert_eq!(resolve("").font_size, FontSize::default());
+    }
+
+    #[test]
+    fn a_font_size_below_nekomatas_band_warns_and_clamps() {
+        let loaded = resolve("[font]\nsize_px = 5.0\n");
+        assert_eq!(loaded.font_size.get(), 6.0);
+        assert_eq!(
+            loaded.diagnostics,
+            [
+                "nekomata: /config/felis/config.toml: warning: font.size_px: 5 is outside nekomata's 6..=72 band; using 6"
             ]
         );
     }

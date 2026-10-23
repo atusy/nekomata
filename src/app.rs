@@ -14,7 +14,7 @@ use crate::{
     session::{Session, Target},
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_ACTIVE_BG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
-    workspace::{PaneSpec, Snapshot, Tab},
+    workspace::{FontSize, PaneSpec, Snapshot, Tab},
     workspace_client::{Client as WorkspaceClient, Operation},
 };
 
@@ -100,7 +100,7 @@ pub struct App {
     tabs: Vec<Tab>,
     active: usize,
     next_id: u64,
-    font_size: f32,
+    font_size: FontSize,
     picker: SessionPicker,
     help: bool,
     shortcuts: Shortcuts,
@@ -158,6 +158,7 @@ impl App {
         crate::render::initialize(cc, &config.font)?;
         let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)?;
         app.config_error = config.error;
+        app.font_size = config.font_size;
         Ok(app)
     }
 
@@ -180,7 +181,7 @@ impl App {
             tabs: vec![],
             active: 0,
             next_id: 1,
-            font_size: 15.0,
+            font_size: FontSize::default(),
             picker: SessionPicker::default(),
             help: false,
             shortcuts: Shortcuts::default(),
@@ -212,7 +213,7 @@ impl App {
                 .collect(),
             active: self.active,
             next_id: self.next_id,
-            font_size: self.font_size,
+            font_size: self.font_size.zoom,
         }
     }
 
@@ -222,7 +223,7 @@ impl App {
         self.tabs = snapshot.tabs;
         self.active = snapshot.active;
         self.next_id = snapshot.next_id;
-        self.font_size = snapshot.font_size;
+        self.font_size.zoom = snapshot.font_size;
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
@@ -339,7 +340,7 @@ impl App {
                             self.tabs = snapshot.tabs;
                             self.active = snapshot.active;
                             self.next_id = snapshot.next_id;
-                            self.font_size = snapshot.font_size;
+                            self.font_size.zoom = snapshot.font_size;
                             self.workspace_id = pending.id;
                             self.last_snapshot = None;
                             self.workspace_error = None;
@@ -785,8 +786,8 @@ impl App {
                 self.palette = true;
                 self.palette_query.clear();
             }
-            Action::FontScale(scale) => self.font_size = (self.font_size * scale).clamp(6.0, 72.0),
-            Action::FontReset => self.font_size = 15.0,
+            Action::FontScale(scale) => self.font_size.scale(scale),
+            Action::FontReset => self.font_size.reset(),
             Action::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
             Action::Copy => {
                 let pane = &self.panes[&self.tabs[self.active].focused];
@@ -1025,18 +1026,21 @@ impl eframe::App for App {
                                         .on_hover_text("Larger text")
                                         .clicked()
                                     {
-                                        self.font_size = (self.font_size * 1.1).min(72.0);
+                                        self.font_size.scale(1.1);
                                     }
                                     if ui
                                         .add_sized(
                                             [52.0, 28.0],
-                                            egui::Button::new(format!("{:.0} pt", self.font_size))
-                                                .fill(TAB_HOVER_BG),
+                                            egui::Button::new(format!(
+                                                "{:.0} pt",
+                                                self.font_size.get()
+                                            ))
+                                            .fill(TAB_HOVER_BG),
                                         )
                                         .on_hover_text("Reset text size")
                                         .clicked()
                                     {
-                                        self.font_size = 15.0;
+                                        self.font_size.reset();
                                     }
                                     if ui
                                         .add_sized(
@@ -1046,7 +1050,7 @@ impl eframe::App for App {
                                         .on_hover_text("Smaller text")
                                         .clicked()
                                     {
-                                        self.font_size = (self.font_size / 1.1).max(6.0);
+                                        self.font_size.scale(1.0 / 1.1);
                                     }
                                 },
                             );
@@ -1136,7 +1140,7 @@ impl eframe::App for App {
                     &mut tab.layout,
                     &mut self.panes,
                     &mut tab.focused,
-                    self.font_size,
+                    self.font_size.get(),
                 );
                 if tab.focused != previous {
                     tab.focus(tab.focused);
@@ -1869,7 +1873,7 @@ mod tests {
         if let Layout::Split { ratio, .. } = &mut app.tabs[0].layout {
             *ratio = 0.3;
         }
-        app.font_size = 18.0;
+        app.font_size.zoom = Some(18.0);
         let before = app.snapshot();
         let session_id = app.workspace_id;
         app.save_workspace();
@@ -2110,7 +2114,7 @@ mod tests {
             tabs: vec![],
             active: 0,
             next_id: 1,
-            font_size: 15.0,
+            font_size: FontSize::default(),
             picker: SessionPicker::default(),
             help: false,
             shortcuts: Shortcuts::default(),

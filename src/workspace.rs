@@ -47,7 +47,8 @@ pub struct Snapshot {
     pub panes: std::collections::BTreeMap<u64, PaneSpec>,
     pub active: usize,
     pub next_id: u64,
-    pub font_size: f32,
+    /// The size this session was zoomed to; `None` follows the configured default.
+    pub font_size: Option<f32>,
 }
 
 impl Default for Snapshot {
@@ -57,8 +58,54 @@ impl Default for Snapshot {
             panes: Default::default(),
             active: 0,
             next_id: 1,
-            font_size: 15.0,
+            font_size: None,
         }
+    }
+}
+
+const MIN_FONT_SIZE: f32 = 6.0;
+const MAX_FONT_SIZE: f32 = 72.0;
+const DEFAULT_FONT_SIZE: f32 = 15.0;
+
+/// Terminal text size in logical pixels: a configured default that a
+/// session may override by zooming.
+///
+/// A future per-pane override would sit in front of `zoom`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontSize {
+    default: f32,
+    pub zoom: Option<f32>,
+}
+
+impl Default for FontSize {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl FontSize {
+    /// Clamps `configured` into the band snapshots accept, or uses nekomata's
+    /// own default when unset.
+    pub fn new(configured: Option<f32>) -> Self {
+        Self {
+            default: configured.map_or(DEFAULT_FONT_SIZE, |size| {
+                size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+            }),
+            zoom: None,
+        }
+    }
+
+    pub fn get(&self) -> f32 {
+        self.zoom.unwrap_or(self.default)
+    }
+
+    pub fn scale(&mut self, factor: f32) {
+        self.zoom = Some((self.get() * factor).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
+    }
+
+    /// Returns to the configured default and keeps following it.
+    pub fn reset(&mut self) {
+        self.zoom = None;
     }
 }
 
@@ -67,7 +114,8 @@ impl Snapshot {
         use anyhow::ensure;
         use std::collections::BTreeSet;
         ensure!(
-            self.font_size.is_finite() && (6.0..=72.0).contains(&self.font_size),
+            self.font_size
+                .is_none_or(|size| (MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size)),
             "invalid font size"
         );
         ensure!(self.active < self.tabs.len().max(1), "invalid active tab");
@@ -128,5 +176,48 @@ impl Snapshot {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unzoomed_sessions_follow_the_configured_default() {
+        let size = FontSize::new(Some(18.0));
+        assert_eq!(size.get(), 18.0);
+        assert_eq!(size.zoom, None);
+        assert_eq!(FontSize::new(None).get(), 15.0);
+    }
+
+    #[test]
+    fn configured_defaults_clamp_into_the_snapshot_band() {
+        assert_eq!(FontSize::new(Some(4.0)).get(), 6.0);
+        assert_eq!(FontSize::new(Some(90.0)).get(), 72.0);
+    }
+
+    #[test]
+    fn zooming_overrides_and_reset_returns_to_the_default() {
+        let mut size = FontSize::new(Some(20.0));
+        size.scale(1.5);
+        assert_eq!(size.zoom, Some(30.0));
+        size.scale(10.0);
+        assert_eq!(size.get(), 72.0);
+        size.reset();
+        assert_eq!(size.zoom, None);
+        assert_eq!(size.get(), 20.0);
+    }
+
+    #[test]
+    fn snapshots_accept_no_override_and_reject_sizes_outside_the_band() {
+        let mut snapshot = Snapshot::default();
+        assert!(snapshot.validate().is_ok());
+        snapshot.font_size = Some(5.0);
+        assert!(snapshot.validate().is_err());
+        snapshot.font_size = Some(f32::NAN);
+        assert!(snapshot.validate().is_err());
+        snapshot.font_size = Some(6.0);
+        assert!(snapshot.validate().is_ok());
     }
 }
