@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use eframe::egui::{self, Color32};
 use felis_client_core::EffectiveConfig;
 use felis_protocol::messages::SessionToDaemonMsg;
-use felis_render_core::palette::parse_hex_color;
+use felis_render_core::palette::{PALETTE_NAMES, parse_hex_color};
 
 pub const BG: Color32 = Color32::from_rgb(20, 23, 31);
 pub const FG: Color32 = Color32::from_rgb(216, 222, 233);
@@ -129,9 +129,15 @@ impl TerminalTheme {
                 Some(rgb) => {
                     theme.palette.insert(index, rgb);
                 }
-                None => warn(format!(
-                    "theme.palette slot {index}: {value:?} is not #rrggbb; using the default"
-                )),
+                None => {
+                    let key = match PALETTE_NAMES.get(usize::from(index)) {
+                        Some(name) => format!("theme.palette.{name}"),
+                        None => format!("theme.palette.indexed.{index}"),
+                    };
+                    warn(format!(
+                        "{key}: {value:?} is not #rrggbb; using the default"
+                    ))
+                }
             }
         }
         theme.minimum_contrast = config.theme.clamped_minimum_contrast();
@@ -281,6 +287,7 @@ mod tests {
 
             [theme.palette]
             blue = "#12345"
+            indexed = { "200" = "red" }
 
             [cursor]
             color = "green"
@@ -298,7 +305,8 @@ mod tests {
             [
                 "theme.background: \"navy\" is not #rrggbb; using the default",
                 "cursor.color: \"green\" is not #rrggbb; using the default",
-                "theme.palette slot 4: \"#12345\" is not #rrggbb; using the default",
+                "theme.palette.blue: \"#12345\" is not #rrggbb; using the default",
+                "theme.palette.indexed.200: \"red\" is not #rrggbb; using the default",
             ]
         );
     }
