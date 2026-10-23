@@ -9,7 +9,7 @@ use crate::{
     picker::SessionPicker,
     session::Session,
     shortcuts::{Action, Shortcuts},
-    theme::{ACCENT, BG, FG},
+    theme::{ACCENT, BG, FG, TAB_ACTIVE_BG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
 };
 
 struct Pane {
@@ -70,6 +70,7 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, attach: Option<String>, pick: bool) -> Self {
+        cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
         style.visuals.panel_fill = BG;
@@ -275,81 +276,110 @@ impl eframe::App for App {
             focus_terminal(ctx);
         }
         let mut menu_open = false;
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let menu = ui.menu_button("≡", |ui| {
-                    for (label, command) in [
-                        ("+ Tab", Action::NewTab),
-                        ("Split ↔", Action::Split(Axis::Horizontal)),
-                        ("Split ↕", Action::Split(Axis::Vertical)),
-                        ("Next pane", Action::NextPane),
-                    ] {
-                        if ui.button(label).clicked() {
-                            action = Some(command);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    for (label, command) in [
-                        ("Close pane", Action::ClosePane),
-                        ("Close tab", Action::CloseTab),
-                    ] {
-                        if ui
-                            .button(label)
-                            .on_hover_text("Detach; keep the shell running")
-                            .clicked()
-                        {
-                            action = Some(command);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if ui.button("Attach…").clicked() {
-                        self.picker.open(&self.runtime, ctx);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Smaller text").clicked() {
-                        self.font_size = (self.font_size / 1.1).max(6.0);
-                        ui.close();
-                    }
-                    if ui.button("Larger text").clicked() {
-                        self.font_size = (self.font_size * 1.1).min(72.0);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Help").clicked() {
-                        self.help = true;
-                        ui.close();
-                    }
-                });
-                menu_open = menu.inner.is_some();
-                ui.separator();
-                egui::ScrollArea::horizontal()
-                    .id_salt("tab-scroll")
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for (i, tab) in self.tabs.iter().enumerate() {
-                                if i > 0 {
-                                    ui.separator();
-                                }
-                                let title = self.panes[&tab.focused]
-                                    .session
-                                    .state
-                                    .lock()
-                                    .unwrap()
-                                    .screen
-                                    .title()
-                                    .unwrap_or(&tab.name)
-                                    .to_owned();
-                                if ui.selectable_label(self.active == i, title).clicked() {
-                                    self.active = i;
-                                }
+        egui::TopBottomPanel::top("tabs")
+            .frame(
+                egui::Frame::new()
+                    .fill(TAB_BAR_BG)
+                    .inner_margin(egui::Margin::symmetric(8, 6)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let menu = ui.menu_button("≡", |ui| {
+                        for (label, command) in [
+                            ("+ Tab", Action::NewTab),
+                            ("Split ↔", Action::Split(Axis::Horizontal)),
+                            ("Split ↕", Action::Split(Axis::Vertical)),
+                            ("Next pane", Action::NextPane),
+                        ] {
+                            if ui.button(label).clicked() {
+                                action = Some(command);
+                                ui.close();
                             }
-                        });
+                        }
+                        ui.separator();
+                        for (label, command) in [
+                            ("Close pane", Action::ClosePane),
+                            ("Close tab", Action::CloseTab),
+                        ] {
+                            if ui
+                                .button(label)
+                                .on_hover_text("Detach; keep the shell running")
+                                .clicked()
+                            {
+                                action = Some(command);
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Attach…").clicked() {
+                            self.picker.open(&self.runtime, ctx);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Smaller text").clicked() {
+                            self.font_size = (self.font_size / 1.1).max(6.0);
+                            ui.close();
+                        }
+                        if ui.button("Larger text").clicked() {
+                            self.font_size = (self.font_size * 1.1).min(72.0);
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Help").clicked() {
+                            self.help = true;
+                            ui.close();
+                        }
                     });
+                    menu_open = menu.inner.is_some();
+                    ui.separator();
+                    egui::ScrollArea::horizontal()
+                        .id_salt("tab-scroll")
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 3.0;
+                                ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
+                                let widgets = &mut ui.visuals_mut().widgets;
+                                widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                                widgets.inactive.bg_stroke = Stroke::NONE;
+                                widgets.hovered.weak_bg_fill = TAB_HOVER_BG;
+                                widgets.hovered.bg_stroke = Stroke::NONE;
+                                widgets.active.weak_bg_fill = TAB_HOVER_BG;
+                                widgets.active.bg_stroke = Stroke::NONE;
+                                for state in [
+                                    &mut widgets.inactive,
+                                    &mut widgets.hovered,
+                                    &mut widgets.active,
+                                ] {
+                                    state.corner_radius = egui::CornerRadius::same(5);
+                                }
+                                for (i, tab) in self.tabs.iter().enumerate() {
+                                    let title = self.panes[&tab.focused]
+                                        .session
+                                        .state
+                                        .lock()
+                                        .unwrap()
+                                        .screen
+                                        .title()
+                                        .unwrap_or(&tab.name)
+                                        .to_owned();
+                                    let selected = self.active == i;
+                                    let text = egui::RichText::new(title).color(if selected {
+                                        FG
+                                    } else {
+                                        TAB_INACTIVE_FG
+                                    });
+                                    let mut button = egui::Button::new(text).stroke(Stroke::NONE);
+                                    if selected {
+                                        button = button.fill(TAB_ACTIVE_BG);
+                                    }
+                                    if ui.add(button).clicked() {
+                                        self.active = i;
+                                    }
+                                }
+                            });
+                        });
+                });
             });
-        });
         if let Some(action) = action {
             self.action(ctx, action);
         }
