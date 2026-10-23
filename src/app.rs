@@ -25,6 +25,7 @@ struct Pane {
     scroll_remainder: f32,
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
     renderer: Option<crate::render::Renderer>,
+    connection_generation: u64,
 }
 
 impl Pane {
@@ -37,6 +38,7 @@ impl Pane {
             scroll_remainder: 0.0,
             mouse_capture: None,
             renderer: None,
+            connection_generation: 0,
         }
     }
 
@@ -1342,6 +1344,14 @@ fn draw_layout(
 }
 
 fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
+    let generation = pane.session.state.lock().unwrap().reconnects;
+    if generation != pane.connection_generation {
+        pane.connection_generation = generation;
+        pane.dims = (0, 0);
+        pane.reported_focus = None;
+        pane.selection = None;
+        pane.mouse_capture = None;
+    }
     let rect = ui.max_rect().shrink(2.0);
     let response = ui.interact(rect, ui.scope_id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
@@ -1437,7 +1447,11 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
-            "Connecting to felis…",
+            if state.reconnecting {
+                "Reconnecting to felis…"
+            } else {
+                "Connecting to felis…"
+            },
             font,
             FG,
         );

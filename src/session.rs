@@ -91,27 +91,53 @@ pub struct State {
     pub session_id: Option<u128>,
     pub error: Option<String>,
     pub connected: bool,
+    pub reconnects: u64,
+    pub reconnecting: bool,
     pub detached: bool,
     pub exited: bool,
     pub clipboard: Option<String>,
 }
 
-#[derive(Default)]
 struct InputQueue {
     frames: Mutex<OutgoingQueue>,
     ready: Notify,
+    accepting: AtomicBool,
+}
+
+impl Default for InputQueue {
+    fn default() -> Self {
+        Self {
+            frames: Mutex::new(OutgoingQueue::default()),
+            ready: Notify::new(),
+            accepting: AtomicBool::new(true),
+        }
+    }
 }
 
 impl InputQueue {
     fn push(&self, msg: &InputMsg) -> Result<()> {
         let frame = OutgoingFrame::input(msg)?;
-        self.frames
-            .lock()
-            .unwrap()
+        let mut frames = self.frames.lock().unwrap();
+        if !self.accepting.load(Ordering::Acquire) {
+            bail!("connection is not accepting input");
+        }
+        frames
             .push(frame)
             .map_err(|full| anyhow::anyhow!("input queue exceeded {} bytes", full.cap))?;
         self.ready.notify_one();
         Ok(())
+    }
+
+    fn close(&self) -> bool {
+        let mut frames = self.frames.lock().unwrap();
+        self.accepting.store(false, Ordering::Release);
+        let discarded = !frames.is_empty();
+        *frames = OutgoingQueue::default();
+        discarded
+    }
+
+    fn reopen(&self) {
+        self.accepting.store(true, Ordering::Release);
     }
 
     async fn next(&self) -> OutgoingFrame {
@@ -127,7 +153,7 @@ impl InputQueue {
 
 pub struct Session {
     pub state: Arc<Mutex<State>>,
-    pub input_failed: AtomicBool,
+    pub input_failed: Arc<AtomicBool>,
     pub target: Target,
     pub attachment: Option<String>,
     tx: Arc<InputQueue>,
@@ -167,12 +193,16 @@ impl Session {
             session_id: None,
             error: None,
             connected: false,
+            reconnects: 0,
+            reconnecting: false,
             detached: false,
             exited: false,
             clipboard: None,
         }));
         let tx = Arc::new(InputQueue::default());
         let rx = tx.clone();
+        let input_failed = Arc::new(AtomicBool::new(false));
+        let failed = input_failed.clone();
         let attachment = attach.clone();
         let shared = state.clone();
         let destination = target.clone();
@@ -180,15 +210,18 @@ impl Session {
             let result = run(
                 shared.clone(),
                 ctx.clone(),
-                rx,
+                rx.clone(),
                 destination,
                 attach,
                 cwd,
                 env,
+                failed,
             )
             .await;
+            rx.close();
             let mut state = shared.lock().unwrap();
             state.connected = false;
+            state.reconnecting = false;
             state.error = if state.detached || state.exited {
                 None
             } else {
@@ -205,7 +238,7 @@ impl Session {
             state,
             tx,
             task,
-            input_failed: AtomicBool::new(false),
+            input_failed,
             target,
             attachment,
         }
@@ -225,6 +258,7 @@ impl Drop for Session {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     shared: Arc<Mutex<State>>,
     ctx: egui::Context,
@@ -233,8 +267,9 @@ async fn run(
     attach: Option<String>,
     cwd: Option<String>,
     env: Vec<(String, String)>,
+    input_failed: Arc<AtomicBool>,
 ) -> Result<()> {
-    let (mut conn, info, _relay) = tokio::time::timeout(Duration::from_secs(20), async {
+    let (mut conn, info, mut relay) = tokio::time::timeout(Duration::from_secs(20), async {
         let carrier = target.carrier();
         if attach.is_none()
             && let Target::Local(socket) = &target
@@ -293,12 +328,131 @@ async fn run(
     }
     ctx.request_repaint();
     loop {
+        let result = pump(&mut conn, &shared, &ctx, &rx, &input_failed).await;
+        let Err(error) = result else {
+            return Ok(());
+        };
+        if !transport_loss(&error) {
+            return Err(error);
+        }
+        if rx.close() {
+            input_failed.store(true, Ordering::Relaxed);
+        }
+        {
+            let mut state = shared.lock().unwrap();
+            state.connected = false;
+            state.reconnecting = true;
+        }
+        ctx.request_repaint();
+        drop(conn);
+        drop(relay.take());
+        let (mut recovered, child) = redial_target(&target, info.id).await?;
+        recovered.writer.send(&crate::theme::configure()).await?;
+        recovered
+            .writer
+            .send(&InputMsg::ColorScheme { dark: true })
+            .await?;
+        conn = recovered;
+        relay = child;
+        {
+            let mut state = shared.lock().unwrap();
+            state.connected = true;
+            state.reconnecting = false;
+            state.reconnects = state.reconnects.wrapping_add(1);
+        }
+        rx.reopen();
+        ctx.request_repaint();
+    }
+}
+
+fn transport_loss(error: &anyhow::Error) -> bool {
+    use felis_client_core::ConnectError;
+    use felis_transport::TransportError;
+    let io_loss = |error: &std::io::Error| {
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::TimedOut
+        )
+    };
+    let framing_loss = |error: &TransportError| match error {
+        TransportError::Io(error) => io_loss(error),
+        TransportError::UnexpectedEof { .. } => true,
+        _ => false,
+    };
+    if let Some(error) = error.downcast_ref::<ConnectError>() {
+        return match error {
+            ConnectError::Io(error) => io_loss(error),
+            ConnectError::Transport(error) => framing_loss(error),
+            _ => false,
+        };
+    }
+    error
+        .downcast_ref::<TransportError>()
+        .is_some_and(framing_loss)
+        || error.downcast_ref::<std::io::Error>().is_some_and(io_loss)
+}
+
+async fn redial_target(
+    target: &Target,
+    id: u128,
+) -> Result<(CarrierConnection, Option<tokio::process::Child>)> {
+    if let Target::Ssh {
+        host,
+        socket: Some(socket),
+    } = target
+    {
+        // Carrier::Ssh cannot represent an explicit remote socket. Reuse the
+        // shared retry ladder around the existing literal-safe relay adapter.
+        return felis_transport::retry::retry_while(
+            || async {
+                let attempt = async {
+                    let (mut conn, child) =
+                        crate::ssh::connect(host, socket, Offer::window(false)).await?;
+                    conn.attach_by_prefix(
+                        format!("{id:032x}"),
+                        felis_client_core::AttachIntent::Automatic,
+                    )
+                    .await?;
+                    Ok::<_, anyhow::Error>((conn, Some(child)))
+                };
+                tokio::time::timeout(felis_client_core::RECONNECT_ATTEMPT_TIMEOUT, attempt)
+                    .await
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::TimedOut, error))?
+            },
+            felis_transport::retry::RetryPolicy::WINDOW_RECONNECT,
+            transport_loss,
+        )
+        .await
+        .map_err(|error| error.source);
+    }
+    let recovered =
+        felis_client_core::redial_session(target.carrier(), Offer::window(false), id).await?;
+    Ok((recovered.conn, None))
+}
+
+async fn pump(
+    conn: &mut CarrierConnection,
+    shared: &Arc<Mutex<State>>,
+    ctx: &egui::Context,
+    rx: &InputQueue,
+    input_failed: &AtomicBool,
+) -> Result<()> {
+    loop {
         tokio::select! {
             command = rx.next() => {
-                conn.writer.send_checked(command.frame()).await?;
+                match tokio::time::timeout(Duration::from_secs(10), conn.writer.send_checked(command.frame())).await {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => { input_failed.store(true, Ordering::Relaxed); return Err(error.into()); }
+                    Err(error) => { input_failed.store(true, Ordering::Relaxed); return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()); }
+                }
             }
             frame = conn.next_frame() => {
-                let frame = frame?.context("felis daemon closed the connection")?;
+                let frame = frame?.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "felis daemon closed the connection"))?;
                 match conn.driver.classify(&frame)? {
                     Incoming::Payload(payload) => match payload.kind {
                         MessageKind::Grid => {
@@ -449,6 +603,81 @@ mod tests {
                 .collect();
             text.contains("NEKOMATA_READY")
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_reconnect_preserves_the_existing_shell_after_transport_loss() {
+        let socket = PathBuf::from(
+            std::env::var_os("NEKOMATA_TEST_SOCKET").expect("use the private daemon runner"),
+        );
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let original = runtime.block_on(async {
+            let mut conn = connect_or_spawn_daemon(&socket, Offer::window(false))
+                .await
+                .unwrap();
+            conn.create_with(SpawnArgs {
+                command: "/bin/sh".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id
+        });
+        let proxy = socket.with_file_name(format!("reconnect-{}.sock", std::process::id()));
+        let listener = {
+            let _guard = runtime.enter();
+            tokio::net::UnixListener::bind(&proxy).unwrap()
+        };
+        let (disconnect, _) = tokio::sync::broadcast::channel::<()>(4);
+        let signal = disconnect.clone();
+        let relay = runtime.spawn(async move {
+            loop {
+                let (mut client, _) = listener.accept().await.unwrap();
+                let mut upstream = tokio::net::UnixStream::connect(&socket).await.unwrap();
+                let mut lost = signal.subscribe();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = tokio::io::copy_bidirectional(&mut client, &mut upstream) => {},
+                        _ = lost.recv() => {},
+                    }
+                });
+            }
+        });
+        let ctx = egui::Context::default();
+        let (repaint_tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = repaint_tx.send(());
+        });
+        let session = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local(proxy),
+            Some(format!("{original:032x}")),
+            None,
+            vec![],
+        );
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(
+            b"NEKO_RECONNECT_MARKER=kept; printf '\\nBEFORE_%s\\n' \"$NEKO_RECONNECT_MARKER\"\n"
+                .to_vec(),
+        ));
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "BEFORE_kept")
+        });
+        let id = session.state.lock().unwrap().session_id;
+        disconnect.send(()).unwrap();
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.connected && state.reconnects > 0
+        });
+        assert_eq!(session.state.lock().unwrap().session_id, id);
+        session.send(InputMsg::KeyBytes(
+            b"printf '\\nAFTER_%s\\n' \"$NEKO_RECONNECT_MARKER\"\n".to_vec(),
+        ));
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "AFTER_kept")
+        });
+        relay.abort();
     }
 
     #[test]
