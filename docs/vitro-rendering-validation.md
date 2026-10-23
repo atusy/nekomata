@@ -47,6 +47,11 @@ color. Resizing from 1192×802 to 1000×700 changed the daemon's dimensions from
 The [source/API reuse audit](felis-rendering-reuse-audit.md) records active
 shared components and optional upstream features not exposed by nekomata.
 
+macOS validation also passed 57 ordinary tests, rustfmt, clippy with warnings
+rejected, and `nix flake check` (package and fish integration). Final evaluation
+with `nix flake check --all-systems --no-build` passed for all declared systems;
+this is not a Linux package build. These checks do not launch the macOS GUI.
+
 ## Same-process CPU submission comparison
 
 Release builds, 10 warmup frames, median of 100 samples. Both paths use egui
