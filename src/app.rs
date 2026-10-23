@@ -155,7 +155,7 @@ impl App {
         }
         cc.egui_ctx.set_fonts(fonts);
         crate::theme::install(&cc.egui_ctx, config.theme);
-        crate::render::initialize(cc)?;
+        crate::render::initialize(cc, &config.font)?;
         let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)?;
         app.config_error = config.error;
         Ok(app)

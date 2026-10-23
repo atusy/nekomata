@@ -1,7 +1,7 @@
 //! The felis `config.toml`, resolved with nekomata's `[client.nekomata]` overlay.
 use std::path::Path;
 
-use felis_client_core::{ConfigDiagnostics, EffectiveConfig, Severity};
+use felis_client_core::{ConfigDiagnostics, EffectiveConfig, Severity, config::FontConfig};
 
 use crate::theme::TerminalTheme;
 
@@ -11,6 +11,8 @@ pub const CLIENT_ID: &str = "nekomata";
 #[derive(Debug, Default)]
 pub struct Loaded {
     pub theme: TerminalTheme,
+    /// `[font]` faces; the size is applied separately as a default.
+    pub font: FontConfig,
     /// One line per problem, for the terminal that launched nekomata.
     pub diagnostics: Vec<String>,
     /// Set when the file was ignored, so the window can say why.
@@ -60,6 +62,7 @@ fn settle(path: &Path, config: EffectiveConfig, diagnostics: &ConfigDiagnostics)
     });
     Loaded {
         theme,
+        font: config.font,
         diagnostics: lines,
         error,
     }

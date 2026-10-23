@@ -5,13 +5,16 @@ use eframe::{
     egui::{self, Color32, Pos2, Rect, TextureId, Vec2},
     egui_wgpu::{RenderState, wgpu},
 };
-use felis_client_core::ImageShadow;
+use felis_client_core::{
+    ImageShadow,
+    config::{FontConfig, FontStyleConfig},
+};
 use felis_render_core::{ImageData, ImageSource, SelectionRange};
-use felis_render_wgpu::{Renderer as GpuRenderer, RendererConfig};
-use felis_shaping::{FontStack, StyleFaces};
+use felis_render_wgpu::{FaceSpec, Renderer as GpuRenderer, RendererConfig};
+use felis_shaping::FontStack;
 use std::sync::Arc;
 
-pub fn initialize(cc: &eframe::CreationContext<'_>) -> Result<()> {
+pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result<()> {
     let gpu = cc
         .wgpu_render_state
         .as_ref()
@@ -23,10 +26,43 @@ pub fn initialize(cc: &eframe::CreationContext<'_>) -> Result<()> {
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS),
         "terminal rendering requires compatible texture views; select a Vulkan, Metal or DX12 adapter"
     );
-    cc.egui_ctx
-        .data_mut(|data| data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone()));
+    cc.egui_ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone());
+        data.insert_temp(faces_id(), Arc::new(faces(font)));
+    });
     load_fonts(&cc.egui_ctx)?;
     Ok(())
+}
+
+fn faces_id() -> egui::Id {
+    egui::Id::unique("terminal-font-faces")
+}
+
+/// Every `[font]` setting except the size, which each pane chooses.
+fn faces(font: &FontConfig) -> RendererConfig {
+    let face = |style: &FontStyleConfig| FaceSpec {
+        family: style.family.clone(),
+        features: style.features.clone(),
+    };
+    RendererConfig {
+        font_family: font.family.clone(),
+        font_features: font.features.clone(),
+        font_fallbacks: font.fallback.iter().map(face).collect(),
+        font_bold: face(&font.bold),
+        font_italic: face(&font.italic),
+        font_bold_italic: face(&font.bold_italic),
+        // Families then resolve among these files instead of the system's.
+        font_files: std::env::var_os("NEKOMATA_FONT")
+            .map(Into::into)
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn configured_faces(ctx: &egui::Context) -> Arc<RendererConfig> {
+    ctx.data(|data| data.get_temp(faces_id()))
+        .unwrap_or_else(|| Arc::new(faces(&FontConfig::default())))
 }
 
 pub fn load_fonts(ctx: &egui::Context) -> Result<Arc<FontStack>> {
@@ -34,11 +70,19 @@ pub fn load_fonts(ctx: &egui::Context) -> Result<Arc<FontStack>> {
     if let Some(stack) = ctx.data(|data| data.get_temp::<Arc<FontStack>>(key)) {
         return Ok(stack);
     }
-    let styles = StyleFaces::default();
-    let stack = if let Some(path) = std::env::var_os("NEKOMATA_FONT") {
-        FontStack::discover_in_files(&[path.into()], None, &[], &[], &styles)?
+    let cfg = configured_faces(ctx);
+    let family = cfg.font_family.as_deref();
+    let styles = cfg.style_faces();
+    let stack = if cfg.font_files.is_empty() {
+        FontStack::auto_discover(family, &cfg.font_features, &cfg.font_fallbacks, &styles)?
     } else {
-        FontStack::auto_discover(None, &[], &[], &styles)?
+        FontStack::discover_in_files(
+            &cfg.font_files,
+            family,
+            &cfg.font_features,
+            &cfg.font_fallbacks,
+            &styles,
+        )?
     };
     let stack = Arc::new(stack);
     ctx.data_mut(|data| data.insert_temp(key, stack.clone()));
@@ -66,11 +110,7 @@ impl Renderer {
             .context("terminal GPU was not initialized")?;
         let cfg = RendererConfig {
             font_size_physical_px: Some(font_size * ppp),
-            font_files: std::env::var_os("NEKOMATA_FONT")
-                .map(Into::into)
-                .into_iter()
-                .collect(),
-            ..Default::default()
+            ..(*configured_faces(ctx)).clone()
         };
         let mut gpu = GpuRenderer::new_embedded(
             host.device.clone(),
@@ -281,6 +321,55 @@ mod tests {
         ImageId, RowPayload,
         messages::{GridMsg, ImageFormat, ImageMsg, ImageTarget},
     };
+
+    #[test]
+    fn configured_font_faces_reach_the_renderer() {
+        let loaded = crate::config::resolve(
+            r#"
+            [font]
+            family = "JetBrains Mono"
+            features = ["calt"]
+            fallback = [{ family = "Noto Sans CJK JP" }, { family = "Symbols", features = [] }]
+
+            [font.bold]
+            family = "JetBrains Mono ExtraBold"
+
+            [client.nekomata.font.italic]
+            family = "Victor Mono"
+            features = ["ss01"]
+            "#,
+        );
+        assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
+        let cfg = faces(&loaded.font);
+        assert_eq!(cfg.font_family.as_deref(), Some("JetBrains Mono"));
+        assert_eq!(cfg.font_features, ["calt"]);
+        assert_eq!(
+            cfg.font_fallbacks,
+            [
+                FaceSpec {
+                    family: Some("Noto Sans CJK JP".into()),
+                    features: None,
+                },
+                FaceSpec {
+                    family: Some("Symbols".into()),
+                    features: Some(vec![]),
+                },
+            ]
+        );
+        assert_eq!(
+            cfg.font_bold.family.as_deref(),
+            Some("JetBrains Mono ExtraBold")
+        );
+        assert_eq!(
+            cfg.font_italic,
+            FaceSpec {
+                family: Some("Victor Mono".into()),
+                features: Some(vec!["ss01".into()]),
+            }
+        );
+        assert_eq!(cfg.font_bold_italic, FaceSpec::default());
+        assert_eq!(cfg.font_size_physical_px, None);
+    }
 
     #[test]
     #[ignore = "requires a GPU adapter; run inside the Vitro desktop with --ignored"]
