@@ -73,6 +73,13 @@ fn main() -> eframe::Result {
             run_felis(&["sessions", "list"], &options);
         }
     }
+    // felis reports configured fonts it cannot resolve, among other
+    // problems, only through `tracing`.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
+        .without_time()
+        .init();
     let config = config::load();
     eframe::run_native(
         APP_ID,

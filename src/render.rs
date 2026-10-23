@@ -28,12 +28,6 @@ pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result
     );
     let bundled: Option<PathBuf> = std::env::var_os("NEKOMATA_FONT").map(Into::into);
     let mut cfg = faces(font, bundled.clone());
-    if cfg.font_files.is_empty() && !named_families(&cfg).is_empty() {
-        // Listing every installed family is slow on macOS and only feeds
-        // stderr, so it must not delay the first frame.
-        let cfg = cfg.clone();
-        std::thread::spawn(move || warn_missing_families(&cfg));
-    }
     let stack = Arc::new(with_bundled_fallback(&mut cfg, bundled, discover)?);
     cc.egui_ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone());
@@ -111,68 +105,6 @@ fn faces(font: &FontConfig, bundled: Option<PathBuf>) -> RendererConfig {
             .collect(),
         ..Default::default()
     }
-}
-
-/// felis reports a missing family only through `tracing`, which nekomata
-/// does not install, and then silently falls back or skips it.
-fn warn_missing_families(cfg: &RendererConfig) {
-    match felis_render_wgpu::installed_families() {
-        Ok(installed) => {
-            let installed: Vec<_> = installed.into_iter().map(|f| f.name).collect();
-            for (key, family) in missing_families(cfg, &installed) {
-                let instead = if key == "font.family" {
-                    "using the system monospace font"
-                } else {
-                    "skipping it"
-                };
-                eprintln!("nekomata: warning: {key}: {family:?} is not installed; {instead}");
-            }
-        }
-        Err(error) => eprintln!("nekomata: warning: cannot list installed fonts: {error}"),
-    }
-}
-
-/// `(config key, family)` for every family the configuration names.
-fn named_families(cfg: &RendererConfig) -> Vec<(&'static str, &str)> {
-    let mut named: Vec<_> = cfg
-        .font_family
-        .as_deref()
-        .map(|family| ("font.family", family))
-        .into_iter()
-        .collect();
-    named.extend(
-        cfg.font_fallbacks
-            .iter()
-            .filter_map(|face| face.family.as_deref())
-            .map(|family| ("font.fallback", family)),
-    );
-    for (key, face) in [
-        ("font.bold.family", &cfg.font_bold),
-        ("font.italic.family", &cfg.font_italic),
-        ("font.bold_italic.family", &cfg.font_bold_italic),
-    ] {
-        named.extend(face.family.as_deref().map(|family| (key, family)));
-    }
-    named
-}
-
-/// Names compare ignoring case and blanks, as fontconfig matches them;
-/// the installed list keeps only one spelling of each such family.
-fn missing_families<'a>(
-    cfg: &'a RendererConfig,
-    installed: &[String],
-) -> Vec<(&'static str, &'a str)> {
-    let key = |name: &str| -> String {
-        name.chars()
-            .filter(|c| !c.is_whitespace())
-            .flat_map(char::to_lowercase)
-            .collect()
-    };
-    let installed: std::collections::HashSet<_> = installed.iter().map(|name| key(name)).collect();
-    named_families(cfg)
-        .into_iter()
-        .filter(|(_, family)| !installed.contains(&key(family)))
-        .collect()
 }
 
 fn configured_faces(ctx: &egui::Context) -> Arc<RendererConfig> {
@@ -478,30 +410,6 @@ mod tests {
         );
         assert_eq!(cfg.font_bold_italic, FaceSpec::default());
         assert_eq!(cfg.font_size_physical_px, None);
-    }
-
-    #[test]
-    fn families_missing_from_the_system_are_reported_by_key() {
-        let loaded = crate::config::resolve(
-            r#"
-            [font]
-            family = "jetbrainsmono"
-            fallback = [{ family = "Noto Sans CJK JP" }, { family = "Typo Sans" }]
-
-            [font.italic]
-            family = "Victor Mono"
-            "#,
-        );
-        let cfg = faces(&loaded.font, None);
-        let installed = ["JetBrains Mono".to_owned(), "Noto Sans CJK JP".to_owned()];
-        assert_eq!(
-            missing_families(&cfg, &installed),
-            [
-                ("font.fallback", "Typo Sans"),
-                ("font.italic.family", "Victor Mono"),
-            ]
-        );
-        assert!(named_families(&faces(&FontConfig::default(), None)).is_empty());
     }
 
     #[test]
