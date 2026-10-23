@@ -438,4 +438,82 @@ mod tests {
         assert_eq!(mesh.calc_bounds().right(), rect.right());
         assert_eq!(mesh.calc_bounds().bottom(), rect.top() + cell.y);
     }
+    #[test]
+    fn unchanged_frames_reuse_meshes_without_uploading_glyphs() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut shadow = ShadowScreen::new(3, 8);
+        write_row(&mut shadow, 0, "hello");
+        let rect = Rect::from_min_size(Pos2::ZERO, renderer.cell_size() * Vec2::new(8.0, 3.0));
+        let first = draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        assert!(!first.textures_delta.set.is_empty());
+        let mesh = renderer.rows[0].glyphs[0].clone();
+        let next = draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        assert_eq!(renderer.rows_painted, 0);
+        assert!(Arc::ptr_eq(&mesh, &renderer.rows[0].glyphs[0]));
+        assert!(next.textures_delta.set.is_empty());
+    }
+
+    #[test]
+    fn row_delta_rebuilds_only_the_changed_row() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut shadow = ShadowScreen::new(3, 8);
+        write_row(&mut shadow, 0, "hello");
+        write_row(&mut shadow, 1, "hello");
+        let rect = Rect::from_min_size(Pos2::ZERO, renderer.cell_size() * Vec2::new(8.0, 3.0));
+        draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        let unchanged = renderer.rows[0].glyphs[0].clone();
+        let changed = renderer.rows[1].glyphs[0].clone();
+        write_row(&mut shadow, 1, "new text");
+        let output = draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        assert_eq!(renderer.rows_painted, 1);
+        assert!(Arc::ptr_eq(&unchanged, &renderer.rows[0].glyphs[0]));
+        assert!(!Arc::ptr_eq(&changed, &renderer.rows[1].glyphs[0]));
+        assert!(!output.textures_delta.set.is_empty());
+    }
+
+    #[test]
+    fn cursor_focus_and_selection_invalidate_their_previous_rows() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut shadow = ShadowScreen::new(3, 8);
+        let rect = Rect::from_min_size(Pos2::ZERO, renderer.cell_size() * Vec2::new(8.0, 3.0));
+        draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        draw(&ctx, &mut renderer, &mut shadow, rect, true, None);
+        assert_eq!(renderer.rows_painted, 1);
+        shadow
+            .apply(&GridMsg::CursorState {
+                row: 2,
+                col: 3,
+                visible: true,
+                style: felis_grid::CursorStyle::Bar,
+                blink: false,
+            })
+            .unwrap();
+        draw(&ctx, &mut renderer, &mut shadow, rect, true, None);
+        assert_eq!(renderer.rows_painted, 2);
+        assert!(renderer.rows[0].frame.cursor.is_none());
+        assert!(renderer.rows[2].frame.cursor.is_some());
+        draw(&ctx, &mut renderer, &mut shadow, rect, true, Some((8, 11)));
+        assert_eq!(renderer.rows_painted, 1);
+        assert_eq!(renderer.rows[1].frame.selection, Some((0, 3)));
+        draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        assert_eq!(renderer.rows_painted, 2);
+        assert!(renderer.rows[1].frame.selection.is_none());
+        assert!(renderer.rows[2].frame.cursor.is_none());
+    }
+
+    #[test]
+    fn moving_a_pane_repositions_cached_meshes() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut shadow = ShadowScreen::new(2, 4);
+        let rect = Rect::from_min_size(Pos2::ZERO, renderer.cell_size() * Vec2::new(4.0, 2.0));
+        draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        let moved = rect.translate(Vec2::new(20.0, 40.0));
+        draw(&ctx, &mut renderer, &mut shadow, moved, false, None);
+        assert_eq!(renderer.rows_painted, 2);
+        assert_eq!(renderer.rows[0].backgrounds.calc_bounds().min, moved.min);
+    }
 }
