@@ -40,7 +40,16 @@
             libxrandr
           ];
           common = {
-            src = craneLib.cleanCargoSource ./.;
+            # The embedded renderer compiles its WGSL shaders with include_str!.
+            src = pkgs.lib.cleanSourceWith {
+              src = ./.;
+              filter =
+                path: type:
+                craneLib.filterCargoSources path type
+                || pkgs.lib.hasSuffix ".wgsl" path
+                || builtins.baseNameOf path == "README.md"
+                || builtins.baseNameOf path == "LICENSE";
+            };
             strictDeps = true;
             nativeBuildInputs = [
               pkgs.pkg-config
