@@ -277,6 +277,7 @@ impl eframe::App for App {
         }
         let mut menu_open = false;
         egui::TopBottomPanel::top("tabs")
+            .show_separator_line(false)
             .frame(
                 egui::Frame::new()
                     .fill(TAB_BAR_BG)
