@@ -1353,11 +1353,11 @@ mod tests {
             pump(app, &|_| task.is_finished());
             app.runtime.block_on(task).unwrap()
         };
-        let output = command(&mut app, vec!["pane".into(), "list".into()]);
+        let output = command(&mut app, vec!["panes".into(), "list".into()]);
         assert!(output.status.success(), "{:?}", output);
         assert!(String::from_utf8_lossy(&output.stdout).contains(&format!("{original:032x}")));
         let attach = |daemon: Option<&str>, session: String, pane: Option<&str>| {
-            let mut args = vec!["pane".into(), "attach".into(), "--session".into(), session];
+            let mut args = vec!["panes".into(), "attach".into(), "--session".into(), session];
             if let Some(id) = pane {
                 args.push(id.into());
             }

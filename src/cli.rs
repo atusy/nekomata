@@ -22,8 +22,8 @@ pub enum PaneAction {
 
 pub const HELP: &str = "nekomata\n\
 nekomata felis sessions list [--format human|json]\n\
-nekomata pane list [--window WINDOW_ID]\n\
-nekomata pane attach [PANE_ID] --session SESSION [--daemon SOCKET | --ssh HOST] [--window WINDOW_ID]";
+nekomata panes list [--window WINDOW_ID]\n\
+nekomata panes attach [PANE_ID] --session SESSION [--daemon SOCKET | --ssh HOST] [--window WINDOW_ID]";
 
 pub fn parse(args: &[String]) -> Result<Command, &'static str> {
     match args
@@ -40,10 +40,10 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         ["felis", "sessions", "list", options @ ..] => {
             Ok(Command::List(options.iter().map(|s| (*s).into()).collect()))
         }
-        ["pane", "--help" | "-h"] | ["pane", "list" | "attach", "--help" | "-h"] => {
+        ["panes", "--help" | "-h"] | ["panes", "list" | "attach", "--help" | "-h"] => {
             Ok(Command::Help)
         }
-        ["pane", verb @ ("list" | "attach"), options @ ..] => parse_pane(verb, options),
+        ["panes", verb @ ("list" | "attach"), options @ ..] => parse_pane(verb, options),
         _ => Err("unknown command"),
     }
 }
@@ -117,12 +117,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pane_attach_selects_optional_pane_and_connection() {
+    fn panes_list_selects_optional_window() {
+        assert_eq!(
+            parse(&["panes", "list", "--window", "42"].map(String::from)),
+            Ok(Command::Pane {
+                window: Some(42),
+                action: PaneAction::List,
+            })
+        );
+    }
+
+    #[test]
+    fn panes_commands_offer_help() {
+        for command in [
+            vec!["panes"],
+            vec!["panes", "list"],
+            vec!["panes", "attach"],
+        ] {
+            for flag in ["--help", "-h"] {
+                let args = command
+                    .iter()
+                    .copied()
+                    .chain([flag])
+                    .map(String::from)
+                    .collect::<Vec<_>>();
+                assert_eq!(parse(&args), Ok(Command::Help));
+            }
+        }
+        assert!(HELP.contains("nekomata panes list"));
+        assert!(HELP.contains("nekomata panes attach"));
+        assert!(!HELP.contains("nekomata pane "));
+    }
+
+    #[test]
+    fn singular_pane_command_is_rejected() {
+        for command in [
+            vec!["pane", "list"],
+            vec!["pane", "attach", "--session", "abc"],
+            vec!["pane", "--help"],
+        ] {
+            let args = command.into_iter().map(String::from).collect::<Vec<_>>();
+            assert_eq!(parse(&args), Err("unknown command"));
+        }
+    }
+
+    #[test]
+    fn panes_attach_selects_optional_pane_and_connection() {
         let parse_args =
             |args: &[&str]| parse(&args.iter().map(|s| (*s).into()).collect::<Vec<_>>());
         assert_eq!(
             parse_args(&[
-                "pane",
+                "panes",
                 "attach",
                 "3",
                 "--session",
@@ -143,7 +188,7 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_args(&["pane", "attach", "--session", "abc"]),
+            parse_args(&["panes", "attach", "--session", "abc"]),
             Ok(Command::Pane {
                 window: None,
                 action: PaneAction::Attach {
@@ -155,10 +200,10 @@ mod tests {
             })
         );
         for args in [
-            vec!["pane", "attach"],
-            vec!["pane", "attach", "--session", "abc", "--ssh", "-oops"],
+            vec!["panes", "attach"],
+            vec!["panes", "attach", "--session", "abc", "--ssh", "-oops"],
             vec![
-                "pane",
+                "panes",
                 "attach",
                 "--session",
                 "abc",
@@ -167,7 +212,7 @@ mod tests {
                 "--daemon",
                 "/tmp/s",
             ],
-            vec!["pane", "attach", "0", "1", "--session", "abc"],
+            vec!["panes", "attach", "0", "1", "--session", "abc"],
         ] {
             assert!(parse_args(&args).is_err(), "{args:?}");
         }

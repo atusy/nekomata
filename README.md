@@ -95,21 +95,21 @@ CLIから起動中のGUIへ指示し、既存のペインを別のセッショ�
 
 ```sh
 # ウィンドウID、ペインID、接続先、セッションIDを確認
-nekomata pane list
+nekomata panes list
 
 # activeなペインを、同じdaemonの別セッションへ切り替える
-nekomata pane attach --session SESSION_ID
+nekomata panes attach --session SESSION_ID
 
 # 指定ペインを、別のローカルdaemonのセッションへ切り替える
-nekomata pane attach 2 --daemon /path/to/felis.sock --session SESSION_ID
+nekomata panes attach 2 --daemon /path/to/felis.sock --session SESSION_ID
 
 # SSH先の既定daemonのセッションへ切り替える
-nekomata pane attach --ssh dev-server --session SESSION_ID
-nekomata pane attach 2 --ssh user@host --session SESSION_ID
+nekomata panes attach --ssh dev-server --session SESSION_ID
+nekomata panes attach 2 --ssh user@host --session SESSION_ID
 
 # 複数のGUIがある場合はウィンドウを指定
-nekomata pane list --window WINDOW_ID
-nekomata pane attach 2 --window WINDOW_ID --session SESSION_ID
+nekomata panes list --window WINDOW_ID
+nekomata panes attach 2 --window WINDOW_ID --session SESSION_ID
 ```
 
 ペインIDはウィンドウ内のIDで、felisのセッションIDとは別です。省略すると、GUIが指示を受け取った時点のactiveなペインを使います。`--daemon` と `--ssh` を省略すると対象ペインの現在の接続先を引き継ぎます。ローカルソケットの相対パスは、CLIを実行したディレクトリを基準に解決します。セッションIDはfelisが一意に解決できる短縮形も使えます。
