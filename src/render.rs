@@ -214,6 +214,7 @@ impl Renderer {
                     rect,
                     ppp: self.ppp,
                     grid_width: f32::from(screen.cols()) * self.glyphs.cell_metrics().width as f32,
+                    cell_height: self.glyphs.cell_metrics().height as f32,
                 },
                 &self.mono,
                 &self.color,
@@ -263,6 +264,7 @@ struct Geometry {
     rect: Rect,
     ppp: f32,
     grid_width: f32,
+    cell_height: f32,
 }
 
 fn encode(
@@ -277,12 +279,13 @@ fn encode(
         rect,
         ppp,
         grid_width,
+        cell_height,
     } = geometry;
     let origin = rect.min;
     let mut backgrounds = Mesh::default();
     for r in &paint.rects {
         let mut band = bounds(origin, ppp, r.origin_px, r.size_px);
-        if r.origin_px[0] + r.size_px[0] >= grid_width {
+        if r.origin_px[0] + r.size_px[0] >= grid_width && r.size_px[1] == cell_height {
             band.max.x = band.max.x.max(rect.right());
         }
         backgrounds.add_colored_rect(band, srgb(r.color, colors));
@@ -521,6 +524,34 @@ mod tests {
         assert_eq!(renderer.rows[0].backgrounds.calc_bounds().min, moved.min);
     }
     #[test]
+    fn right_edge_background_extension_does_not_stretch_the_cursor() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut shadow = ShadowScreen::new(1, 3);
+        shadow
+            .apply(&GridMsg::CursorState {
+                row: 0,
+                col: 2,
+                visible: true,
+                style: felis_grid::CursorStyle::Underline,
+                blink: false,
+            })
+            .unwrap();
+        let cell = renderer.cell_size();
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(cell.x * 3.0 + 3.5, cell.y));
+        draw(&ctx, &mut renderer, &mut shadow, rect, true, None);
+        let right = renderer.rows[0]
+            .backgrounds
+            .vertices
+            .iter()
+            .filter(|v| v.color == crate::theme::ACCENT)
+            .map(|v| v.pos.x)
+            .reduce(f32::max)
+            .unwrap();
+        assert_eq!(right, cell.x * 3.0);
+    }
+
+    #[test]
     fn atlas_recycling_invalidates_rows_that_did_not_receive_deltas() {
         let ctx = egui::Context::default();
         let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
@@ -607,6 +638,7 @@ mod tests {
                 rect: Rect::from_min_size(Pos2::ZERO, Vec2::splat(2.0)),
                 ppp: 1.0,
                 grid_width: 2.0,
+                cell_height: 2.0,
             },
             &texture,
             &texture,
