@@ -106,6 +106,8 @@ Negative:
   renderer would need to rebuild its fonts and theme.
 - Settings that felis honors but nekomata ignores may surprise users; the
   README lists what nekomata applies.
+- Warnings reach only stderr, which a Dock or Finder launch does not show;
+  the window shows only the error that made nekomata ignore the file.
 
 ### Confirmation
 
