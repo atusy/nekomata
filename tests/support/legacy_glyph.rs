@@ -83,7 +83,9 @@ mod tests {
                 ctx.set_fonts(fonts);
             }
             let mut cell = Rect::NOTHING;
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+                let context = root_ui.ctx().clone();
+                let ctx = &context;
                 let painter = ctx.layer_painter(egui::LayerId::background());
                 let font = egui::FontId::monospace(15.0);
                 let cw = ctx.fonts_mut(|f| f.glyph_width(&font, 'M'));
@@ -118,7 +120,9 @@ mod tests {
     fn fitting_preserves_native_layout_for_ascii_and_two_column_text() {
         let ctx = egui::Context::default();
         let mut expected = Vec::new();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let output = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+            let context = root_ui.ctx().clone();
+            let ctx = &context;
             let painter = ctx.layer_painter(egui::LayerId::background());
             let font = egui::FontId::monospace(15.0);
             let cw = ctx.fonts_mut(|f| f.glyph_width(&font, 'M'));
@@ -157,7 +161,9 @@ mod tests {
             ('\u{2880}', 16.0, 34.0),
         ] {
             let ctx = egui::Context::default();
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+                let context = root_ui.ctx().clone();
+                let ctx = &context;
                 let painter = ctx.layer_painter(egui::LayerId::background());
                 assert!(paint_braille(
                     &painter,
@@ -186,7 +192,9 @@ mod tests {
             let cell = Rect::from_min_size(Pos2::new(10.25, 20.5), size);
             let ctx = egui::Context::default();
             for pattern in 0u32..=255 {
-                let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let output = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+                    let context = root_ui.ctx().clone();
+                    let ctx = &context;
                     assert!(paint_braille(
                         &ctx.layer_painter(egui::LayerId::background()),
                         char::from_u32(0x2800 + pattern).unwrap(),
@@ -195,8 +203,8 @@ mod tests {
                     ));
                 });
                 assert_eq!(output.shapes.len(), pattern.count_ones() as usize);
-                for shape in output.shapes {
-                    let Shape::Rect(dot) = shape.shape else {
+                for shape in &output.shapes {
+                    let Shape::Rect(dot) = &shape.shape else {
                         panic!("expected a dot, not a font glyph");
                     };
                     assert!(cell.contains_rect(dot.rect));
@@ -208,7 +216,9 @@ mod tests {
     #[test]
     fn ordinary_text_is_left_for_the_font_renderer() {
         let ctx = egui::Context::default();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let output = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+            let context = root_ui.ctx().clone();
+            let ctx = &context;
             for ch in ['A', '猫', '\u{27ff}', '\u{2900}'] {
                 assert!(!paint_braille(
                     &ctx.layer_painter(egui::LayerId::background()),

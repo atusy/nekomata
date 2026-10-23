@@ -58,7 +58,9 @@ fn measure(shared: bool, panes: usize, rows: u16, cols: u16, dirty: &str) -> (f6
             }
         }
         let start = Instant::now();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let output = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+            let context = root_ui.ctx().clone();
+            let ctx = &context;
             for (i, (renderer, screen)) in renderers.iter_mut().zip(&screens).enumerate() {
                 // The previous frontend used a 21px row at size 15. Keep every
                 // cell visible for both font metric systems on the same grid.
@@ -76,7 +78,7 @@ fn measure(shared: bool, panes: usize, rows: u16, cols: u16, dirty: &str) -> (f6
                 }
             }
         });
-        let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+        let primitives = output.tessellate(&ctx);
         primitive_count = primitives.len();
         black_box(primitives);
         if frame >= 10 {

@@ -8,6 +8,8 @@ mod render;
 mod session;
 mod shortcuts;
 mod ssh;
+#[cfg(test)]
+mod test_support;
 mod theme;
 mod workspace;
 mod workspace_client;

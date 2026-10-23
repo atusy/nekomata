@@ -409,7 +409,7 @@ mod tests {
         loop {
             // Acknowledge the repaint before examining state so a racing update
             // either satisfies the predicate or leaves a wakeup for the next pass.
-            let _ = ctx.run(egui::RawInput::default(), |_| {});
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
             {
                 let state = session.state.lock().unwrap();
                 assert!(state.error.is_none(), "{:?}", state.error);

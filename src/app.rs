@@ -108,7 +108,7 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
-        let mut style = (*cc.egui_ctx.style()).clone();
+        let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
         style.visuals.panel_fill = BG;
         style.visuals.selection.bg_fill = ACCENT.gamma_multiply(0.3);
         style.spacing.button_padding = Vec2::new(12.0, 7.0);
@@ -121,7 +121,7 @@ impl App {
         style.visuals.window_fill = TAB_BAR_BG;
         style.visuals.window_stroke = Stroke::new(1.0_f32, crate::theme::MENU_BORDER);
         style.visuals.window_corner_radius = egui::CornerRadius::same(8);
-        cc.egui_ctx.set_style(style);
+        cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
         // Nix supplies UDEV Gothic NF; system CJK fonts remain a fallback.
         let mut fonts = egui::FontDefinitions::default();
         let candidates = [
@@ -828,11 +828,13 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let context = root_ui.ctx().clone();
+        let ctx = &context;
         self.workspace_events(ctx);
         self.poll_workspace();
         if self.workspace.is_some() && self.workspace_id.is_none() {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show(root_ui, |ui| {
                 if let Some(error) = &self.workspace_error {
                     ui.colored_label(egui::Color32::LIGHT_RED, error);
                     if ui.button("Retry connecting to nekomata daemon").clicked() {
@@ -851,7 +853,7 @@ impl eframe::App for App {
         }
         self.control_requests(ctx);
         if let Some(error) = &self.workspace_error {
-            egui::TopBottomPanel::bottom("workspace-error").show(ctx, |ui| {
+            egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
             });
         }
@@ -872,7 +874,7 @@ impl eframe::App for App {
             self.close_pane(ctx, id);
         }
         if self.tabs.is_empty() {
-            egui::CentralPanel::default().show(ctx, |_| {});
+            egui::CentralPanel::default().show(root_ui, |_| {});
             if let Some(id) = self.picker.show(&self.runtime, ctx) {
                 self.add_tab(ctx, Some(id));
             } else if !self.picker.visible {
@@ -906,14 +908,14 @@ impl eframe::App for App {
             focus_terminal(ctx);
         }
         let mut menu_open = false;
-        egui::TopBottomPanel::top("tabs")
+        egui::Panel::top("tabs")
             .show_separator_line(false)
             .frame(
                 egui::Frame::new()
                     .fill(TAB_BAR_BG)
                     .inner_margin(egui::Margin::symmetric(8, 6)),
             )
-            .show(ctx, |ui| {
+            .show(root_ui, |ui| {
                 if self.pending_workspace.is_some() {
                     ui.disable();
                 }
@@ -1088,7 +1090,7 @@ impl eframe::App for App {
             || menu_open;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
-            .show(ctx, |ui| {
+            .show(root_ui, |ui| {
                 if self.pending_workspace.is_some() {
                     ui.disable();
                 }
@@ -1194,7 +1196,7 @@ impl eframe::App for App {
         self.save_workspace();
         ctx.request_repaint_after(Duration::from_millis(250));
     }
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         if let Some(client) = &self.workspace {
             if client.is_closed() {
                 return;
@@ -1211,7 +1213,7 @@ impl eframe::App for App {
 }
 
 fn terminal_focus_id() -> egui::Id {
-    egui::Id::new("terminal-keyboard-focus")
+    egui::Id::unique("terminal-keyboard-focus")
 }
 
 fn focus_terminal(ctx: &egui::Context) {
@@ -1288,7 +1290,11 @@ fn draw_layout(
                     Rect::from_min_max(Pos2::new(rect.left(), y + 1.0), rect.max),
                 )
             };
-            let response = ui.interact(divider.expand(2.0), ui.id().with("divider"), Sense::drag());
+            let response = ui.interact(
+                divider.expand(2.0),
+                ui.scope_id().with("divider"),
+                Sense::drag(),
+            );
             let response = response.on_hover_cursor(if horizontal {
                 egui::CursorIcon::ResizeHorizontal
             } else {
@@ -1337,7 +1343,7 @@ fn draw_layout(
 
 fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
     let rect = ui.max_rect().shrink(2.0);
-    let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    let response = ui.interact(rect, ui.scope_id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
         *focused = id;
     }
@@ -1399,6 +1405,8 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
+                purpose: Default::default(),
+                should_interrupt_composition: false,
                 rect: text_rect,
                 cursor_rect: Rect::from_min_size(pos, Vec2::new(cw, ch)),
             })
@@ -1776,7 +1784,7 @@ mod tests {
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
             let deadline = Instant::now() + Duration::from_secs(25);
             loop {
-                let _ = ctx.run(egui::RawInput::default(), |_| {});
+                let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
                 app.workspace_events(&ctx);
                 app.poll_workspace();
                 app.control_requests(&ctx);
@@ -1813,7 +1821,7 @@ mod tests {
         let before = app.snapshot();
         let session_id = app.workspace_id;
         app.save_workspace();
-        eframe::App::on_exit(&mut app, None);
+        eframe::App::on_exit(&mut app);
         drop(app);
 
         let mut replacement = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
@@ -1985,7 +1993,7 @@ mod tests {
             .map(|p| p.session.state.lock().unwrap().session_id.unwrap())
             .chain([other_shell, third_shell])
             .collect();
-        eframe::App::on_exit(&mut replacement, None);
+        eframe::App::on_exit(&mut replacement);
         drop(replacement);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
@@ -2060,7 +2068,7 @@ mod tests {
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
             let deadline = Instant::now() + Duration::from_secs(25);
             loop {
-                let _ = ctx.run(egui::RawInput::default(), |_| {});
+                let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
                 app.control_requests(&ctx);
                 if done(app) {
                     break;
@@ -2241,12 +2249,13 @@ mod tests {
     #[test]
     fn terminal_space_does_not_activate_a_previously_focused_menu() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+            egui::CentralPanel::default().show(root_ui, |ui| {
                 ui.menu_button("≡", |_| {}).response.request_focus();
             });
         });
-        let _ = ctx.run(
+        let _ = crate::test_support::run(
+            &ctx,
             egui::RawInput {
                 events: vec![
                     egui::Event::Key {
@@ -2260,9 +2269,11 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            |ctx| {
+            |root_ui| {
+                let context = root_ui.ctx().clone();
+                let ctx = &context;
                 focus_terminal(ctx);
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show(root_ui, |ui| {
                     assert!(ui.menu_button("≡", |_| {}).inner.is_none());
                     ui.interact(
                         ui.max_rect(),

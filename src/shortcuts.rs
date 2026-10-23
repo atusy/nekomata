@@ -132,12 +132,15 @@ mod tests {
                 vec![Action::PreviousTab],
             ),
         ] {
-            let _ = ctx.run(
+            let _ = crate::test_support::run(
+                &ctx,
                 eframe::egui::RawInput {
                     events,
                     ..Default::default()
                 },
-                |ctx| {
+                |root_ui| {
+                    let context = root_ui.ctx().clone();
+                    let ctx = &context;
                     ctx.input_mut(|input| {
                         assert_eq!(shortcuts.consume(input), expected);
                         assert!(input.events.is_empty());
@@ -169,12 +172,15 @@ mod tests {
                 },
             ),
         ];
-        let _ = ctx.run(
+        let _ = crate::test_support::run(
+            &ctx,
             eframe::egui::RawInput {
                 events,
                 ..Default::default()
             },
-            |ctx| {
+            |root_ui| {
+                let context = root_ui.ctx().clone();
+                let ctx = &context;
                 ctx.input_mut(|input| {
                     assert_eq!(
                         shortcuts.consume(input),
@@ -203,12 +209,15 @@ mod tests {
             press(Key::T, Modifiers::COMMAND),
             press(Key::C, Modifiers::CTRL),
         ];
-        let _ = ctx.run(
+        let _ = crate::test_support::run(
+            &ctx,
             eframe::egui::RawInput {
                 events: events.clone(),
                 ..Default::default()
             },
-            |ctx| {
+            |root_ui| {
+                let context = root_ui.ctx().clone();
+                let ctx = &context;
                 ctx.input_mut(|input| {
                     assert!(shortcuts.consume(input).is_empty());
                     assert_eq!(input.events, events);

@@ -17,7 +17,8 @@ use felis_shaping::{FontStack, GlyphPixels, Shaper, StyleFaces};
 
 /// Discover once per GUI, including the font supplied by the Nix wrapper.
 pub fn load_fonts(ctx: &egui::Context) -> anyhow::Result<Arc<FontStack>> {
-    if let Some(stack) = ctx.data(|d| d.get_temp::<Arc<FontStack>>(egui::Id::new("terminal-fonts")))
+    if let Some(stack) =
+        ctx.data(|d| d.get_temp::<Arc<FontStack>>(egui::Id::unique("terminal-fonts")))
     {
         return Ok(stack);
     }
@@ -28,7 +29,7 @@ pub fn load_fonts(ctx: &egui::Context) -> anyhow::Result<Arc<FontStack>> {
         FontStack::auto_discover(None, &[], &[], &styles)?
     };
     let stack = Arc::new(stack);
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("terminal-fonts"), stack.clone()));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("terminal-fonts"), stack.clone()));
     Ok(stack)
 }
 
@@ -418,8 +419,10 @@ mod tests {
         rect: Rect,
         focused: bool,
         selection: Option<(usize, usize)>,
-    ) -> egui::FullOutput {
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
+    ) -> crate::test_support::CpuFrame {
+        let output = crate::test_support::run(ctx, egui::RawInput::default(), |root_ui| {
+            let context = root_ui.ctx().clone();
+            let ctx = &context;
             let painter = ctx
                 .layer_painter(egui::LayerId::background())
                 .with_clip_rect(rect);

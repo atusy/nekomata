@@ -1,0 +1,18 @@
+[package]
+name = "felis-render-wgpu"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://git.natsukium.com/felis-terminal/felis"
+description = "Upstream felis GPU renderer with a shared-device embedding seam"
+[dependencies]
+felis-protocol = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
+felis-grid = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
+felis-shaping = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
+felis-render-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
+wgpu = "30"
+bytemuck = { version = "1", features = ["derive"] }
+raw-window-handle = "0.6"
+tracing = "0.1"
+thiserror = "2"
