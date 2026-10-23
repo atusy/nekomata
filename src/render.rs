@@ -26,23 +26,66 @@ pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS),
         "terminal rendering requires compatible texture views; select a Vulkan, Metal or DX12 adapter"
     );
-    let cfg = faces(font, std::env::var_os("NEKOMATA_FONT").map(Into::into));
+    let bundled: Option<PathBuf> = std::env::var_os("NEKOMATA_FONT").map(Into::into);
+    let mut cfg = faces(font, bundled.clone());
     if cfg.font_files.is_empty() && !named_families(&cfg).is_empty() {
         // Listing every installed family is slow on macOS and only feeds
         // stderr, so it must not delay the first frame.
         let cfg = cfg.clone();
         std::thread::spawn(move || warn_missing_families(&cfg));
     }
+    let stack = Arc::new(with_bundled_fallback(&mut cfg, bundled, discover)?);
     cc.egui_ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone());
         data.insert_temp(faces_id(), Arc::new(cfg));
+        data.insert_temp(fonts_id(), stack);
     });
-    load_fonts(&cc.egui_ctx)?;
     Ok(())
 }
 
 fn faces_id() -> egui::Id {
     egui::Id::unique("terminal-font-faces")
+}
+
+fn fonts_id() -> egui::Id {
+    egui::Id::unique("terminal-fonts")
+}
+
+/// A system without discoverable fonts (the Nix wrapper ships its font as a
+/// file, not through fontconfig) would otherwise refuse to start once
+/// `font.family` turned the bundled file off; use the bundled file instead.
+fn with_bundled_fallback<T, E: std::fmt::Display>(
+    cfg: &mut RendererConfig,
+    bundled: Option<PathBuf>,
+    discover: impl Fn(&RendererConfig) -> Result<T, E>,
+) -> Result<T, E> {
+    match (discover(cfg), bundled) {
+        (Err(error), Some(bundled)) if cfg.font_files.is_empty() => {
+            eprintln!(
+                "nekomata: warning: cannot load system fonts ({error}); using {}",
+                bundled.display()
+            );
+            cfg.font_files = vec![bundled];
+            discover(cfg)
+        }
+        (result, _) => result,
+    }
+}
+
+fn discover(cfg: &RendererConfig) -> Result<FontStack, felis_shaping::ShapingError> {
+    let family = cfg.font_family.as_deref();
+    let styles = cfg.style_faces();
+    if cfg.font_files.is_empty() {
+        FontStack::auto_discover(family, &cfg.font_features, &cfg.font_fallbacks, &styles)
+    } else {
+        FontStack::discover_in_files(
+            &cfg.font_files,
+            family,
+            &cfg.font_features,
+            &cfg.font_fallbacks,
+            &styles,
+        )
+    }
 }
 
 /// Every `[font]` setting except the size, which each pane chooses.
@@ -143,26 +186,11 @@ fn configured_faces(ctx: &egui::Context) -> Arc<RendererConfig> {
 }
 
 pub fn load_fonts(ctx: &egui::Context) -> Result<Arc<FontStack>> {
-    let key = egui::Id::unique("terminal-fonts");
-    if let Some(stack) = ctx.data(|data| data.get_temp::<Arc<FontStack>>(key)) {
+    if let Some(stack) = ctx.data(|data| data.get_temp::<Arc<FontStack>>(fonts_id())) {
         return Ok(stack);
     }
-    let cfg = configured_faces(ctx);
-    let family = cfg.font_family.as_deref();
-    let styles = cfg.style_faces();
-    let stack = if cfg.font_files.is_empty() {
-        FontStack::auto_discover(family, &cfg.font_features, &cfg.font_fallbacks, &styles)?
-    } else {
-        FontStack::discover_in_files(
-            &cfg.font_files,
-            family,
-            &cfg.font_features,
-            &cfg.font_fallbacks,
-            &styles,
-        )?
-    };
-    let stack = Arc::new(stack);
-    ctx.data_mut(|data| data.insert_temp(key, stack.clone()));
+    let stack = Arc::new(discover(&configured_faces(ctx))?);
+    ctx.data_mut(|data| data.insert_temp(fonts_id(), stack.clone()));
     Ok(stack)
 }
 
@@ -474,6 +502,32 @@ mod tests {
             ]
         );
         assert!(named_families(&faces(&FontConfig::default(), None)).is_empty());
+    }
+
+    #[test]
+    fn a_system_without_fonts_falls_back_to_the_bundled_file() {
+        let loaded = crate::config::resolve("[font]\nfamily = \"UDEV Gothic NF\"\n");
+        let bundled = std::path::PathBuf::from("/nix/store/bundled.ttf");
+        let only_files = |cfg: &RendererConfig| {
+            if cfg.font_files.is_empty() {
+                Err("no font")
+            } else {
+                Ok(cfg.font_files.clone())
+            }
+        };
+        let mut cfg = faces(&loaded.font, Some(bundled.clone()));
+        assert_eq!(
+            with_bundled_fallback(&mut cfg, Some(bundled.clone()), only_files),
+            Ok(vec![bundled.clone()])
+        );
+        assert_eq!(cfg.font_files, std::slice::from_ref(&bundled));
+        assert_eq!(cfg.font_family.as_deref(), Some("UDEV Gothic NF"));
+
+        let mut cfg = faces(&loaded.font, None);
+        assert_eq!(
+            with_bundled_fallback(&mut cfg, None, only_files),
+            Err("no font")
+        );
     }
 
     #[test]
