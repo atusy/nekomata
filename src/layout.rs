@@ -1,11 +1,11 @@
 //! Layout owns pane identities; terminal connections live outside the tree.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Axis {
     Horizontal,
     Vertical,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Layout {
     Pane(u64),
     Split {

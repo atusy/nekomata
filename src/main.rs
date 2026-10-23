@@ -7,6 +7,7 @@ mod picker;
 mod session;
 mod shortcuts;
 mod theme;
+mod workspace;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
