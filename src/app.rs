@@ -213,7 +213,8 @@ impl App {
                 .collect(),
             active: self.active,
             next_id: self.next_id,
-            font_size: self.font_size.zoom,
+            font_size: self.font_size.get(),
+            font_zoom: self.font_size.zoom,
         }
     }
 
@@ -223,7 +224,7 @@ impl App {
         self.tabs = snapshot.tabs;
         self.active = snapshot.active;
         self.next_id = snapshot.next_id;
-        self.font_size.zoom = snapshot.font_size;
+        self.font_size.zoom = snapshot.font_zoom;
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
@@ -340,7 +341,7 @@ impl App {
                             self.tabs = snapshot.tabs;
                             self.active = snapshot.active;
                             self.next_id = snapshot.next_id;
-                            self.font_size.zoom = snapshot.font_size;
+                            self.font_size.zoom = snapshot.font_zoom;
                             self.workspace_id = pending.id;
                             self.last_snapshot = None;
                             self.workspace_error = None;

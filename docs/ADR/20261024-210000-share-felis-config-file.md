@@ -67,18 +67,21 @@ keep their fixed colors.
 ### Font size is a default, not the session's value
 
 The configured size is the *default* text size. A nekomata session stores a
-font size only after the user zooms it (`font_size: Option<f32>` in the
+font size only after the user zooms it (`font_zoom: Option<f32>` in the
 snapshot); the effective size is `session override.unwrap_or(config
 default)`. Resetting the zoom clears the override, so the session follows
 the configuration again. A future per-pane override extends the same chain:
 `pane override.or(session override).unwrap_or(config default)`.
 
-Changing the snapshot field changes the nekomata daemon protocol, so its
-version is bumped. As decided in
-[20261023-120000](20261023-120000-separate-workspaces-from-windows.md), a
-newer GUI reports the incompatible running daemon instead of replacing it;
-users stop it once (`nekomata daemon stop`), which discards in-memory
-layouts but not felis shells.
+The override is a new optional snapshot field rather than a new type for
+the existing `font_size`, which keeps carrying the effective size. Older
+GUIs and the running nekomata daemon parse the same snapshots, so the
+protocol version stays unchanged and upgrading needs no daemon restart.
+A daemon older than this change drops the unknown field, so a zoom saved
+through it is forgotten when it is restored; changing the protocol version
+instead would have stranded users behind a daemon that, as decided in
+[20261023-120000](20261023-120000-separate-workspaces-from-windows.md),
+rejects even the stop request from a newer client.
 
 ### Consequences
 
@@ -92,7 +95,9 @@ Positive:
 
 Negative:
 
-- Upgrading requires one nekomata daemon restart.
+- Sessions zoomed before upgrading, or saved through an older running
+  daemon, return to the configured default once.
+- The snapshot keeps a `font_size` field that only older versions read.
 - The file is read once at startup; edits apply after restarting the GUI.
   Hot reload (`felis_client_core::config_watcher`) is deferred: live felis
   connections would need to resend `ConfigureTheme`, and each pane's

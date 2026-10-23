@@ -47,8 +47,13 @@ pub struct Snapshot {
     pub panes: std::collections::BTreeMap<u64, PaneSpec>,
     pub active: usize,
     pub next_id: u64,
-    /// The size this session was zoomed to; `None` follows the configured default.
-    pub font_size: Option<f32>,
+    /// The effective size when saved. Only nekomata versions that predate
+    /// `font_zoom` read it; it stays so they can share a running daemon.
+    pub font_size: f32,
+    /// The size this session was zoomed to; `None` follows the configured
+    /// default. Absent in snapshots from versions that predate it.
+    #[serde(default)]
+    pub font_zoom: Option<f32>,
 }
 
 impl Default for Snapshot {
@@ -58,7 +63,8 @@ impl Default for Snapshot {
             panes: Default::default(),
             active: 0,
             next_id: 1,
-            font_size: None,
+            font_size: DEFAULT_FONT_SIZE,
+            font_zoom: None,
         }
     }
 }
@@ -113,9 +119,9 @@ impl Snapshot {
     pub fn validate(&self) -> anyhow::Result<()> {
         use anyhow::ensure;
         use std::collections::BTreeSet;
+        let in_band = |size: f32| (MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size);
         ensure!(
-            self.font_size
-                .is_none_or(|size| (MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size)),
+            in_band(self.font_size) && self.font_zoom.is_none_or(in_band),
             "invalid font size"
         );
         ensure!(self.active < self.tabs.len().max(1), "invalid active tab");
@@ -213,11 +219,31 @@ mod tests {
     fn snapshots_accept_no_override_and_reject_sizes_outside_the_band() {
         let mut snapshot = Snapshot::default();
         assert!(snapshot.validate().is_ok());
-        snapshot.font_size = Some(5.0);
+        snapshot.font_zoom = Some(5.0);
         assert!(snapshot.validate().is_err());
-        snapshot.font_size = Some(f32::NAN);
+        snapshot.font_zoom = Some(f32::NAN);
         assert!(snapshot.validate().is_err());
-        snapshot.font_size = Some(6.0);
+        snapshot.font_zoom = Some(6.0);
         assert!(snapshot.validate().is_ok());
+        snapshot.font_size = 80.0;
+        assert!(snapshot.validate().is_err());
+    }
+
+    #[test]
+    fn snapshots_stay_readable_across_versions_sharing_a_daemon() {
+        let legacy: Snapshot = serde_json::from_str(
+            r#"{"tabs":[],"panes":{},"active":0,"next_id":1,"font_size":18.0}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.font_zoom, None);
+        assert_eq!(legacy.font_size, 18.0);
+
+        let current = serde_json::to_value(Snapshot {
+            font_size: 21.0,
+            font_zoom: Some(21.0),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(current["font_size"], 21.0);
     }
 }
