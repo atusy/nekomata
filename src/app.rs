@@ -1622,28 +1622,7 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
             egui::Event::Copy => {
                 if let Some((a, b)) = *selection {
                     let state = session.state.lock().unwrap();
-                    let screen = state.screen.screen();
-                    let cols = usize::from(screen.cols());
-                    let mut text = String::new();
-                    for index in a.min(b)..=a.max(b) {
-                        if index != a.min(b) && index % cols == 0 {
-                            text.push('\n');
-                        }
-                        if let Some(cell) =
-                            screen.cell((index / cols) as u16, (index % cols) as u16)
-                        {
-                            match cell.grapheme {
-                                Grapheme::Ascii(c) => text.push(char::from(c)),
-                                Grapheme::Char(c) => text.push(c),
-                                Grapheme::Cluster(id) => {
-                                    text.push_str(state.screen.cluster_str(id).unwrap_or(""))
-                                }
-                                Grapheme::Empty => text.push(' '),
-                                _ => {}
-                            }
-                        }
-                    }
-                    ctx.copy_text(text);
+                    ctx.copy_text(selected_text(&state.screen, (a, b)));
                 }
                 continue;
             }
@@ -1672,6 +1651,27 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
             }));
         }
     }
+}
+
+fn selected_text(shadow: &felis_client_core::ShadowScreen, (a, b): (usize, usize)) -> String {
+    let screen = shadow.screen();
+    let cols = usize::from(screen.cols());
+    let mut text = String::new();
+    for index in a.min(b)..=a.max(b) {
+        if index != a.min(b) && index % cols == 0 {
+            text.push('\n');
+        }
+        if let Some(cell) = screen.cell((index / cols) as u16, (index % cols) as u16) {
+            match cell.grapheme {
+                Grapheme::Ascii(c) => text.push(char::from(c)),
+                Grapheme::Char(c) => text.push(c),
+                Grapheme::Cluster(id) => text.push_str(shadow.cluster_str(id).unwrap_or("")),
+                Grapheme::Empty => text.push(' '),
+                _ => {}
+            }
+        }
+    }
+    text
 }
 
 fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) -> Option<InputMsg> {
