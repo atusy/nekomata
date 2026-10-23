@@ -29,6 +29,7 @@
           pkgs = import nixpkgs { inherit system; };
           craneLib = crane.mkLib pkgs;
           runtimeLibs = with pkgs; [
+            fontconfig
             libGL
             libxkbcommon
             wayland
@@ -131,6 +132,7 @@
             buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
               with pkgs;
               [
+                fontconfig
                 libGL
                 libxkbcommon
                 wayland
@@ -144,6 +146,7 @@
               pkgs.lib.makeLibraryPath (
                 with pkgs;
                 [
+                  fontconfig
                   libGL
                   libxkbcommon
                   wayland
