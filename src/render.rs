@@ -28,22 +28,10 @@ pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result
     );
     let cfg = faces(font, std::env::var_os("NEKOMATA_FONT").map(Into::into));
     if cfg.font_files.is_empty() && !named_families(&cfg).is_empty() {
-        // felis reports a missing family only through `tracing`, which
-        // nekomata does not install, and then silently skips it.
-        match felis_render_wgpu::installed_families() {
-            Ok(installed) => {
-                let installed: Vec<_> = installed.into_iter().map(|f| f.name).collect();
-                for (key, family) in missing_families(&cfg, &installed) {
-                    let instead = if key == "font.family" {
-                        "using the system monospace font"
-                    } else {
-                        "skipping it"
-                    };
-                    eprintln!("nekomata: warning: {key}: {family:?} is not installed; {instead}");
-                }
-            }
-            Err(error) => eprintln!("nekomata: warning: cannot list installed fonts: {error}"),
-        }
+        // Listing every installed family is slow on macOS and only feeds
+        // stderr, so it must not delay the first frame.
+        let cfg = cfg.clone();
+        std::thread::spawn(move || warn_missing_families(&cfg));
     }
     cc.egui_ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone());
@@ -79,6 +67,25 @@ fn faces(font: &FontConfig, bundled: Option<PathBuf>) -> RendererConfig {
             .into_iter()
             .collect(),
         ..Default::default()
+    }
+}
+
+/// felis reports a missing family only through `tracing`, which nekomata
+/// does not install, and then silently falls back or skips it.
+fn warn_missing_families(cfg: &RendererConfig) {
+    match felis_render_wgpu::installed_families() {
+        Ok(installed) => {
+            let installed: Vec<_> = installed.into_iter().map(|f| f.name).collect();
+            for (key, family) in missing_families(cfg, &installed) {
+                let instead = if key == "font.family" {
+                    "using the system monospace font"
+                } else {
+                    "skipping it"
+                };
+                eprintln!("nekomata: warning: {key}: {family:?} is not installed; {instead}");
+            }
+        }
+        Err(error) => eprintln!("nekomata: warning: cannot list installed fonts: {error}"),
     }
 }
 
