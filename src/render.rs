@@ -50,6 +50,7 @@ pub struct Renderer {
     mono: TextureHandle,
     color: TextureHandle,
     theme: ResolvedTheme,
+    color_revision: u64,
     rows: Vec<CachedRow>,
     geometry: Option<(Rect, u16, u16)>,
     scratch: RowPaint,
@@ -86,12 +87,21 @@ impl Renderer {
             mono,
             color,
             theme: ResolvedTheme::new(&theme),
+            color_revision: 0,
             rows: Vec::new(),
             geometry: None,
             scratch: RowPaint::default(),
             colors: HashMap::new(),
             rows_painted: 0,
         })
+    }
+
+    pub fn sync_colors(&mut self, colors: &crate::colors::Colors) {
+        if self.color_revision != colors.revision() {
+            self.theme = ResolvedTheme::new(&colors.theme());
+            self.color_revision = colors.revision();
+            self.geometry = None;
+        }
     }
 
     pub fn matches(&self, font_size: f32, ppp: f32) -> bool {

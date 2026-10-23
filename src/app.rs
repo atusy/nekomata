@@ -1390,6 +1390,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         });
     }
     let mut state = pane.session.state.lock().unwrap();
+    renderer.sync_colors(&state.colors);
     let shadow = &state.screen;
     let screen = shadow.screen();
     let painter = painter.with_clip_rect(text_rect);

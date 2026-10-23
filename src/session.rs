@@ -86,6 +86,7 @@ impl Target {
 
 pub struct State {
     pub screen: ShadowScreen,
+    pub colors: crate::colors::Colors,
     pub session_id: Option<u128>,
     pub error: Option<String>,
     pub connected: bool,
@@ -160,6 +161,7 @@ impl Session {
     ) -> Self {
         let state = Arc::new(Mutex::new(State {
             screen: ShadowScreen::new(24, 80),
+            colors: crate::colors::Colors::default(),
             session_id: None,
             error: None,
             connected: false,
@@ -301,6 +303,7 @@ async fn run(
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<GridMsg>(&payload)? {
                                 let mut state = shared.lock().unwrap();
                                 state.screen.apply(&delivery.msg)?;
+                                state.colors.apply_grid(&delivery.msg);
                                 if let GridMsg::ClipboardSet { write } = &delivery.msg
                                     && write.selection.contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
                                     && let Ok(text) = std::str::from_utf8(&write.data) {

@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod colors;
 mod control;
 mod daemon;
 mod layout;
