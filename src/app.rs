@@ -881,8 +881,13 @@ impl eframe::App for App {
             let mut dismissed = false;
             egui::Panel::bottom("config-error").show(root_ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
                     dismissed = ui.button("Dismiss").clicked();
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(error).color(egui::Color32::LIGHT_RED),
+                        )
+                        .wrap(),
+                    );
                 });
             });
             if dismissed {
