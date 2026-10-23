@@ -4,6 +4,10 @@ pub enum Command {
     DaemonRun,
     DaemonStop,
     SessionsList,
+    Session {
+        window: Option<u32>,
+        session: Option<u64>,
+    },
     List(Vec<String>),
     Help,
     Pane {
@@ -25,6 +29,8 @@ pub enum PaneAction {
 
 pub const HELP: &str = "nekomata\n\
 nekomata sessions list\n\
+nekomata sessions new [--window WINDOW_ID]\n\
+nekomata sessions attach SESSION_ID [--window WINDOW_ID]\n\
 nekomata daemon stop\n\
 nekomata felis sessions list [--format human|json]\n\
 nekomata panes list [--window WINDOW_ID]\n\
@@ -41,6 +47,11 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
         ["sessions", "list"] => Ok(Command::SessionsList),
+        ["sessions", "--help" | "-h"]
+        | ["sessions", "list" | "new" | "attach", "--help" | "-h"]
+        | ["daemon", "--help" | "-h"]
+        | ["daemon", "run" | "stop", "--help" | "-h"] => Ok(Command::Help),
+        ["sessions", verb @ ("new" | "attach"), options @ ..] => parse_session(verb, options),
         ["--help" | "-h"]
         | ["felis", "--help" | "-h"]
         | ["felis", "sessions", "--help" | "-h"]
@@ -54,6 +65,32 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         ["panes", verb @ ("list" | "attach"), options @ ..] => parse_pane(verb, options),
         _ => Err("unknown command"),
     }
+}
+
+fn parse_session(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
+    let mut window = None;
+    let mut session = None;
+    let mut args = options.iter().copied();
+    while let Some(arg) = args.next() {
+        match arg {
+            "--window" if window.is_none() => {
+                window = Some(
+                    args.next()
+                        .ok_or("missing window ID")?
+                        .parse()
+                        .map_err(|_| "invalid window ID")?,
+                );
+            }
+            id if verb == "attach" && session.is_none() && !id.starts_with('-') => {
+                session = Some(id.parse().map_err(|_| "invalid nekomata session ID")?);
+            }
+            _ => return Err("unknown or repeated session argument"),
+        }
+    }
+    if verb == "attach" && session.is_none() {
+        return Err("session ID is required");
+    }
+    Ok(Command::Session { window, session })
 }
 
 fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
@@ -123,6 +160,41 @@ fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_switch_commands_select_the_destination_and_window() {
+        assert_eq!(
+            parse(&["sessions", "new"].map(String::from)),
+            Ok(Command::Session {
+                window: None,
+                session: None
+            })
+        );
+        assert_eq!(
+            parse(&["sessions", "attach", "7", "--window", "42"].map(String::from)),
+            Ok(Command::Session {
+                window: Some(42),
+                session: Some(7)
+            })
+        );
+        for args in [
+            vec!["sessions", "attach"],
+            vec!["sessions", "attach", "bad"],
+            vec!["sessions", "attach", "1", "2"],
+            vec!["sessions", "new", "2"],
+            vec!["sessions", "new", "--window"],
+            vec!["sessions", "new", "--window", "1", "--window", "2"],
+        ] {
+            let args: Vec<_> = args.into_iter().map(String::from).collect();
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+        for command in ["list", "new", "attach"] {
+            assert_eq!(
+                parse(&["sessions", command, "--help"].map(String::from)),
+                Ok(Command::Help)
+            );
+        }
+    }
 
     #[test]
     fn panes_list_selects_optional_window() {

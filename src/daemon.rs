@@ -57,6 +57,17 @@ pub enum Payload {
     Done,
 }
 
+#[derive(Debug)]
+pub struct Rejection(String);
+
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Rejection {}
+
 type Response = Result<Payload, String>;
 
 #[derive(Serialize, Deserialize)]
@@ -188,7 +199,7 @@ pub async fn exchange(stream: &mut UnixStream, request: Request) -> Result<Paylo
         )
         .await?;
         let response: Response = read_json(stream).await?;
-        response.map_err(anyhow::Error::msg)
+        response.map_err(|error| Rejection(error).into())
     })
     .await
     .context("nekomata daemon request timed out")?

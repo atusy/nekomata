@@ -21,6 +21,9 @@ use crate::cli::PaneAction;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     List,
+    Switch {
+        session: Option<u64>,
+    },
     Attach {
         pane: Option<u64>,
         daemon: Option<String>,
@@ -163,6 +166,10 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
             }
         }
     };
+    run_request(window, request)
+}
+
+pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
     let session = window
         .is_none()
         .then(|| {

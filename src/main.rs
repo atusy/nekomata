@@ -36,6 +36,16 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
+        cli::Command::Session { window, session } => {
+            match control::run_request(window, control::Request::Switch { session }) {
+                Ok(output) => println!("{output}"),
+                Err(error) => {
+                    eprintln!("{error:#}");
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
         cli::Command::Pane { window, action } => {
             match control::run(window, action) {
                 Ok(output) => println!("{output}"),

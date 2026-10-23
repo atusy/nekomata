@@ -11,6 +11,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     Open,
+    Disconnected,
     Save,
     List,
     Prepare,
@@ -78,12 +79,22 @@ impl Client {
                             Request::Finish { .. } => Operation::Finish,
                             _ => unreachable!(),
                         };
-                        let result = daemon::exchange(&mut stream, request)
-                            .await
-                            .map_err(|error| format!("{error:#}"));
+                        let result = daemon::exchange(&mut stream, request).await;
+                        let disconnected = result.as_ref().is_err_and(|error| {
+                            error.downcast_ref::<daemon::Rejection>().is_none()
+                        });
+                        let operation = if disconnected {
+                            Operation::Disconnected
+                        } else {
+                            operation
+                        };
+                        let result = result.map_err(|error| format!("{error:#}"));
                         if operation != Operation::Save || result.is_err() {
                             let _ = events_tx.send(Event { operation, result });
                             ctx.request_repaint();
+                        }
+                        if disconnected {
+                            return;
                         }
                     }
                     Command::Close { snapshot, reply } => {
@@ -110,6 +121,10 @@ impl Client {
             }
         });
         Self { tx, events, task }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.tx.is_closed()
     }
 
     pub fn send(&self, request: Request) -> Result<()> {

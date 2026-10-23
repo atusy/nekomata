@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use felis_grid::{AttrFlags, Color, CursorStyle, Grapheme};
@@ -17,7 +17,7 @@ use crate::{
 };
 
 struct Pane {
-    session: Session,
+    session: Arc<Session>,
     dims: (u16, u16),
     selection: Option<(usize, usize)>,
     reported_focus: Option<bool>,
@@ -26,6 +26,17 @@ struct Pane {
 }
 
 impl Pane {
+    fn connect_placeholder(session: Option<Arc<Session>>) -> Option<Self> {
+        session.map(|session| Self {
+            session,
+            dims: (0, 0),
+            selection: None,
+            reported_focus: None,
+            scroll_remainder: 0.0,
+            mouse_capture: None,
+        })
+    }
+
     fn connect(
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
@@ -43,7 +54,14 @@ impl Pane {
             env.push(("NEKOMATA_SESSION_ID".into(), id.to_string()));
         }
         Self {
-            session: Session::start(runtime, ctx.clone(), spec.target, spec.session, cwd, env),
+            session: Arc::new(Session::start(
+                runtime,
+                ctx.clone(),
+                spec.target,
+                spec.session,
+                cwd,
+                env,
+            )),
             dims: (0, 0),
             selection: None,
             reported_focus: None,
@@ -54,8 +72,17 @@ impl Pane {
 }
 
 struct PendingAttach {
-    session: Session,
+    session: Arc<Session>,
     reply: tokio::sync::oneshot::Sender<Reply>,
+}
+
+struct WorkspaceSwitch {
+    id: Option<u64>,
+    snapshot: Option<Snapshot>,
+    panes: BTreeMap<u64, Pane>,
+    committing: bool,
+    cancellation: Option<String>,
+    reply: Option<tokio::sync::oneshot::Sender<Reply>>,
 }
 
 pub struct App {
@@ -63,6 +90,9 @@ pub struct App {
     workspace_id: Option<u64>,
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
+    pending_workspace: Option<WorkspaceSwitch>,
+    workspaces_open: bool,
+    workspace_roster: Option<Vec<daemon::Summary>>,
     runtime: tokio::runtime::Runtime,
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
@@ -122,6 +152,9 @@ impl App {
             workspace_id: None,
             workspace_error: None,
             last_snapshot: None,
+            pending_workspace: None,
+            workspaces_open: false,
+            workspace_roster: None,
             runtime,
             control,
             pending_attach: BTreeMap::new(),
@@ -208,14 +241,317 @@ impl App {
                     self.last_snapshot = Some(snapshot.clone());
                     self.restore_workspace(ctx, snapshot);
                 }
+                (Operation::List, Ok(Payload::Sessions(sessions))) => {
+                    self.workspace_roster = Some(sessions);
+                }
+                (Operation::Prepare, Ok(Payload::Session { id, mut snapshot })) => {
+                    if let Err(error) = snapshot.validate() {
+                        self.cancel_workspace(error.to_string());
+                        continue;
+                    }
+                    if snapshot.tabs.is_empty() {
+                        let pane = snapshot.next_id;
+                        snapshot.next_id += 1;
+                        snapshot.tabs.push(Tab {
+                            name: format!("Terminal {pane}"),
+                            layout: Layout::Pane(pane),
+                            focused: pane,
+                            focus_history: vec![pane],
+                        });
+                        match Target::default_local() {
+                            Ok(target) => {
+                                snapshot.panes.insert(
+                                    pane,
+                                    PaneSpec {
+                                        target,
+                                        session: None,
+                                    },
+                                );
+                            }
+                            Err(error) => {
+                                self.cancel_workspace(error.to_string());
+                                continue;
+                            }
+                        }
+                    }
+                    let panes = snapshot
+                        .panes
+                        .iter()
+                        .map(|(&pane_id, spec)| {
+                            let existing = spec.session.as_ref().and_then(|id| {
+                                self.panes.values().find(|pane| {
+                                    let state = pane.session.state.lock().unwrap();
+                                    pane.session.target == spec.target
+                                        && state.session_id.map(|i| format!("{i:032x}")).as_ref()
+                                            == Some(id)
+                                })
+                            });
+                            let mut pane = Pane::connect_placeholder(
+                                existing.map(|pane| pane.session.clone()),
+                            );
+                            if pane.is_none() {
+                                pane = Some(Pane::connect(
+                                    &self.runtime,
+                                    ctx,
+                                    self.control.window,
+                                    Some(id),
+                                    pane_id,
+                                    spec.clone(),
+                                    None,
+                                ));
+                            }
+                            (pane_id, pane.unwrap())
+                        })
+                        .collect();
+                    if let Some(pending) = &mut self.pending_workspace {
+                        pending.id = Some(id);
+                        pending.snapshot = Some(snapshot);
+                        pending.panes = panes;
+                    }
+                }
+                (Operation::Finish, Ok(Payload::Done)) => {
+                    if let Some(pending) = self.pending_workspace.take() {
+                        if let Some(error) = pending.cancellation {
+                            if let Some(reply) = pending.reply {
+                                let _ = reply.send(Err(error.clone()));
+                            }
+                            self.workspace_error = Some(error);
+                        } else if pending.committing {
+                            let snapshot = pending.snapshot.unwrap();
+                            self.panes = pending.panes;
+                            self.tabs = snapshot.tabs;
+                            self.active = snapshot.active;
+                            self.next_id = snapshot.next_id;
+                            self.font_size = snapshot.font_size;
+                            self.workspace_id = pending.id;
+                            self.last_snapshot = None;
+                            self.workspace_error = None;
+                            if let Some(reply) = pending.reply {
+                                let _ = reply.send(Ok(format!(
+                                    "Attached nekomata session {}",
+                                    pending.id.unwrap()
+                                )));
+                            }
+                        }
+                    }
+                }
+                (Operation::Prepare | Operation::Disconnected, Err(error)) => {
+                    if let Some(pending) = self.pending_workspace.take()
+                        && let Some(reply) = pending.reply
+                    {
+                        let _ = reply.send(Err(error.clone()));
+                    }
+                    self.workspace_error = Some(error);
+                }
+                (Operation::Finish, Err(error)) => {
+                    if self
+                        .pending_workspace
+                        .as_ref()
+                        .is_some_and(|pending| pending.cancellation.is_some())
+                    {
+                        if let Some(pending) = self.pending_workspace.take()
+                            && let Some(reply) = pending.reply
+                        {
+                            let _ = reply.send(Err(error.clone()));
+                        }
+                        self.workspace_error = Some(error);
+                    } else {
+                        self.cancel_workspace(error);
+                    }
+                }
                 (_, Err(error)) => self.workspace_error = Some(error),
                 _ => {}
             }
         }
     }
 
+    fn begin_workspace(
+        &mut self,
+        session: Option<u64>,
+        reply: Option<tokio::sync::oneshot::Sender<Reply>>,
+    ) {
+        let result = (|| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                self.pending_workspace.is_none() && self.pending_attach.is_empty(),
+                "another attach is in progress"
+            );
+            anyhow::ensure!(self.workspace_id.is_some(), "nekomata session is not ready");
+            anyhow::ensure!(
+                session != self.workspace_id,
+                "session is already attached to this window"
+            );
+            let client = self
+                .workspace
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("nekomata daemon is unavailable"))?;
+            client.send(daemon::Request::Save(self.snapshot()))?;
+            client.send(daemon::Request::Prepare(
+                session
+                    .map(daemon::Selection::Id)
+                    .unwrap_or(daemon::Selection::New),
+            ))?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.workspace_error = None;
+                self.workspaces_open = false;
+                self.picker.visible = false;
+                self.palette = false;
+                self.pending_workspace = Some(WorkspaceSwitch {
+                    id: None,
+                    snapshot: None,
+                    panes: BTreeMap::new(),
+                    committing: false,
+                    cancellation: None,
+                    reply,
+                });
+            }
+            Err(error) => {
+                let error = error.to_string();
+                if let Some(reply) = reply {
+                    let _ = reply.send(Err(error.clone()));
+                }
+                self.workspace_error = Some(error);
+            }
+        }
+    }
+
+    fn cancel_workspace(&mut self, error: String) {
+        if let Some(pending) = &mut self.pending_workspace {
+            pending.panes.clear();
+            pending.cancellation = Some(error.clone());
+            pending.committing = false;
+        }
+        self.workspace_error = Some(error);
+    }
+
+    fn poll_workspace(&mut self) {
+        let Some(pending) = &mut self.pending_workspace else {
+            return;
+        };
+        if pending.committing {
+            return;
+        }
+        if pending.cancellation.is_some() {
+            if self
+                .workspace
+                .as_ref()
+                .unwrap()
+                .send(daemon::Request::Finish { snapshot: None })
+                .is_ok()
+            {
+                pending.committing = true;
+            }
+            return;
+        }
+        if pending.snapshot.is_none() {
+            return;
+        }
+        let mut ready = true;
+        let mut error = None;
+        for pane in pending.panes.values() {
+            let state = pane.session.state.lock().unwrap();
+            if state.error.is_some() || state.detached || state.exited {
+                error = Some(
+                    state
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "destination session ended".into()),
+                );
+                break;
+            }
+            ready &= state.connected;
+        }
+        if pending
+            .reply
+            .as_ref()
+            .is_some_and(|reply| reply.is_closed())
+        {
+            error = Some("session switch cancelled".into());
+        }
+        if let Some(error) = error {
+            self.cancel_workspace(error);
+            return;
+        }
+        if ready {
+            let mut snapshot = pending.snapshot.clone().unwrap();
+            for (&id, pane) in &pending.panes {
+                snapshot.panes.get_mut(&id).unwrap().session = pane
+                    .session
+                    .state
+                    .lock()
+                    .unwrap()
+                    .session_id
+                    .map(|id| format!("{id:032x}"));
+            }
+            if self
+                .workspace
+                .as_ref()
+                .unwrap()
+                .send(daemon::Request::Finish {
+                    snapshot: Some(snapshot.clone()),
+                })
+                .is_ok()
+            {
+                pending.snapshot = Some(snapshot);
+                pending.committing = true;
+            }
+        }
+    }
+
+    fn workspace_picker(&mut self, ctx: &egui::Context) {
+        if !self.workspaces_open {
+            return;
+        }
+        let mut open = true;
+        let mut selected = None;
+        let mut refresh = false;
+        egui::Window::new("nekomata sessions")
+            .open(&mut open)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                if ui.button("New session").clicked() {
+                    selected = Some(None);
+                }
+                refresh = ui.button("Refresh").clicked();
+                ui.separator();
+                if let Some(sessions) = &self.workspace_roster {
+                    for session in sessions {
+                        let current = Some(session.id) == self.workspace_id;
+                        let owner = session
+                            .window
+                            .map(|window| format!(" · window {window}"))
+                            .unwrap_or_default();
+                        let label = format!(
+                            "Session {} · {} tabs · {} panes{owner}",
+                            session.id, session.tabs, session.panes
+                        );
+                        if ui
+                            .add_enabled(
+                                session.window.is_none(),
+                                egui::Button::new(label).selected(current),
+                            )
+                            .clicked()
+                        {
+                            selected = Some(Some(session.id));
+                        }
+                    }
+                } else {
+                    ui.label("Loading sessions…");
+                }
+            });
+        self.workspaces_open = open;
+        if refresh && let Some(client) = &self.workspace {
+            let _ = client.send(daemon::Request::List);
+        }
+        if let Some(session) = selected {
+            self.begin_workspace(session, None);
+        }
+    }
+
     fn save_workspace(&mut self) {
-        if self.workspace_id.is_none() {
+        if self.workspace_id.is_none() || self.pending_workspace.is_some() {
             return;
         }
         let snapshot = self.snapshot();
@@ -294,6 +630,7 @@ impl App {
     fn control_requests(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.control.requests.try_recv() {
             match message.request {
+                Request::Switch { session } => self.begin_workspace(session, Some(message.reply)),
                 Request::List => {
                     let active = self.tabs.get(self.active).map(|tab| tab.focused);
                     let mut output = format!(
@@ -327,6 +664,12 @@ impl App {
                         let _ = message.reply.send(Err("pane not found".into()));
                         continue;
                     };
+                    if self.pending_workspace.is_some() {
+                        let _ = message
+                            .reply
+                            .send(Err("session switch is in progress".into()));
+                        continue;
+                    }
                     if self.pending_attach.contains_key(&id) {
                         let _ = message
                             .reply
@@ -348,14 +691,14 @@ impl App {
                         (None, None) => pane.session.target.clone(),
                         _ => unreachable!(),
                     };
-                    let session = Session::start(
+                    let session = Arc::new(Session::start(
                         &self.runtime,
                         ctx.clone(),
                         target,
                         Some(session),
                         None,
                         vec![],
-                    );
+                    ));
                     self.pending_attach.insert(
                         id,
                         PendingAttach {
@@ -411,7 +754,18 @@ impl App {
     }
 
     fn action(&mut self, ctx: &egui::Context, action: Action) {
+        if self.pending_workspace.is_some() {
+            return;
+        }
         match action {
+            Action::NewSession => self.begin_workspace(None, None),
+            Action::Sessions => {
+                self.workspaces_open = true;
+                self.workspace_roster = None;
+                if let Some(client) = &self.workspace {
+                    let _ = client.send(daemon::Request::List);
+                }
+            }
             Action::Palette => {
                 self.palette = true;
                 self.palette_query.clear();
@@ -472,6 +826,7 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.workspace_events(ctx);
+        self.poll_workspace();
         if self.workspace.is_some() && self.workspace_id.is_none() {
             egui::CentralPanel::default().show(ctx, |ui| {
                 if let Some(error) = &self.workspace_error {
@@ -506,7 +861,7 @@ impl eframe::App for App {
             .iter()
             .filter_map(|(&id, pane)| {
                 let state = pane.session.state.lock().unwrap();
-                (state.detached || state.exited).then_some(id)
+                (self.pending_workspace.is_none() && (state.detached || state.exited)).then_some(id)
             })
             .collect();
         for id in closed {
@@ -523,7 +878,12 @@ impl eframe::App for App {
         }
         let mut action = None;
         // Consume application shortcuts before forwarding terminal events.
-        if !self.picker.visible && !self.help && !self.palette {
+        if !self.picker.visible
+            && !self.help
+            && !self.palette
+            && !self.workspaces_open
+            && self.pending_workspace.is_none()
+        {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
             for action in actions {
                 self.action(ctx, action);
@@ -532,7 +892,13 @@ impl eframe::App for App {
                 }
             }
         }
-        if !self.picker.visible && !self.help && !self.palette && !egui::Popup::is_any_open(ctx) {
+        if !self.picker.visible
+            && !self.help
+            && !self.palette
+            && !self.workspaces_open
+            && self.pending_workspace.is_none()
+            && !egui::Popup::is_any_open(ctx)
+        {
             focus_terminal(ctx);
         }
         let mut menu_open = false;
@@ -544,6 +910,9 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::symmetric(8, 6)),
             )
             .show(ctx, |ui| {
+                if self.pending_workspace.is_some() {
+                    ui.disable();
+                }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
                     ui.spacing_mut().interact_size.y = 30.0;
@@ -554,6 +923,8 @@ impl eframe::App for App {
                     )
                     .ui(ui, |ui| {
                         for (label, command) in [
+                            ("New session", Action::NewSession),
+                            ("Sessions…", Action::Sessions),
                             ("+ Tab", Action::NewTab),
                             ("Split ↔", Action::Split(Axis::Horizontal)),
                             ("Split ↕", Action::Split(Axis::Vertical)),
@@ -653,10 +1024,18 @@ impl eframe::App for App {
         if self.tabs.is_empty() {
             return;
         }
-        let modal = self.picker.visible || self.help || self.palette || menu_open;
+        let modal = self.picker.visible
+            || self.help
+            || self.palette
+            || self.workspaces_open
+            || self.pending_workspace.is_some()
+            || menu_open;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(ctx, |ui| {
+                if self.pending_workspace.is_some() {
+                    ui.disable();
+                }
                 ui.interact(
                     ui.max_rect(),
                     terminal_focus_id(),
@@ -717,6 +1096,8 @@ impl eframe::App for App {
                         response.request_focus();
                     }
                     for (label, command) in [
+                        ("New session", Action::NewSession),
+                        ("Switch session", Action::Sessions),
                         ("New tab", Action::NewTab),
                         ("Split left / right", Action::Split(Axis::Horizontal)),
                         ("Split top / bottom", Action::Split(Axis::Vertical)),
@@ -745,12 +1126,27 @@ impl eframe::App for App {
                 self.palette = false;
             }
         }
+        self.workspace_picker(ctx);
+        if self.pending_workspace.is_some() {
+            egui::Window::new("Switching session")
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.spinner();
+                    ui.label("Connecting to destination panes…");
+                });
+        }
         self.save_workspace();
         ctx.request_repaint_after(Duration::from_millis(250));
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(client) = &self.workspace {
-            let snapshot = self.workspace_id.map(|_| self.snapshot());
+            if client.is_closed() {
+                return;
+            }
+            let snapshot = self
+                .workspace_id
+                .filter(|_| self.pending_workspace.is_none())
+                .map(|_| self.snapshot());
             if let Err(error) = client.close(&self.runtime, snapshot) {
                 eprintln!("Could not save nekomata session: {error:#}");
             }
@@ -1381,7 +1777,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
-    fn live_gui_restart_restores_tabs_splits_focus_and_running_shells() {
+    fn live_gui_restart_and_switch_preserve_workspaces_and_shells() {
         use std::{sync::mpsc, time::Instant};
         assert!(
             std::env::var_os("NEKOMATA_RUNTIME_DIR").is_some(),
@@ -1397,13 +1793,17 @@ mod tests {
             loop {
                 let _ = ctx.run(egui::RawInput::default(), |_| {});
                 app.workspace_events(&ctx);
+                app.poll_workspace();
                 app.control_requests(&ctx);
                 app.save_workspace();
-                assert!(app.workspace_error.is_none(), "{:?}", app.workspace_error);
                 if done(app) {
                     break;
                 }
-                assert!(Instant::now() < deadline, "GUI session test timed out");
+                assert!(
+                    Instant::now() < deadline,
+                    "GUI session test timed out: {:?}",
+                    app.workspace_error
+                );
                 let _ = repaints.recv_timeout(Duration::from_millis(50));
             }
         };
@@ -1447,8 +1847,9 @@ mod tests {
             .join("nekomata");
         let id = session_id.unwrap();
         let repaint = ctx.clone();
+        let routing_executable = executable.clone();
         let command = replacement.runtime.spawn(async move {
-            let result = tokio::process::Command::new(executable)
+            let result = tokio::process::Command::new(routing_executable)
                 .args(["panes", "list"])
                 .env("NEKOMATA_SESSION_ID", id.to_string())
                 .env("NEKOMATA_WINDOW_ID", u32::MAX.to_string())
@@ -1465,10 +1866,139 @@ mod tests {
             "restored shell CLI routing failed: {:?}",
             output
         );
+        let command = |app: &mut App, args: Vec<String>| {
+            let executable = executable.clone();
+            let window = app.control.window;
+            let repaint = ctx.clone();
+            let task = app.runtime.spawn(async move {
+                let output = tokio::process::Command::new(executable)
+                    .args(args)
+                    .args(["--window", &window.to_string()])
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                    .unwrap();
+                repaint.request_repaint();
+                output
+            });
+            pump(app, &|_| task.is_finished());
+            app.runtime.block_on(task).unwrap()
+        };
+        let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
+        assert!(output.status.success(), "{output:?}");
+        let other = replacement.workspace_id.unwrap();
+        assert_ne!(Some(other), session_id);
+        assert_eq!(replacement.panes.len(), 1);
+        let other_shell = replacement
+            .panes
+            .values()
+            .next()
+            .unwrap()
+            .session
+            .state
+            .lock()
+            .unwrap()
+            .session_id
+            .unwrap();
+        let output = command(
+            &mut replacement,
+            vec![
+                "sessions".into(),
+                "attach".into(),
+                session_id.unwrap().to_string(),
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(replacement.snapshot(), before);
+
+        // The destination shares two live shells with the source, but its other
+        // pane is unavailable. Preparing it must not steal those source connections.
+        let mut broken = before.clone();
+        broken.panes.get_mut(&2).unwrap().target = Target::Local(
+            std::path::PathBuf::from(std::env::var_os("NEKOMATA_RUNTIME_DIR").unwrap())
+                .join("missing-felis.sock"),
+        );
+        replacement.runtime.block_on(async {
+            let mut client = daemon::connect().await.unwrap();
+            let Payload::Session { id, .. } =
+                daemon::exchange(&mut client, daemon::Request::Open { window: u32::MAX })
+                    .await
+                    .unwrap()
+            else {
+                panic!("expected session")
+            };
+            assert_eq!(id, other);
+            daemon::exchange(&mut client, daemon::Request::Save(broken))
+                .await
+                .unwrap();
+            daemon::exchange(&mut client, daemon::Request::Detach)
+                .await
+                .unwrap();
+        });
+        let original_connection = replacement.panes[&1].session.clone();
+        let output = command(
+            &mut replacement,
+            vec!["sessions".into(), "attach".into(), other.to_string()],
+        );
+        assert!(!output.status.success(), "{output:?}");
+        assert_eq!(replacement.workspace_id, session_id);
+        assert_eq!(replacement.snapshot(), before);
+        assert!(connected(&replacement));
+        assert!(Arc::ptr_eq(
+            &replacement.panes[&1].session,
+            &original_connection
+        ));
+        drop(original_connection);
+        assert!(replacement.pending_workspace.is_none());
+        replacement.runtime.block_on(async {
+            let mut client = daemon::connect().await.unwrap();
+            let Payload::Sessions(sessions) = daemon::exchange(&mut client, daemon::Request::List)
+                .await
+                .unwrap()
+            else {
+                panic!("expected sessions")
+            };
+            assert!(
+                sessions
+                    .iter()
+                    .find(|session| session.id == other)
+                    .unwrap()
+                    .window
+                    .is_none()
+            );
+        });
+
+        // A fresh switch directly after cancellation must not consume the old
+        // cancellation acknowledgement as its own commit.
+        let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
+        assert!(output.status.success(), "{output:?}");
+        let third_shell = replacement
+            .panes
+            .values()
+            .next()
+            .unwrap()
+            .session
+            .state
+            .lock()
+            .unwrap()
+            .session_id
+            .unwrap();
+        let output = command(
+            &mut replacement,
+            vec![
+                "sessions".into(),
+                "attach".into(),
+                session_id.unwrap().to_string(),
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(replacement.snapshot(), before);
+
         let ids: Vec<_> = replacement
             .panes
             .values()
             .map(|p| p.session.state.lock().unwrap().session_id.unwrap())
+            .chain([other_shell, third_shell])
             .collect();
         eframe::App::on_exit(&mut replacement, None);
         drop(replacement);
@@ -1524,6 +2054,9 @@ mod tests {
             workspace_id: None,
             workspace_error: None,
             last_snapshot: None,
+            pending_workspace: None,
+            workspaces_open: false,
+            workspace_roster: None,
             runtime,
             control,
             pending_attach: BTreeMap::new(),
