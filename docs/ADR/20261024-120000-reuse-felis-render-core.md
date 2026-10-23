@@ -2,14 +2,15 @@
 
 | | |
 | --- | --- |
-| Status | proposed |
+| Status | accepted |
 | Date | 2026-10-24 |
 | Decision-makers | atusy |
 
 ## Context and Problem Statement
 
-nekomata traverses the terminal twice on every repaint, creates a text layout
-for each cell, and submits separate egui shapes for cell backgrounds and glyphs.
+Before this change, nekomata traversed the terminal twice on every repaint,
+created a text layout for each cell, and submitted separate egui shapes for
+cell backgrounds and glyphs.
 The latest felis separates its renderer-neutral painter, glyph atlas and shaping
 cache into `felis-render-core`. Sharing those components avoids maintaining a
 second terminal renderer and removes the per-cell text layout path.
@@ -63,3 +64,10 @@ selection/cursor changes, glyph atlas uploads, wide text and DPI changes.
 Compare the previous renderer and shared renderer on the same terminal screen
 in release mode, including steady repaint and changed-screen workloads.
 Report native GUI visual verification separately.
+
+Implementation and validation completed on 2026-10-24 with felis 0.3.1.
+The release CPU comparison reduced preparation time by 2.00–8.00× on its
+ASCII workloads. Ordinary tests, isolated local/SSH integration, rustfmt,
+clippy, macOS Nix package checks and all-system flake evaluation passed.
+Linux runtime behavior was not tested. See [the measurement report](../rendering-performance.md)
+for the benchmark's scope and the native macOS screenshot's validation limits.

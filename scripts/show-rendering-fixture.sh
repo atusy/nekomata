@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+printf '\033[2J\033[H'
+printf 'felis shared renderer: ASCII 0123456789 / 日本語 / é / ① ★ ⚙\n\n'
+printf '\033[1mBold\033[0m  \033[3mItalic\033[0m  \033[2mFaint\033[0m  \033[7mReverse\033[0m\n'
+printf '\033[4mUnderline\033[0m  \033[4:2mDouble\033[0m  \033[4:3mCurly\033[0m  \033[4:4mDotted\033[0m  \033[4:5mDashed\033[0m\n'
+printf '\033[31mRed\033[0m  \033[32mGreen\033[0m  \033[34mBlue\033[0m  \033[38;2;255;160;50mTruecolor\033[0m\n'
+printf '\nBraille: ⠁⠂⠄⡀ ⠈⠐⠠⢀ ⣿⣷⣶⣤⣀\n'
+printf 'Box: ┌──────┬──────┐\n     │猫    │neko  │\n     └──────┴──────┘\n'
+printf '\n\033[44mBackground status bar                                               \033[0m\n'
+printf '\nCursor below (underline):\n\033[4 q'
