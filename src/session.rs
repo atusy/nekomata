@@ -86,6 +86,8 @@ impl Target {
 
 pub struct State {
     pub screen: ShadowScreen,
+    pub pull: felis_client_core::pull::PullScheduler,
+    pub redraw: felis_client_core::redraw::RedrawScheduler,
     pub colors: crate::colors::Colors,
     pub images: felis_client_core::ImageShadow,
     pub session_id: Option<u128>,
@@ -96,6 +98,12 @@ pub struct State {
     pub detached: bool,
     pub exited: bool,
     pub clipboard: Option<String>,
+}
+
+impl State {
+    pub fn render_ready(&self) -> bool {
+        self.connected && !self.screen.is_rehydrating() && !self.pull.cycle_open()
+    }
 }
 
 struct InputQueue {
@@ -188,6 +196,8 @@ impl Session {
     ) -> Self {
         let state = Arc::new(Mutex::new(State {
             screen: ShadowScreen::new(24, 80),
+            pull: felis_client_core::pull::PullScheduler::new(matches!(target, Target::Local(_))),
+            redraw: felis_client_core::redraw::RedrawScheduler::new(),
             colors: crate::colors::Colors::default(),
             images: felis_client_core::ImageShadow::new(),
             session_id: None,
@@ -244,6 +254,13 @@ impl Session {
         }
     }
 
+    /// Called only after submitting a complete visible pane to the GPU.
+    pub fn frame_submitted(&self, state: &mut State) {
+        if state.render_ready() && state.pull.after_frame(true) {
+            self.send(InputMsg::NextGridFrame);
+        }
+    }
+
     pub fn send(&self, msg: InputMsg) {
         if self.tx.push(&msg).is_err() {
             self.input_failed.store(true, Ordering::Relaxed);
@@ -286,7 +303,12 @@ async fn run(
             (conn, Some(child))
         } else {
             (
-                connect_carrier(carrier.clone(), Offer::window(false), RemoteSpawn::Refuse).await?,
+                connect_carrier(
+                    carrier.clone(),
+                    Offer::window(matches!(target, Target::Local(_))),
+                    RemoteSpawn::Refuse,
+                )
+                .await?,
                 None,
             )
         };
@@ -342,6 +364,10 @@ async fn run(
             let mut state = shared.lock().unwrap();
             state.connected = false;
             state.reconnecting = true;
+            let gate = state.pull.cycle_open();
+            state.pull =
+                felis_client_core::pull::PullScheduler::new(matches!(target, Target::Local(_)))
+                    .holding_gate(gate);
         }
         ctx.request_repaint();
         drop(conn);
@@ -430,8 +456,12 @@ async fn redial_target(
         .await
         .map_err(|error| error.source);
     }
-    let recovered =
-        felis_client_core::redial_session(target.carrier(), Offer::window(false), id).await?;
+    let recovered = felis_client_core::redial_session(
+        target.carrier(),
+        Offer::window(matches!(target, Target::Local(_))),
+        id,
+    )
+    .await?;
     Ok((recovered.conn, None))
 }
 
@@ -458,7 +488,9 @@ async fn pump(
                         MessageKind::Grid => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<GridMsg>(&payload)? {
                                 let mut state = shared.lock().unwrap();
+                                state.pull.on_frame(&delivery.msg);
                                 state.screen.apply(&delivery.msg)?;
+                                state.redraw.request();
                                 state.colors.apply_grid(&delivery.msg);
                                 if matches!(delivery.msg, GridMsg::RehydrateBegin) {
                                     state.images = felis_client_core::ImageShadow::new();
@@ -473,7 +505,9 @@ async fn pump(
                         }
                         MessageKind::Image => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::ImageMsg>(&payload)? {
-                                shared.lock().unwrap().images.apply(&delivery.msg)?;
+                                let mut state = shared.lock().unwrap();
+                                state.images.apply(&delivery.msg)?;
+                                state.redraw.request();
                                 ctx.request_repaint();
                             }
                         }
@@ -545,6 +579,30 @@ mod tests {
     }
 
     #[test]
+    fn lost_connection_discards_input_before_accepting_new_keys() {
+        let queue = InputQueue::default();
+        queue.push(&InputMsg::KeyBytes(b"old".to_vec())).unwrap();
+        assert!(queue.close());
+        assert!(
+            queue
+                .push(&InputMsg::KeyBytes(b"uncertain".to_vec()))
+                .is_err()
+        );
+        queue.reopen();
+        queue.push(&InputMsg::KeyBytes(b"new".to_vec())).unwrap();
+        let expected = OutgoingFrame::input(&InputMsg::KeyBytes(b"new".to_vec())).unwrap();
+        assert_eq!(
+            queue.frames.lock().unwrap().pop().unwrap().frame().body(),
+            expected.frame().body()
+        );
+        assert!(queue.frames.lock().unwrap().is_empty());
+        assert!(!transport_loss(&anyhow::anyhow!("malformed protocol")));
+        assert!(transport_loss(
+            &std::io::Error::from(std::io::ErrorKind::BrokenPipe).into()
+        ));
+    }
+
+    #[test]
     fn retained_ssh_targets_accept_old_hosts_and_round_trip_remote_sockets() {
         let legacy: Target = serde_json::from_str(r#"{"Ssh":"dev"}"#).unwrap();
         assert_eq!(
@@ -574,7 +632,9 @@ mod tests {
             // either satisfies the predicate or leaves a wakeup for the next pass.
             let _ = crate::test_support::run(ctx, egui::RawInput::default(), |_| {});
             {
-                let state = session.state.lock().unwrap();
+                let mut state = session.state.lock().unwrap();
+                // Headless tests stand in for a completed visible GPU frame.
+                session.frame_submitted(&mut state);
                 assert!(state.error.is_none(), "{:?}", state.error);
                 if predicate(&state) {
                     return;
@@ -603,6 +663,47 @@ mod tests {
                 .collect();
             text.contains("NEKOMATA_READY")
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_hidden_panes_pause_pulls_and_resume_with_the_latest_screen() {
+        let socket = PathBuf::from(
+            std::env::var_os("NEKOMATA_TEST_SOCKET").expect("private daemon required"),
+        );
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local(socket),
+            None,
+            None,
+            vec![],
+        );
+        wait_for(&session, &ctx, &repaints, |state| state.render_ready());
+        session.send(InputMsg::KeyBytes(b"printf '\nPULL_FIRST\n'\n".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "PULL_FIRST")
+        });
+        let sent = session.state.lock().unwrap().pull.sent();
+        session.send(InputMsg::KeyBytes(b"printf '\nPULL_LATEST\n'\n".to_vec()));
+        // No visible frame is submitted while this pane is hidden. At most
+        // the already outstanding pull may be answered during that interval.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(session.state.lock().unwrap().pull.sent(), sent);
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "PULL_LATEST") && state.render_ready()
+        });
+        let mut state = session.state.lock().unwrap();
+        let sent = state.pull.sent();
+        session.frame_submitted(&mut state);
+        session.frame_submitted(&mut state);
+        assert!(state.pull.sent() <= sent + 1, "only one outstanding pull");
     }
 
     #[test]

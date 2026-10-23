@@ -1407,6 +1407,8 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         pane.selection,
     ) {
         state.error = Some(format!("Terminal renderer: {error:#}"));
+    } else {
+        pane.session.frame_submitted(&mut state);
     }
     let text_rect = renderer.content_rect(text_rect);
     let shadow = &state.screen;

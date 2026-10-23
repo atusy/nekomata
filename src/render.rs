@@ -48,6 +48,8 @@ pub struct Renderer {
     color_revision: u64,
     layout: felis_client_core::ImageLayout,
     rendered: bool,
+    focused: bool,
+    selection: Option<(usize, usize)>,
 }
 
 impl Renderer {
@@ -90,6 +92,8 @@ impl Renderer {
             color_revision: 0,
             layout: Default::default(),
             rendered: false,
+            focused: false,
+            selection: None,
         })
     }
 
@@ -98,6 +102,7 @@ impl Renderer {
             self.gpu.reload_font_size(font_size * ppp);
             self.font_size = font_size;
             self.ppp = ppp;
+            self.rendered = false;
         }
     }
 
@@ -121,11 +126,29 @@ impl Renderer {
         focused: bool,
         selection: Option<(usize, usize)>,
     ) -> Result<()> {
-        if !state.screen.is_rehydrating() {
+        if state.render_ready() {
             let size = [
                 (rect.width() * self.ppp).round().max(1.0) as u32,
                 (rect.height() * self.ppp).round().max(1.0) as u32,
             ];
+            let changed = !self.rendered
+                || self.size != size
+                || self.focused != focused
+                || self.selection != selection;
+            if changed {
+                state.redraw.request();
+            }
+            if !state.redraw.flush() {
+                painter.image(
+                    self.texture,
+                    rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+                return Ok(());
+            }
+            self.focused = focused;
+            self.selection = selection;
             if self.size != size {
                 self.gpu.resize(size[0], size[1]);
                 let view = self
@@ -167,14 +190,19 @@ impl Renderer {
                 state.screen.viewport(),
             );
             let dirty = state.images.take_dirty_images();
-            self.gpu.render(
+            let result = self.gpu.render(
                 state.screen.screen(),
                 &dirty,
                 &Images(&state.images),
                 &self.layout,
                 state.screen.viewport(),
                 state.screen.viewport_max(),
-            )?;
+            );
+            if let Err(error) = result {
+                state.redraw.request();
+                return Err(error.into());
+            }
+            state.redraw.painted();
             state.screen.clear_damage();
             self.rendered = true;
         }
