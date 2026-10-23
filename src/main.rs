@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod colors;
+mod config;
 mod control;
 mod daemon;
 mod layout;
@@ -72,10 +73,11 @@ fn main() -> eframe::Result {
             run_felis(&["sessions", "list"], &options);
         }
     }
+    let config = config::load();
     eframe::run_native(
         APP_ID,
         native_options(),
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, config)?))),
     )
 }
 

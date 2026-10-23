@@ -88,6 +88,7 @@ pub struct App {
     workspace: Option<WorkspaceClient>,
     workspace_id: Option<u64>,
     workspace_error: Option<String>,
+    config_error: Option<String>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch>,
     workspaces_open: bool,
@@ -108,7 +109,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: crate::config::Loaded,
+    ) -> anyhow::Result<Self> {
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
@@ -150,9 +154,11 @@ impl App {
             }
         }
         cc.egui_ctx.set_fonts(fonts);
-        crate::theme::install(&cc.egui_ctx, crate::theme::TerminalTheme::default());
+        crate::theme::install(&cc.egui_ctx, config.theme);
         crate::render::initialize(cc)?;
-        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
+        let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)?;
+        app.config_error = config.error;
+        Ok(app)
     }
 
     fn connect(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> anyhow::Result<Self> {
@@ -162,6 +168,7 @@ impl App {
             workspace: Some(workspace),
             workspace_id: None,
             workspace_error: None,
+            config_error: None,
             last_snapshot: None,
             pending_workspace: None,
             workspaces_open: false,
@@ -868,6 +875,18 @@ impl eframe::App for App {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
             });
         }
+        if let Some(error) = &self.config_error {
+            let mut dismissed = false;
+            egui::Panel::bottom("config-error").show(root_ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    dismissed = ui.button("Dismiss").clicked();
+                });
+            });
+            if dismissed {
+                self.config_error = None;
+            }
+        }
         for pane in self.panes.values() {
             if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
                 ctx.copy_text(text);
@@ -1100,7 +1119,7 @@ impl eframe::App for App {
             || self.pending_workspace.is_some()
             || menu_open;
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(BG))
+            .frame(egui::Frame::NONE.fill(crate::theme::current(ctx).background()))
             .show(root_ui, |ui| {
                 if self.pending_workspace.is_some() {
                     ui.disable();
@@ -1373,7 +1392,8 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         *focused = id;
     }
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0, BG);
+    let theme = crate::theme::current(ui.ctx());
+    painter.rect_filled(rect, 0, theme.background());
     let ppp = ui.ctx().pixels_per_point();
     if pane.renderer.is_none() {
         match crate::render::Renderer::new(ui.ctx(), font_size, ppp) {
@@ -1472,7 +1492,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                 "Connecting to felis…"
             },
             font,
-            FG,
+            theme.foreground(),
         );
     }
     let mouse_mode = shadow.mouse_protocol_active();
@@ -2078,6 +2098,7 @@ mod tests {
             workspace: None,
             workspace_id: None,
             workspace_error: None,
+            config_error: None,
             last_snapshot: None,
             pending_workspace: None,
             workspaces_open: false,

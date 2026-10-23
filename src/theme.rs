@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use eframe::egui::{self, Color32};
+use felis_client_core::EffectiveConfig;
 use felis_protocol::messages::SessionToDaemonMsg;
+use felis_render_core::palette::parse_hex_color;
 
 pub const BG: Color32 = Color32::from_rgb(20, 23, 31);
 pub const FG: Color32 = Color32::from_rgb(216, 222, 233);
@@ -70,6 +72,7 @@ pub struct TerminalTheme {
     bg: [u8; 3],
     cursor: [u8; 3],
     palette: BTreeMap<u8, [u8; 3]>,
+    minimum_contrast: f32,
 }
 
 impl Default for TerminalTheme {
@@ -79,6 +82,7 @@ impl Default for TerminalTheme {
             bg: rgb(BG),
             cursor: rgb(ACCENT),
             palette: (0..).zip(ANSI_PALETTE).collect(),
+            minimum_contrast: 1.0,
         }
     }
 }
@@ -88,6 +92,69 @@ fn rgb(color: Color32) -> [u8; 3] {
 }
 
 impl TerminalTheme {
+    /// Applies `[theme]` and `[cursor] color` over nekomata's own colors.
+    ///
+    /// Unset values keep nekomata's defaults rather than felis's, and an unset
+    /// cursor keeps the accent color rather than felis's reverse video.
+    /// felis validates neither hex strings nor reports them, so malformed
+    /// colors are reported through `warn` and keep their default.
+    pub fn from_config(config: &EffectiveConfig, warn: &mut dyn FnMut(String)) -> Self {
+        let mut theme = Self::default();
+        let mut color = |key: &str, value: Option<&str>, slot: &mut [u8; 3]| {
+            let Some(value) = value else { return };
+            match parse_hex_color(value) {
+                Some(rgb) => *slot = rgb,
+                None => warn(format!(
+                    "{key}: {value:?} is not #rrggbb; using the default"
+                )),
+            }
+        };
+        color(
+            "theme.foreground",
+            config.theme.foreground.as_deref(),
+            &mut theme.fg,
+        );
+        color(
+            "theme.background",
+            config.theme.background.as_deref(),
+            &mut theme.bg,
+        );
+        color(
+            "cursor.color",
+            config.cursor.color.as_deref(),
+            &mut theme.cursor,
+        );
+        for (index, value) in config.theme.palette.clone().into_overrides() {
+            match parse_hex_color(&value) {
+                Some(rgb) => {
+                    theme.palette.insert(index, rgb);
+                }
+                None => warn(format!(
+                    "theme.palette slot {index}: {value:?} is not #rrggbb; using the default"
+                )),
+            }
+        }
+        theme.minimum_contrast = config.theme.clamped_minimum_contrast();
+        theme
+    }
+
+    pub fn foreground(&self) -> Color32 {
+        let [r, g, b] = self.fg;
+        Color32::from_rgb(r, g, b)
+    }
+
+    pub fn background(&self) -> Color32 {
+        let [r, g, b] = self.bg;
+        Color32::from_rgb(r, g, b)
+    }
+
+    /// Whether programs should pick colors for a dark background.
+    pub fn is_dark(&self) -> bool {
+        use felis_render_core::{contrast::contrast_ratio, palette::srgb_to_linear_rgba};
+        let bg = srgb_to_linear_rgba(self.bg, 1.0);
+        contrast_ratio(bg, [1.0; 4]) > contrast_ratio(bg, [0.0, 0.0, 0.0, 1.0])
+    }
+
     /// The renderer's base theme, before programs override colors at runtime.
     pub fn render(&self) -> felis_render_core::palette::Theme {
         use felis_render_core::palette::{Theme, srgb_to_linear_rgba};
@@ -95,6 +162,7 @@ impl TerminalTheme {
             fg: srgb_to_linear_rgba(self.fg, 1.0),
             bg: srgb_to_linear_rgba(self.bg, 1.0),
             cursor: Some(srgb_to_linear_rgba(self.cursor, 1.0)),
+            minimum_contrast: self.minimum_contrast,
             ..Theme::default()
         };
         for (&index, &rgb) in &self.palette {
@@ -131,4 +199,107 @@ pub fn install(ctx: &egui::Context, theme: TerminalTheme) {
 pub fn current(ctx: &egui::Context) -> Arc<TerminalTheme> {
     ctx.data(|data| data.get_temp(theme_id()))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn themed(text: &str) -> (TerminalTheme, Vec<String>) {
+        let loaded = crate::config::resolve(text);
+        let warnings = loaded
+            .diagnostics
+            .iter()
+            .map(|line| {
+                line.strip_prefix("nekomata: /config/felis/config.toml: warning: ")
+                    .unwrap_or(line)
+                    .to_owned()
+            })
+            .collect();
+        (loaded.theme, warnings)
+    }
+
+    #[test]
+    fn an_empty_config_keeps_nekomatas_colors() {
+        let (theme, warnings) = themed("");
+        assert_eq!(theme, TerminalTheme::default());
+        assert!(warnings.is_empty());
+        assert!(theme.is_dark());
+    }
+
+    #[test]
+    fn configured_colors_reach_the_renderer_and_the_daemon_report() {
+        let (theme, warnings) = themed(
+            r##"
+            [theme]
+            foreground = "#101112"
+            background = "#fafbfc"
+            minimum_contrast = 4.5
+
+            [theme.palette]
+            red = "#aa0000"
+            indexed = { "100" = "#010203" }
+
+            [cursor]
+            color = "#00ff00"
+            "##,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(theme.foreground(), Color32::from_rgb(0x10, 0x11, 0x12));
+        assert_eq!(theme.background(), Color32::from_rgb(0xfa, 0xfb, 0xfc));
+        assert!(!theme.is_dark());
+        let render = theme.render();
+        assert_eq!(render.palette[1], Some([0xaa, 0, 0]));
+        assert_eq!(render.palette[2], Some(ANSI_PALETTE[2]));
+        assert_eq!(render.palette[100], Some([1, 2, 3]));
+        assert_eq!(render.palette[101], None);
+        assert_eq!(render.minimum_contrast, 4.5);
+        let SessionToDaemonMsg::ConfigureTheme {
+            fg,
+            bg,
+            cursor,
+            palette,
+        } = theme.configure()
+        else {
+            panic!("not a theme message");
+        };
+        assert_eq!(fg, Some((0x10, 0x11, 0x12)));
+        assert_eq!(bg, Some((0xfa, 0xfb, 0xfc)));
+        assert_eq!(cursor, Some((0, 0xff, 0)));
+        assert_eq!(palette.get(&1), Some(&(0xaa, 0, 0)));
+        assert_eq!(palette.get(&100), Some(&(1, 2, 3)));
+        assert_eq!(palette.len(), 17);
+    }
+
+    #[test]
+    fn malformed_colors_warn_and_keep_their_defaults() {
+        let (theme, warnings) = themed(
+            r##"
+            [theme]
+            background = "navy"
+            foreground = "#123456"
+
+            [theme.palette]
+            blue = "#12345"
+
+            [cursor]
+            color = "green"
+            "##,
+        );
+        assert_eq!(theme.background(), BG);
+        assert_eq!(theme.foreground(), Color32::from_rgb(0x12, 0x34, 0x56));
+        assert_eq!(theme.render().palette[4], Some(ANSI_PALETTE[4]));
+        assert_eq!(
+            theme.render().cursor,
+            TerminalTheme::default().render().cursor
+        );
+        assert_eq!(
+            warnings,
+            [
+                "theme.background: \"navy\" is not #rrggbb; using the default",
+                "cursor.color: \"green\" is not #rrggbb; using the default",
+                "theme.palette slot 4: \"#12345\" is not #rrggbb; using the default",
+            ]
+        );
+    }
 }

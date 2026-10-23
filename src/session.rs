@@ -337,7 +337,9 @@ async fn run(
         };
         conn.writer.send(&theme.configure()).await?;
         conn.writer
-            .send(&InputMsg::ColorScheme { dark: true })
+            .send(&InputMsg::ColorScheme {
+                dark: theme.is_dark(),
+            })
             .await?;
         Ok::<_, anyhow::Error>((conn, info, relay))
     })
@@ -377,7 +379,9 @@ async fn run(
         recovered.writer.send(&theme.configure()).await?;
         recovered
             .writer
-            .send(&InputMsg::ColorScheme { dark: true })
+            .send(&InputMsg::ColorScheme {
+                dark: theme.is_dark(),
+            })
             .await?;
         conn = recovered;
         relay = child;
