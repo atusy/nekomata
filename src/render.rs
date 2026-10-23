@@ -582,6 +582,77 @@ mod tests {
     }
 
     #[test]
+    fn wide_text_and_combining_clusters_use_the_shared_atlas() {
+        let ctx = egui::Context::default();
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut shadow = ShadowScreen::new(1, 4);
+        shadow
+            .apply(&GridMsg::Cluster {
+                id: 1,
+                text: "e\u{301}".into(),
+            })
+            .unwrap();
+        let cells = [
+            Grapheme::Char('猫'),
+            Grapheme::Spacer,
+            Grapheme::Cluster(NonZeroU32::new(1).unwrap()),
+            Grapheme::Ascii(b'A'),
+        ]
+        .map(|grapheme| Cell {
+            grapheme,
+            ..Cell::default()
+        });
+        let bytes = encode_row(
+            RowEncode {
+                cells: &cells,
+                pad_to: 4,
+                sized_cells: &[],
+                soft_wrap_continued: false,
+            },
+            &StyleTable::new(),
+        )
+        .unwrap();
+        shadow
+            .apply(&GridMsg::RowDelta {
+                rows: vec![(0, RowPayload(bytes))],
+            })
+            .unwrap();
+        let cell = renderer.cell_size();
+        let rect = Rect::from_min_size(Pos2::ZERO, cell * Vec2::new(4.0, 1.0));
+        let output = draw(&ctx, &mut renderer, &mut shadow, rect, false, None);
+        assert_eq!(shadow.screen().char_span(0, 0), (0, 1));
+        assert!(matches!(
+            renderer.shaped.cell_at(0, 2),
+            felis_render_core::glyphs::ShapedCell::Cluster { len: 1.., .. }
+        ));
+        let mut paint = RowPaint::default();
+        CellPainter::new(
+            shadow.screen(),
+            renderer.glyphs.cell_metrics(),
+            &renderer.theme,
+            &renderer.glyphs,
+            &renderer.shaped,
+        )
+        .resolved()
+        .extend_row(&mut paint, 0);
+        // The wide glyph owns two cells; its spacer emits no second glyph.
+        assert!(
+            paint
+                .glyphs
+                .iter()
+                .any(|g| g.origin_px[0] < cell.x * 2.0 && g.size_px[0] > cell.x)
+        );
+        // Following ASCII stays at column 3 despite the combining sequence.
+        assert!(
+            paint
+                .glyphs
+                .iter()
+                .any(|g| g.origin_px[0] >= cell.x * 3.0 && g.origin_px[0] < cell.x * 4.0)
+        );
+        assert!(!output.textures_delta.set.is_empty());
+    }
+
+    #[test]
     fn physical_glyph_metrics_scale_with_display_density() {
         let ctx = egui::Context::default();
         let renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
