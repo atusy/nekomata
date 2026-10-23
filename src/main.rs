@@ -12,8 +12,8 @@ fn main() -> eframe::Result {
         eprintln!("{err}\n\n{}", cli::HELP);
         std::process::exit(2);
     });
-    let (attach, pick) = match command {
-        cli::Command::Gui { attach, pick } => (attach, pick),
+    match command {
+        cli::Command::Gui => {}
         cli::Command::Help => {
             println!("{}", cli::HELP);
             return Ok(());
@@ -21,19 +21,7 @@ fn main() -> eframe::Result {
         cli::Command::List(options) => {
             run_felis(&["sessions", "list"], &options);
         }
-        cli::Command::Detach(id) => {
-            let id = id
-                .or_else(|| std::env::var("FELIS_SESSION_ID").ok())
-                .filter(|id| !id.is_empty())
-                .unwrap_or_else(|| {
-                    eprintln!(
-                        "Specify a session ID or run this command inside a nekomata session."
-                    );
-                    std::process::exit(2);
-                });
-            run_felis(&["sessions", "evict"], &[id]);
-        }
-    };
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("nekomata")
@@ -44,7 +32,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "nekomata",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, attach, pick)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc)))),
     )
 }
 

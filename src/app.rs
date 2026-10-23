@@ -69,7 +69,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, attach: Option<String>, pick: bool) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
@@ -114,11 +114,7 @@ impl App {
             palette: false,
             palette_query: String::new(),
         };
-        if pick {
-            app.picker.open(&app.runtime, &cc.egui_ctx);
-        } else {
-            app.add_tab(&cc.egui_ctx, attach);
-        }
+        app.add_tab(&cc.egui_ctx, None);
         app
     }
 
