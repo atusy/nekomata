@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Selects the `[client.nekomata]` overlay in the shared felis file.
-pub const CLIENT_ID: &str = "nekomata";
+const CLIENT_ID: &str = "nekomata";
 
 #[derive(Debug, Default)]
 pub struct Loaded {
