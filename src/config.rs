@@ -1,7 +1,9 @@
 //! The felis `config.toml`, resolved with nekomata's `[client.nekomata]` overlay.
 use std::path::Path;
 
-use felis_client_core::{ConfigDiagnostics, EffectiveConfig, Severity, config::FontConfig};
+use felis_client_core::{
+    ConfigDiagnostics, DiagnosticKind, EffectiveConfig, Severity, config::FontConfig,
+};
 
 use crate::{theme::TerminalTheme, workspace::FontSize};
 
@@ -46,10 +48,19 @@ fn settle(path: &Path, config: EffectiveConfig, diagnostics: &ConfigDiagnostics)
                 Severity::Error => "error",
                 Severity::Warning => "warning",
             };
-            line(severity, diagnostic)
+            // A read failure's message already names the file.
+            if diagnostic.kind == DiagnosticKind::Io {
+                format!("nekomata: {severity}: {diagnostic}")
+            } else {
+                line(severity, diagnostic)
+            }
         })
         .collect();
     let (config, error) = match diagnostics.errors().next() {
+        Some(first) if first.kind == DiagnosticKind::Io => (
+            EffectiveConfig::default(),
+            Some(format!("Used default settings: {first}")),
+        ),
         Some(first) => (
             EffectiveConfig::default(),
             Some(format!(
@@ -177,6 +188,31 @@ mod tests {
             [
                 "nekomata: /config/felis/config.toml: warning: font.size_px: 5 is outside nekomata's 6..=72 band; using 6"
             ]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_file_names_its_path_once() {
+        let path = Path::new("/config/felis/config.toml");
+        let error = felis_client_core::LoadError::Read {
+            path: path.into(),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+        let loaded = settle(path, EffectiveConfig::default(), &error.diagnostics());
+        assert_eq!(loaded.theme, TerminalTheme::default());
+        assert_eq!(loaded.diagnostics.len(), 1);
+        let [line] = &loaded.diagnostics[..] else {
+            unreachable!()
+        };
+        assert!(
+            line.starts_with("nekomata: error: cannot read /config/felis/config.toml: "),
+            "{line}"
+        );
+        let error = loaded.error.unwrap();
+        assert_eq!(
+            error.matches("/config/felis/config.toml").count(),
+            1,
+            "{error}"
         );
     }
 
