@@ -575,9 +575,9 @@ impl Renderer {
         width: u32,
         height: u32,
         cfg: RendererConfig,
+        stack: FontStack,
     ) -> Result<Self, RendererError> {
         let cfg = offscreen_config(cfg)?;
-        let stack = resolve_font_stack(None, &cfg)?;
         Ok(Self::build_offscreen(device, queue, UploadMode::Staged, width, height, &cfg, stack))
     }
 

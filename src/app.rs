@@ -149,7 +149,7 @@ impl App {
             }
         }
         cc.egui_ctx.set_fonts(fonts);
-        crate::render::load_fonts(&cc.egui_ctx)?;
+        crate::render::initialize(cc)?;
         Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
     }
 
@@ -1360,11 +1360,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 0, BG);
     let ppp = ui.ctx().pixels_per_point();
-    if pane
-        .renderer
-        .as_ref()
-        .is_none_or(|r| !r.matches(font_size, ppp))
-    {
+    if pane.renderer.is_none() {
         match crate::render::Renderer::new(ui.ctx(), font_size, ppp) {
             Ok(renderer) => pane.renderer = Some(renderer),
             Err(error) => {
@@ -1381,6 +1377,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     }
     let font = FontId::monospace(font_size);
     let renderer = pane.renderer.as_mut().unwrap();
+    renderer.set_font(font_size, ppp);
     let Vec2 { x: cw, y: ch } = renderer.cell_size();
     let cols = (rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
     let rows = (rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
@@ -1400,17 +1397,20 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         });
     }
     let mut state = pane.session.state.lock().unwrap();
-    renderer.sync_colors(&state.colors);
+    let connected = state.connected;
+    let painter = painter.with_clip_rect(text_rect);
+    if let Err(error) = renderer.paint(
+        &painter,
+        &mut state,
+        text_rect,
+        *focused == id && connected,
+        pane.selection,
+    ) {
+        state.error = Some(format!("Terminal renderer: {error:#}"));
+    }
+    let text_rect = renderer.content_rect(text_rect);
     let shadow = &state.screen;
     let screen = shadow.screen();
-    let painter = painter.with_clip_rect(text_rect);
-    renderer.paint(
-        &painter,
-        shadow,
-        text_rect,
-        *focused == id && state.connected,
-        pane.selection,
-    );
     let cursor = screen.cursor();
     if *focused == id {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
@@ -1572,7 +1572,6 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             }
         }
     }
-    state.screen.clear_damage();
 }
 
 #[allow(clippy::too_many_arguments)]

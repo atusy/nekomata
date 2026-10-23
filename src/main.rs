@@ -4,6 +4,9 @@ mod colors;
 mod control;
 mod daemon;
 mod layout;
+#[cfg(test)]
+#[path = "../tests/support/mesh_renderer.rs"]
+mod mesh_baseline;
 mod picker;
 mod render;
 mod session;

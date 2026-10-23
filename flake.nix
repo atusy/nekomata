@@ -30,6 +30,7 @@
           craneLib = crane.mkLib pkgs;
           runtimeLibs = with pkgs; [
             fontconfig
+            vulkan-loader
             libGL
             libxkbcommon
             wayland
@@ -133,6 +134,7 @@
               with pkgs;
               [
                 fontconfig
+                vulkan-loader
                 libGL
                 libxkbcommon
                 wayland
@@ -147,6 +149,7 @@
                 with pkgs;
                 [
                   fontconfig
+                  vulkan-loader
                   libGL
                   libxkbcommon
                   wayland
