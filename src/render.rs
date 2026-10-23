@@ -11,7 +11,7 @@ use felis_render_core::{
     display_list::{AtlasKind, DecoKind, RowPaint},
     glyphs::{GLYPH_ATLAS_SIDE, GlyphIndex, GridWalker, ShapeFrame, color_atlas_side},
     painter::CellPainter,
-    palette::{ResolvedTheme, Theme, linear_rgba_to_srgb8},
+    palette::{ResolvedTheme, linear_rgba_to_srgb8},
 };
 use felis_shaping::{FontStack, GlyphPixels, Shaper, StyleFaces};
 
@@ -74,8 +74,7 @@ impl Renderer {
             ),
             TextureOptions::NEAREST,
         );
-        let theme =
-            Theme::with_overrides(Some("#d8dee9"), Some("#14171f")).with_cursor(Some("#a3be8c"));
+        let theme = crate::theme::terminal_theme();
         Ok(Self {
             font_size,
             ppp,
@@ -521,6 +520,20 @@ mod tests {
         assert_eq!(renderer.rows_painted, 2);
         assert_eq!(renderer.rows[0].backgrounds.calc_bounds().min, moved.min);
     }
+    #[test]
+    fn shared_renderer_preserves_the_existing_terminal_palette() {
+        let ctx = egui::Context::default();
+        let renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        assert_eq!(
+            linear_rgba_to_srgb8(renderer.theme.palette[4]),
+            [129, 161, 193, 255]
+        );
+        assert_eq!(
+            linear_rgba_to_srgb8(renderer.theme.bg),
+            crate::theme::BG.to_array()
+        );
+    }
+
     #[test]
     fn color_glyphs_keep_their_own_rgb_and_only_inherit_opacity() {
         let ctx = egui::Context::default();

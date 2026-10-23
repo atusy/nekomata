@@ -9,6 +9,40 @@ pub const TAB_ACTIVE_BG: Color32 = Color32::from_rgb(48, 55, 68);
 pub const TAB_HOVER_BG: Color32 = Color32::from_rgb(36, 43, 54);
 pub const TAB_INACTIVE_FG: Color32 = Color32::from_rgb(140, 149, 167);
 
+pub const ANSI_PALETTE: [[u8; 3]; 16] = [
+    [46, 52, 64],
+    [191, 97, 106],
+    [163, 190, 140],
+    [235, 203, 139],
+    [129, 161, 193],
+    [180, 142, 173],
+    [136, 192, 208],
+    [229, 233, 240],
+    [76, 86, 106],
+    [191, 97, 106],
+    [163, 190, 140],
+    [235, 203, 139],
+    [129, 161, 193],
+    [180, 142, 173],
+    [143, 188, 187],
+    [236, 239, 244],
+];
+
+pub fn terminal_theme() -> felis_render_core::palette::Theme {
+    use felis_render_core::palette::{Theme, srgb_to_linear_rgba};
+    let linear = |color: Color32| srgb_to_linear_rgba([color.r(), color.g(), color.b()], 1.0);
+    let mut theme = Theme {
+        fg: linear(FG),
+        bg: linear(BG),
+        cursor: Some(linear(ACCENT)),
+        ..Theme::default()
+    };
+    for (slot, rgb) in theme.palette.iter_mut().zip(ANSI_PALETTE) {
+        *slot = Some(rgb);
+    }
+    theme
+}
+
 pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
 pub const MENU_WIDTH: f32 = 256.0;
 pub const MENU_ROW_HEIGHT: f32 = 30.0;
@@ -48,6 +82,10 @@ pub fn configure() -> SessionToDaemonMsg {
         fg: Some(rgb(FG)),
         bg: Some(rgb(BG)),
         cursor: Some(rgb(ACCENT)),
-        palette: Default::default(),
+        palette: ANSI_PALETTE
+            .into_iter()
+            .enumerate()
+            .map(|(index, [r, g, b])| (index as u8, (r, g, b)))
+            .collect(),
     }
 }
