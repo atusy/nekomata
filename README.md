@@ -84,7 +84,7 @@ nekomataはfelisと同じ `config.toml` を読み込みます。トップレベ�
 
 ```toml
 [font]
-family = "UDEV Gothic NF"
+# family = "JetBrains Mono"  # システムにインストール済みのフォント名
 size_px = 15.0
 
 [theme]
@@ -106,7 +106,7 @@ nekomataが反映する設定は次のとおりです。
 
 - `[theme]` の `foreground`・`background`・`palette`（16色の名前付きスロットと `indexed`）・`minimum_contrast`。未指定の色はnekomataの既定色（felisのxterm既定色ではありません）を使います。設定した色はOSC 4/10/11/12の問い合わせにも返します。背景色の明るさから、端末アプリへ通知するダーク / ライトの別を決めます。
 - `[cursor]` の `color`。未指定時はアクセント色のカーソルです（felisの反転表示ではありません）。
-- `[font]` の `family`・`features`・`fallback`・`bold`・`italic`・`bold_italic`。Nixパッケージとアプリは `NEKOMATA_FONT` で同梱のUDEV Gothic NFを既定のフォントにしています。`family` を指定すると、`NEKOMATA_FONT` の代わりにシステムにインストールされたフォントから探します（システムのフォントを読み込めない場合は `NEKOMATA_FONT` を使います）。`family` が未指定の場合、`fallback` などのフォント名も `NEKOMATA_FONT` のファイルの中だけで探します。
+- `[font]` の `family`・`features`・`fallback`・`bold`・`italic`・`bold_italic`。Nixパッケージとアプリは `NEKOMATA_FONT` で同梱のUDEV Gothic NFを既定のフォントにしています。`family` を指定すると、`NEKOMATA_FONT` の代わりにシステムにインストールされたフォントから探します（システムのフォントを読み込めない場合は `NEKOMATA_FONT` を使います）。同梱のUDEV Gothic NFはシステムにインストールしない限り `family` では選べないため、同梱フォントを使う場合は `family` を指定しないでください。`family` が未指定の場合、`fallback` などのフォント名も `NEKOMATA_FONT` のファイルの中だけで探します。
 - `[font]` の `size_px`。nekomataの範囲（6〜72）に収めて、文字サイズの既定値として使います。
 
 `keymap`・`shader`・`window`・`mouse`・`clipboard` と `cursor` の点滅設定は反映しません。タブバーやメニューの色も固定です。
