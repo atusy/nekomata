@@ -1207,7 +1207,7 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_millis(250));
     }
     // Not egui memory: felis and the workspace daemon own session state,
-    // every window process shares one eframe store although pane ids repeat
+    // every window process shares one eframe store while pane ids repeat
     // across sessions, and `App::new` sets the style and theme anyway.
     fn persist_egui_memory(&self) -> bool {
         false
