@@ -5,7 +5,10 @@ use felis_client_core::{
     ConfigDiagnostics, DiagnosticKind, EffectiveConfig, Severity, config::FontConfig,
 };
 
-use crate::{theme::TerminalTheme, workspace::FontSize};
+use crate::{
+    theme::TerminalTheme,
+    workspace::{FontSize, MAX_FONT_SIZE, MIN_FONT_SIZE},
+};
 
 /// Selects the `[client.nekomata]` overlay in the shared felis file.
 pub const CLIENT_ID: &str = "nekomata";
@@ -75,12 +78,17 @@ fn settle(path: &Path, config: EffectiveConfig, diagnostics: &ConfigDiagnostics)
         lines.push(line("warning", &warning));
     });
     let font_size = config.font.sanitized_font_size_logical_px();
-    if let Some(size) = font_size {
+    // Compare with the written value: felis has already clamped into its
+    // own wider band and warned about that.
+    if let (Some(written), Some(size)) = (config.font.size_px, font_size) {
         let used = FontSize::new(Some(size)).get();
         if used != size {
             lines.push(line(
                 "warning",
-                &format!("font.size_px: {size} is outside nekomata's 6..=72 band; using {used}"),
+                &format!(
+                    "font.size_px: {written} is outside nekomata's \
+                     {MIN_FONT_SIZE}..={MAX_FONT_SIZE} band; using {used}"
+                ),
             ));
         }
     }
@@ -206,6 +214,28 @@ mod tests {
                 "nekomata: /config/felis/config.toml: warning: font.size_px: 5 is outside nekomata's 6..=72 band; using 6"
             ]
         );
+    }
+
+    #[test]
+    fn size_warnings_name_the_written_value_once() {
+        let loaded = resolve("[font]\nsize_px = 2.0\n");
+        assert_eq!(loaded.font_size.get(), 6.0);
+        let ours: Vec<_> = loaded
+            .diagnostics
+            .iter()
+            .filter(|line| line.contains("nekomata's"))
+            .collect();
+        assert_eq!(
+            ours,
+            [
+                "nekomata: /config/felis/config.toml: warning: font.size_px: 2 is outside nekomata's 6..=72 band; using 6"
+            ]
+        );
+
+        let loaded = resolve("[font]\nsize_px = 100.0\n");
+        assert_eq!(loaded.font_size.get(), 72.0);
+        assert_eq!(loaded.diagnostics.len(), 1, "{:?}", loaded.diagnostics);
+        assert!(!loaded.diagnostics[0].contains("nekomata's"));
     }
 
     #[test]

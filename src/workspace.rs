@@ -69,8 +69,8 @@ impl Default for Snapshot {
     }
 }
 
-const MIN_FONT_SIZE: f32 = 6.0;
-const MAX_FONT_SIZE: f32 = 72.0;
+pub const MIN_FONT_SIZE: f32 = 6.0;
+pub const MAX_FONT_SIZE: f32 = 72.0;
 const DEFAULT_FONT_SIZE: f32 = 15.0;
 
 /// Terminal text size in logical pixels: a configured default that a
