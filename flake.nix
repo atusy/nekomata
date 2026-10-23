@@ -67,7 +67,12 @@
                   executable="$app/MacOS/nekomata-bin"
                 ''}
                 wrapperArgs=(
-                  --prefix PATH : "$out/bin:${pkgs.lib.makeBinPath [ felis.packages.${system}.felis ]}" \
+                  --prefix PATH : "$out/bin:${
+                    pkgs.lib.makeBinPath (
+                      [ felis.packages.${system}.felis ]
+                      ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.openssh ]
+                    )
+                  }" \
                   --set-default NEKOMATA_FONT "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf" \
                   --set-default XDG_DATA_DIRS /usr/local/share:/usr/share \
                   --prefix XDG_DATA_DIRS : "$out/share" \
@@ -97,15 +102,18 @@
         in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              cargo
-              rustc
-              rustfmt
-              clippy
-              fish
-              rust-analyzer
-              felis.packages.${system}.felis
-            ];
+            packages =
+              with pkgs;
+              [
+                cargo
+                rustc
+                rustfmt
+                clippy
+                fish
+                rust-analyzer
+                felis.packages.${system}.felis
+              ]
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.openssh ];
             NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
             nativeBuildInputs = [ pkgs.pkg-config ];
             shellHook = ''
