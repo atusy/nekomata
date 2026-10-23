@@ -16,6 +16,13 @@ pub fn initialize(cc: &eframe::CreationContext<'_>) -> Result<()> {
         .wgpu_render_state
         .as_ref()
         .context("wgpu renderer required")?;
+    anyhow::ensure!(
+        gpu.adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::VIEW_FORMATS),
+        "terminal rendering requires compatible texture views; select a Vulkan, Metal or DX12 adapter"
+    );
     cc.egui_ctx
         .data_mut(|data| data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone()));
     load_fonts(&cc.egui_ctx)?;
