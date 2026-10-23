@@ -1403,7 +1403,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         &painter,
         &mut state,
         text_rect,
-        *focused == id && connected,
+        *focused == id && connected && ui.input(|input| input.focused),
         pane.selection,
     ) {
         state.error = Some(format!("Terminal renderer: {error:#}"));
@@ -1420,7 +1420,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
-                purpose: Default::default(),
+                purpose: egui::IMEPurpose::Terminal,
                 should_interrupt_composition: false,
                 rect: text_rect,
                 cursor_rect: Rect::from_min_size(pos, Vec2::new(cw, ch)),

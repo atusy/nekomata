@@ -8,6 +8,7 @@ mod layout;
 #[path = "../tests/support/mesh_renderer.rs"]
 mod mesh_baseline;
 mod picker;
+mod presentation;
 mod render;
 mod session;
 mod shortcuts;

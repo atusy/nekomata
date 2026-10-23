@@ -55,7 +55,7 @@ pub struct Renderer {
     color_revision: u64,
     layout: felis_client_core::ImageLayout,
     rendered: bool,
-    focused: bool,
+    presentation: crate::presentation::Presentation,
     selection: Option<(usize, usize)>,
 }
 
@@ -99,7 +99,7 @@ impl Renderer {
             color_revision: 0,
             layout: Default::default(),
             rendered: false,
-            focused: false,
+            presentation: crate::presentation::Presentation::new(std::time::Instant::now()),
             selection: None,
         })
     }
@@ -138,9 +138,31 @@ impl Renderer {
                 (rect.width() * self.ppp).round().max(1.0) as u32,
                 (rect.height() * self.ppp).round().max(1.0) as u32,
             ];
+            let now = std::time::Instant::now();
+            let cursor = state.screen.screen().cursor();
+            let wants_blink = focused
+                && cursor.visible
+                && state.screen.viewport() == 0
+                && state.screen.screen().cursor_blink()
+                && cursor.row < state.screen.screen().rows()
+                && cursor.col < state.screen.screen().cols();
+            let presentation_changed = painter.ctx().input(|input| {
+                self.presentation.update(
+                    now,
+                    (cursor.row, cursor.col),
+                    focused,
+                    wants_blink,
+                    &input.events,
+                )
+            });
+            if let Some(deadline) = self.presentation.next_deadline(wants_blink) {
+                painter
+                    .ctx()
+                    .request_repaint_after(deadline.saturating_duration_since(now));
+            }
             let changed = !self.rendered
                 || self.size != size
-                || self.focused != focused
+                || presentation_changed
                 || self.selection != selection;
             if changed {
                 state.redraw.request();
@@ -154,7 +176,6 @@ impl Renderer {
                 );
                 return Ok(());
             }
-            self.focused = focused;
             self.selection = selection;
             if self.size != size {
                 self.gpu.resize(size[0], size[1]);
@@ -179,7 +200,9 @@ impl Renderer {
             }
             self.gpu.set_reverse_video(state.screen.reverse_video());
             self.gpu.set_window_focused(focused);
-            self.gpu.set_cursor_blink_visible(true);
+            self.gpu
+                .set_cursor_blink_visible(self.presentation.cursor_visible());
+            self.gpu.set_preedit(self.presentation.preedit.clone());
             let cols = usize::from(state.screen.screen().cols()).max(1);
             self.gpu.set_selection(selection.map(|(a, b)| {
                 let (a, b) = (a.min(b), a.max(b));
@@ -210,6 +233,10 @@ impl Renderer {
                 return Err(error.into());
             }
             state.redraw.painted();
+            if self.gpu.take_glyph_repaint_request() {
+                state.redraw.request();
+                painter.ctx().request_repaint();
+            }
             state.screen.clear_damage();
             self.rendered = true;
         }
