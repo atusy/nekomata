@@ -96,8 +96,9 @@ impl TerminalTheme {
     ///
     /// Unset values keep nekomata's defaults rather than felis's, and an unset
     /// cursor keeps the accent color rather than felis's reverse video.
-    /// felis validates neither hex strings nor reports them, so malformed
-    /// colors are reported through `warn` and keep their default.
+    /// felis does not validate hex strings when it loads the file and only
+    /// reports them through `tracing`, which nekomata does not install, so
+    /// malformed colors are reported through `warn` and keep their default.
     pub fn from_config(config: &EffectiveConfig, warn: &mut dyn FnMut(String)) -> Self {
         let mut theme = Self::default();
         let mut color = |key: &str, value: Option<&str>, slot: &mut [u8; 3]| {
