@@ -26,6 +26,14 @@ staging=$(mktemp -d "$HOME/Applications/.nekomata-install.XXXXXX")
 trap 'chmod -R u+w "$staging"; rm -rf "$staging"' EXIT
 /usr/bin/ditto "$package_directory/package/Applications/nekomata.app" "$staging/nekomata.app"
 chmod -R u+w "$staging/nekomata.app"
+# Sign from the inside out, before replacing the installed app. A persistent
+# certificate keeps the designated requirement stable across rebuilds.
+identity=$(bash "$repository/scripts/macos-signing-identity.sh")
+/usr/bin/codesign --force --sign "$identity" --timestamp=none \
+  --identifier io.github.atusy.nekomata.bin "$staging/nekomata.app/Contents/MacOS/nekomata-bin"
+/usr/bin/codesign --force --sign "$identity" --timestamp=none \
+  --identifier io.github.atusy.nekomata "$staging/nekomata.app"
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$staging/nekomata.app"
 # Nix store files are read-only. Replace the bundle instead of overwriting
 # individual files, which also avoids modifying an executable that is running.
 if [[ -e "$application" ]]; then
