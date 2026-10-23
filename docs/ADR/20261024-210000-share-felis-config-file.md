@@ -97,8 +97,11 @@ Positive:
 
 Negative:
 
-- Sessions zoomed before upgrading, or saved through an older running
-  daemon, return to the configured default once.
+- Sessions zoomed before upgrading return to the configured default once.
+- While a nekomata daemon older than this change keeps running, it drops
+  the zoom on every save, so zoom is not kept across GUI restarts until
+  that daemon is stopped once (`nekomata daemon stop`, which it accepts
+  because the protocol version is unchanged).
 - The snapshot keeps a `font_size` field that only older versions read.
 - The file is read once at startup; edits apply after restarting the GUI.
   Hot reload (`felis_client_core::config_watcher`) is deferred: live felis
