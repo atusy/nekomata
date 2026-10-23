@@ -22,16 +22,16 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1792763249,
-        "narHash": "sha256-jWbs+r/wTMjdI3LkMk3O0wTnWWoZf0hL3Qaapp0eS1c=",
+        "lastModified": 1792768336,
+        "narHash": "sha256-NwMAm+H6j8qdiFQOyYOPLHkO09J9a2yujoFXip3S32w=",
         "ref": "refs/heads/main",
-        "rev": "631c33cd61f6461212b88fe7af669aa085ea816f",
-        "revCount": 508,
+        "rev": "2a3030b237947497708b962ba6be8c2adade4951",
+        "revCount": 510,
         "type": "git",
         "url": "https://git.natsukium.com/felis-terminal/felis"
       },
       "original": {
-        "rev": "631c33cd61f6461212b88fe7af669aa085ea816f",
+        "rev": "2a3030b237947497708b962ba6be8c2adade4951",
         "type": "git",
         "url": "https://git.natsukium.com/felis-terminal/felis"
       }

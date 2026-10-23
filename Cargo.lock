@@ -664,8 +664,8 @@ dependencies = [
 
 [[package]]
 name = "felis-client-core"
-version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+version = "0.2.0"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "bitflags 2.13.2",
  "directories",
@@ -683,8 +683,8 @@ dependencies = [
 
 [[package]]
 name = "felis-grid"
-version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+version = "0.2.0"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "bitflags 2.13.2",
  "bytes",
@@ -702,7 +702,7 @@ dependencies = [
 [[package]]
 name = "felis-protocol"
 version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "bitflags 2.13.2",
  "bytes",
@@ -714,8 +714,8 @@ dependencies = [
 
 [[package]]
 name = "felis-render-core"
-version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+version = "0.2.0"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "felis-grid",
  "felis-protocol",
@@ -727,7 +727,7 @@ dependencies = [
 [[package]]
 name = "felis-shaping"
 version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "memmap2",
  "objc2-core-foundation",
@@ -745,7 +745,7 @@ dependencies = [
 [[package]]
 name = "felis-transport"
 version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "bytes",
  "directories",
@@ -762,7 +762,7 @@ dependencies = [
 [[package]]
 name = "felis-vt"
 version = "0.1.0"
-source = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f#631c33cd61f6461212b88fe7af669aa085ea816f"
+source = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951#2a3030b237947497708b962ba6be8c2adade4951"
 dependencies = [
  "felis-protocol",
  "miniz_oxide 0.9.1",

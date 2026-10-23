@@ -2,7 +2,7 @@
   description = "nekomata — a tabbed, split-pane GUI for felis";
 
   inputs = {
-    felis.url = "git+https://git.natsukium.com/felis-terminal/felis?rev=631c33cd61f6461212b88fe7af669aa085ea816f";
+    felis.url = "git+https://git.natsukium.com/felis-terminal/felis?rev=2a3030b237947497708b962ba6be8c2adade4951";
     nixpkgs.follows = "felis/nixpkgs";
     crane.follows = "felis/crane";
   };
