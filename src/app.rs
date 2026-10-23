@@ -6,12 +6,14 @@ use felis_protocol::messages::{InputMsg, RequestedDims};
 
 use crate::{
     control::{self, Reply, Request},
+    daemon::{self, Payload},
     layout::{Axis, Layout},
     picker::SessionPicker,
     session::{Session, Target},
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_ACTIVE_BG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
-    workspace::Tab,
+    workspace::{PaneSpec, Snapshot, Tab},
+    workspace_client::{Client as WorkspaceClient, Operation},
 };
 
 struct Pane {
@@ -23,12 +25,46 @@ struct Pane {
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
 }
 
+impl Pane {
+    fn connect(
+        runtime: &tokio::runtime::Runtime,
+        ctx: &egui::Context,
+        window: u32,
+        id: u64,
+        spec: PaneSpec,
+        cwd: Option<String>,
+    ) -> Self {
+        Self {
+            session: Session::start(
+                runtime,
+                ctx.clone(),
+                spec.target,
+                spec.session,
+                cwd,
+                vec![
+                    ("NEKOMATA_WINDOW_ID".into(), window.to_string()),
+                    ("NEKOMATA_PANE_ID".into(), id.to_string()),
+                ],
+            ),
+            dims: (0, 0),
+            selection: None,
+            reported_focus: None,
+            scroll_remainder: 0.0,
+            mouse_capture: None,
+        }
+    }
+}
+
 struct PendingAttach {
     session: Session,
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
 pub struct App {
+    workspace: Option<WorkspaceClient>,
+    workspace_id: Option<u64>,
+    workspace_error: Option<String>,
+    last_snapshot: Option<Snapshot>,
     runtime: tokio::runtime::Runtime,
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
@@ -77,9 +113,17 @@ impl App {
             }
         }
         cc.egui_ctx.set_fonts(fonts);
-        let runtime = tokio::runtime::Runtime::new()?;
-        let control = control::Server::bind(&runtime, cc.egui_ctx.clone())?;
-        let mut app = Self {
+        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
+    }
+
+    fn connect(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> anyhow::Result<Self> {
+        let control = control::Server::bind(&runtime, ctx.clone())?;
+        let workspace = WorkspaceClient::start(&runtime, ctx.clone(), control.window);
+        let app = Self {
+            workspace: Some(workspace),
+            workspace_id: None,
+            workspace_error: None,
+            last_snapshot: None,
             runtime,
             control,
             pending_attach: BTreeMap::new(),
@@ -94,8 +138,87 @@ impl App {
             palette: false,
             palette_query: String::new(),
         };
-        app.add_tab(&cc.egui_ctx, None);
         Ok(app)
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            tabs: self.tabs.clone(),
+            panes: self
+                .panes
+                .iter()
+                .map(|(&id, pane)| {
+                    let state = pane.session.state.lock().unwrap();
+                    (
+                        id,
+                        PaneSpec {
+                            target: pane.session.target.clone(),
+                            session: state
+                                .session_id
+                                .map(|id| format!("{id:032x}"))
+                                .or_else(|| pane.session.attachment.clone()),
+                        },
+                    )
+                })
+                .collect(),
+            active: self.active,
+            next_id: self.next_id,
+            font_size: self.font_size,
+        }
+    }
+
+    fn restore_workspace(&mut self, ctx: &egui::Context, snapshot: Snapshot) {
+        self.panes.clear();
+        self.pending_attach.clear();
+        self.tabs = snapshot.tabs;
+        self.active = snapshot.active;
+        self.next_id = snapshot.next_id;
+        self.font_size = snapshot.font_size;
+        for (id, spec) in snapshot.panes {
+            self.panes.insert(
+                id,
+                Pane::connect(&self.runtime, ctx, self.control.window, id, spec, None),
+            );
+        }
+        if self.tabs.is_empty() {
+            self.add_tab(ctx, None);
+        }
+    }
+
+    fn workspace_events(&mut self, ctx: &egui::Context) {
+        loop {
+            let event = self
+                .workspace
+                .as_mut()
+                .and_then(|client| client.events.try_recv().ok());
+            let Some(event) = event else { break };
+            match (event.operation, event.result) {
+                (Operation::Open, Ok(Payload::Session { id, snapshot })) => {
+                    if let Err(error) = snapshot.validate() {
+                        self.workspace_error = Some(error.to_string());
+                        continue;
+                    }
+                    self.workspace_id = Some(id);
+                    self.last_snapshot = Some(snapshot.clone());
+                    self.restore_workspace(ctx, snapshot);
+                }
+                (_, Err(error)) => self.workspace_error = Some(error),
+                _ => {}
+            }
+        }
+    }
+
+    fn save_workspace(&mut self) {
+        if self.workspace_id.is_none() {
+            return;
+        }
+        let snapshot = self.snapshot();
+        if self.last_snapshot.as_ref() != Some(&snapshot)
+            && let Some(client) = &self.workspace
+            && client.send(daemon::Request::Save(snapshot.clone())).is_ok()
+        {
+            self.last_snapshot = Some(snapshot);
+        }
     }
 
     fn add_pane(
@@ -109,24 +232,17 @@ impl App {
         self.next_id += 1;
         self.panes.insert(
             id,
-            Pane {
-                session: Session::start(
-                    &self.runtime,
-                    ctx.clone(),
+            Pane::connect(
+                &self.runtime,
+                ctx,
+                self.control.window,
+                id,
+                PaneSpec {
                     target,
-                    attach,
-                    cwd,
-                    vec![
-                        ("NEKOMATA_WINDOW_ID".into(), self.control.window.to_string()),
-                        ("NEKOMATA_PANE_ID".into(), id.to_string()),
-                    ],
-                ),
-                dims: (0, 0),
-                selection: None,
-                reported_focus: None,
-                scroll_remainder: 0.0,
-                mouse_capture: None,
-            },
+                    session: attach,
+                },
+                cwd,
+            ),
         );
         id
     }
@@ -348,7 +464,31 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.workspace_events(ctx);
+        if self.workspace.is_some() && self.workspace_id.is_none() {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                if let Some(error) = &self.workspace_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    if ui.button("Retry connecting to nekomata daemon").clicked() {
+                        self.workspace = Some(WorkspaceClient::start(
+                            &self.runtime,
+                            ctx.clone(),
+                            self.control.window,
+                        ));
+                        self.workspace_error = None;
+                    }
+                } else {
+                    ui.label("Connecting to nekomata session…");
+                }
+            });
+            return;
+        }
         self.control_requests(ctx);
+        if let Some(error) = &self.workspace_error {
+            egui::TopBottomPanel::bottom("workspace-error").show(ctx, |ui| {
+                ui.colored_label(egui::Color32::LIGHT_RED, error);
+            });
+        }
         for pane in self.panes.values() {
             if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
                 ctx.copy_text(text);
@@ -598,7 +738,16 @@ impl eframe::App for App {
                 self.palette = false;
             }
         }
+        self.save_workspace();
         ctx.request_repaint_after(Duration::from_millis(250));
+    }
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(client) = &self.workspace {
+            let snapshot = self.workspace_id.map(|_| self.snapshot());
+            if let Err(error) = client.close(&self.runtime, snapshot) {
+                eprintln!("Could not save nekomata session: {error:#}");
+            }
+        }
     }
 }
 
@@ -1224,6 +1373,85 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
+    fn live_gui_restart_restores_tabs_splits_focus_and_running_shells() {
+        use std::{sync::mpsc, time::Instant};
+        assert!(
+            std::env::var_os("NEKOMATA_RUNTIME_DIR").is_some(),
+            "use scripts/test-live.sh"
+        );
+        let ctx = egui::Context::default();
+        let (tx, repaints) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(25);
+            loop {
+                let _ = ctx.run(egui::RawInput::default(), |_| {});
+                app.workspace_events(&ctx);
+                app.control_requests(&ctx);
+                app.save_workspace();
+                assert!(app.workspace_error.is_none(), "{:?}", app.workspace_error);
+                if done(app) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "GUI session test timed out");
+                let _ = repaints.recv_timeout(Duration::from_millis(50));
+            }
+        };
+        let connected = |app: &App| {
+            !app.panes.is_empty()
+                && app
+                    .panes
+                    .values()
+                    .all(|p| p.session.state.lock().unwrap().connected)
+        };
+        let mut app = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
+        pump(&mut app, &connected);
+        app.action(&ctx, Action::Split(Axis::Horizontal));
+        app.action(&ctx, Action::NewTab);
+        pump(&mut app, &connected);
+        app.active = 0;
+        app.tabs[0].focus(2);
+        if let Layout::Split { ratio, .. } = &mut app.tabs[0].layout {
+            *ratio = 0.3;
+        }
+        app.font_size = 18.0;
+        let before = app.snapshot();
+        let session_id = app.workspace_id;
+        app.save_workspace();
+        eframe::App::on_exit(&mut app, None);
+        drop(app);
+
+        let mut replacement = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
+        pump(&mut replacement, &connected);
+        assert_eq!(replacement.workspace_id, session_id);
+        assert_eq!(replacement.snapshot(), before);
+        assert_eq!(replacement.tabs.len(), 2);
+        assert_eq!(replacement.panes.len(), 3);
+        let ids: Vec<_> = replacement
+            .panes
+            .values()
+            .map(|p| p.session.state.lock().unwrap().session_id.unwrap())
+            .collect();
+        eframe::App::on_exit(&mut replacement, None);
+        drop(replacement);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(
+                std::path::PathBuf::from(std::env::var_os("NEKOMATA_TEST_SOCKET").unwrap()),
+                felis_client_core::Offer::ops(),
+            )
+            .await
+            .unwrap();
+            for id in ids {
+                ops.destroy_session(format!("{id:032x}")).await.unwrap();
+            }
+        });
+    }
+
+    #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_pane_attach_routes_cli_and_preserves_sessions_on_failure() {
         use felis_client_core::Offer;
@@ -1257,6 +1485,10 @@ mod tests {
         let control = control::Server::bind(&runtime, ctx.clone()).unwrap();
         let window = control.window;
         let mut app = App {
+            workspace: None,
+            workspace_id: None,
+            workspace_error: None,
+            last_snapshot: None,
             runtime,
             control,
             pending_attach: BTreeMap::new(),

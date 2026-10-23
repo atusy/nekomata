@@ -63,6 +63,7 @@ pub struct Session {
     pub state: Arc<Mutex<State>>,
     pub input_failed: AtomicBool,
     pub target: Target,
+    pub attachment: Option<String>,
     tx: mpsc::Sender<InputMsg>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -103,6 +104,7 @@ impl Session {
             clipboard: None,
         }));
         let (tx, rx) = mpsc::channel(256);
+        let attachment = attach.clone();
         let shared = state.clone();
         let destination = target.clone();
         let task = runtime.spawn(async move {
@@ -136,6 +138,7 @@ impl Session {
             task,
             input_failed: AtomicBool::new(false),
             target,
+            attachment,
         }
     }
 
