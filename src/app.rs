@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use felis_grid::{AttrFlags, Color, CursorStyle, Grapheme};
+use felis_grid::Grapheme;
 use felis_protocol::messages::{InputMsg, RequestedDims};
 
 use crate::{
@@ -23,6 +23,7 @@ struct Pane {
     reported_focus: Option<bool>,
     scroll_remainder: f32,
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
+    renderer: Option<crate::render::Renderer>,
 }
 
 impl Pane {
@@ -34,6 +35,7 @@ impl Pane {
             reported_focus: None,
             scroll_remainder: 0.0,
             mouse_capture: None,
+            renderer: None,
         }
     }
 
@@ -144,6 +146,7 @@ impl App {
             }
         }
         cc.egui_ctx.set_fonts(fonts);
+        crate::render::load_fonts(&cc.egui_ctx)?;
         Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
     }
 
@@ -1339,9 +1342,29 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     }
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, 0, BG);
+    let ppp = ui.ctx().pixels_per_point();
+    if pane
+        .renderer
+        .as_ref()
+        .is_none_or(|r| !r.matches(font_size, ppp))
+    {
+        match crate::render::Renderer::new(ui.ctx(), font_size, ppp) {
+            Ok(renderer) => pane.renderer = Some(renderer),
+            Err(error) => {
+                painter.text(
+                    rect.min,
+                    egui::Align2::LEFT_TOP,
+                    format!("Terminal font: {error}"),
+                    FontId::monospace(font_size),
+                    Color32::LIGHT_RED,
+                );
+                return;
+            }
+        }
+    }
     let font = FontId::monospace(font_size);
-    let cw = ui.fonts_mut(|f| f.glyph_width(&font, 'M'));
-    let ch = (font_size * 1.4).ceil();
+    let renderer = pane.renderer.as_mut().unwrap();
+    let Vec2 { x: cw, y: ch } = renderer.cell_size();
     let cols = (rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
     let rows = (rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
     // Split the unused fractional row between the top and bottom margins.
@@ -1359,96 +1382,17 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             },
         });
     }
-    let state = pane.session.state.lock().unwrap();
+    let mut state = pane.session.state.lock().unwrap();
     let shadow = &state.screen;
     let screen = shadow.screen();
     let painter = painter.with_clip_rect(text_rect);
-    let visible_rows = screen.rows().min(rows);
-    let visible_cols = screen.cols().min(cols);
-    for row in 0..visible_rows {
-        for col in 0..visible_cols {
-            let Some(cell) = screen.cell(row, col) else {
-                continue;
-            };
-            let attr = screen.style(cell.style);
-            let mut bg = color(attr.bg, BG);
-            let mut fg = color(attr.fg, FG);
-            if attr.flags.contains(AttrFlags::REVERSE) ^ shadow.reverse_video() {
-                std::mem::swap(&mut bg, &mut fg);
-            }
-            let index = usize::from(row) * usize::from(screen.cols()) + usize::from(col);
-            if pane
-                .selection
-                .is_some_and(|(a, b)| (a.min(b)..=a.max(b)).contains(&index))
-            {
-                bg = Color32::from_rgb(64, 78, 94);
-            }
-            let pos = text_rect.min + Vec2::new(f32::from(col) * cw, f32::from(row) * ch);
-            // Continue the last column's background to the right edge. Keep
-            // row heights fixed so bottom bars don't grow into the unused
-            // fractional row below the terminal grid.
-            let max = Pos2::new(
-                if col + 1 == visible_cols {
-                    text_rect.right()
-                } else {
-                    pos.x + cw
-                },
-                pos.y + ch,
-            );
-            painter.rect_filled(Rect::from_min_max(pos, max), 0, bg);
-        }
-    }
-    for row in 0..screen.rows().min(rows) {
-        for col in 0..screen.cols().min(cols) {
-            let Some(cell) = screen.cell(row, col) else {
-                continue;
-            };
-            let attr = screen.style(cell.style);
-            if attr.flags.contains(AttrFlags::CONCEAL) {
-                continue;
-            }
-            let mut fg = color(attr.fg, FG);
-            if attr.flags.contains(AttrFlags::REVERSE) ^ shadow.reverse_video() {
-                fg = color(attr.bg, BG);
-            }
-            if attr.flags.contains(AttrFlags::FAINT) {
-                fg = fg.gamma_multiply(0.6);
-            }
-            let pos = text_rect.min + Vec2::new(f32::from(col) * cw, f32::from(row) * ch);
-            let painted = matches!(cell.grapheme, Grapheme::Char(c) if crate::glyph::paint_braille(
-                &painter, c, Rect::from_min_size(pos, Vec2::new(cw, ch)), fg,
-            ));
-            if !painted {
-                let text = match cell.grapheme {
-                    Grapheme::Ascii(b) => char::from(b).to_string(),
-                    Grapheme::Char(c) => c.to_string(),
-                    Grapheme::Cluster(id) => shadow.cluster_str(id).unwrap_or("�").to_owned(),
-                    _ => continue,
-                };
-                let wide = col + 1 < visible_cols
-                    && screen
-                        .cell(row, col + 1)
-                        .is_some_and(|next| matches!(next.grapheme, Grapheme::Spacer));
-                crate::glyph::paint_text(
-                    &painter,
-                    &text,
-                    font.clone(),
-                    Rect::from_min_size(pos, Vec2::new(if wide { 2.0 * cw } else { cw }, ch)),
-                    fg,
-                    attr.flags.contains(AttrFlags::BOLD),
-                );
-            }
-            if attr.flags.contains(AttrFlags::UNDERLINE) {
-                painter.line_segment(
-                    [
-                        pos + Vec2::new(0.0, ch - 2.0),
-                        pos + Vec2::new(cw, ch - 2.0),
-                    ],
-                    Stroke::new(1.0_f32, fg),
-                );
-            }
-        }
-    }
+    renderer.paint(
+        &painter,
+        shadow,
+        text_rect,
+        *focused == id && state.connected,
+        pane.selection,
+    );
     let cursor = screen.cursor();
     if *focused == id {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
@@ -1458,28 +1402,6 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                 cursor_rect: Rect::from_min_size(pos, Vec2::new(cw, ch)),
             })
         });
-    }
-    if *focused == id && cursor.visible && shadow.viewport() == 0 && state.connected {
-        let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
-        match screen.cursor_style() {
-            CursorStyle::Block => {
-                painter.rect_filled(
-                    Rect::from_min_size(pos, Vec2::new(cw, ch)),
-                    0,
-                    ACCENT.gamma_multiply(0.5),
-                );
-            }
-            CursorStyle::Bar => {
-                painter.rect_filled(Rect::from_min_size(pos, Vec2::new(2.0, ch)), 0, ACCENT);
-            }
-            CursorStyle::Underline => {
-                painter.rect_filled(
-                    Rect::from_min_size(pos + Vec2::new(0.0, ch - 2.0), Vec2::new(cw, 2.0)),
-                    0,
-                    ACCENT,
-                );
-            }
-        }
     }
     if pane
         .session
@@ -1626,6 +1548,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             }
         }
     }
+    state.screen.clear_damage();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1662,43 +1585,6 @@ fn mouse_input(
         py: (((pos.y - rect.top()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
             .saturating_add(1),
     })
-}
-
-fn color(color: Color, default: Color32) -> Color32 {
-    match color {
-        Color::Default => default,
-        Color::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
-        Color::Indexed(n) => {
-            const BASE: [[u8; 3]; 16] = [
-                [46, 52, 64],
-                [191, 97, 106],
-                [163, 190, 140],
-                [235, 203, 139],
-                [129, 161, 193],
-                [180, 142, 173],
-                [136, 192, 208],
-                [229, 233, 240],
-                [76, 86, 106],
-                [191, 97, 106],
-                [163, 190, 140],
-                [235, 203, 139],
-                [129, 161, 193],
-                [180, 142, 173],
-                [143, 188, 187],
-                [236, 239, 244],
-            ];
-            let [r, g, b] = if n < 16 {
-                BASE[n as usize]
-            } else if n >= 232 {
-                [8 + (n - 232) * 10; 3]
-            } else {
-                let n = n - 16;
-                let ramp = |v| if v == 0 { 0 } else { 55 + 40 * v };
-                [ramp(n / 36), ramp(n / 6 % 6), ramp(n % 6)]
-            };
-            Color32::from_rgb(r, g, b)
-        }
-    }
 }
 
 fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, session: &Session) {
