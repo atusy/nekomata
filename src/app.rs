@@ -1414,7 +1414,9 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let shadow = &state.screen;
     let screen = shadow.screen();
     let cursor = screen.cursor();
-    if *focused == id {
+    // Enabling XIM before the native window receives focus can consume its
+    // pending input/focus events. Only the active native window owns the IME.
+    if *focused == id && ui.input(|input| input.focused) {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
