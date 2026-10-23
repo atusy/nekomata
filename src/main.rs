@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod control;
+mod glyph;
 mod layout;
 mod picker;
 mod session;

@@ -826,22 +826,27 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             if attr.flags.contains(AttrFlags::FAINT) {
                 fg = fg.gamma_multiply(0.6);
             }
-            let text = match cell.grapheme {
-                Grapheme::Ascii(b) => char::from(b).to_string(),
-                Grapheme::Char(c) => c.to_string(),
-                Grapheme::Cluster(id) => shadow.cluster_str(id).unwrap_or("�").to_owned(),
-                _ => continue,
-            };
             let pos = text_rect.min + Vec2::new(f32::from(col) * cw, f32::from(row) * ch);
-            painter.text(pos, egui::Align2::LEFT_TOP, &text, font.clone(), fg);
-            if attr.flags.contains(AttrFlags::BOLD) {
-                painter.text(
-                    pos + Vec2::new(0.4, 0.0),
-                    egui::Align2::LEFT_TOP,
-                    text,
-                    font.clone(),
-                    fg,
-                );
+            let painted = matches!(cell.grapheme, Grapheme::Char(c) if crate::glyph::paint_braille(
+                &painter, c, Rect::from_min_size(pos, Vec2::new(cw, ch)), fg,
+            ));
+            if !painted {
+                let text = match cell.grapheme {
+                    Grapheme::Ascii(b) => char::from(b).to_string(),
+                    Grapheme::Char(c) => c.to_string(),
+                    Grapheme::Cluster(id) => shadow.cluster_str(id).unwrap_or("�").to_owned(),
+                    _ => continue,
+                };
+                painter.text(pos, egui::Align2::LEFT_TOP, &text, font.clone(), fg);
+                if attr.flags.contains(AttrFlags::BOLD) {
+                    painter.text(
+                        pos + Vec2::new(0.4, 0.0),
+                        egui::Align2::LEFT_TOP,
+                        text,
+                        font.clone(),
+                        fg,
+                    );
+                }
             }
             if attr.flags.contains(AttrFlags::UNDERLINE) {
                 painter.line_segment(
