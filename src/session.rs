@@ -87,6 +87,7 @@ impl Target {
 pub struct State {
     pub screen: ShadowScreen,
     pub colors: crate::colors::Colors,
+    pub images: felis_client_core::ImageShadow,
     pub session_id: Option<u128>,
     pub error: Option<String>,
     pub connected: bool,
@@ -162,6 +163,7 @@ impl Session {
         let state = Arc::new(Mutex::new(State {
             screen: ShadowScreen::new(24, 80),
             colors: crate::colors::Colors::default(),
+            images: felis_client_core::ImageShadow::new(),
             session_id: None,
             error: None,
             connected: false,
@@ -304,6 +306,9 @@ async fn run(
                                 let mut state = shared.lock().unwrap();
                                 state.screen.apply(&delivery.msg)?;
                                 state.colors.apply_grid(&delivery.msg);
+                                if matches!(delivery.msg, GridMsg::RehydrateBegin) {
+                                    state.images = felis_client_core::ImageShadow::new();
+                                }
                                 if let GridMsg::ClipboardSet { write } = &delivery.msg
                                     && write.selection.contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
                                     && let Ok(text) = std::str::from_utf8(&write.data) {
@@ -312,10 +317,11 @@ async fn run(
                                 ctx.request_repaint();
                             }
                         }
-                        // This first frontend renders text only; image payloads are validated
-                        // and consumed so unsupported graphics do not break the connection.
                         MessageKind::Image => {
-                            let _ = conn.driver.decode::<felis_protocol::messages::ImageMsg>(&payload)?;
+                            if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::ImageMsg>(&payload)? {
+                                shared.lock().unwrap().images.apply(&delivery.msg)?;
+                                ctx.request_repaint();
+                            }
                         }
                         MessageKind::Push => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::PushMsg>(&payload)?
@@ -412,7 +418,7 @@ mod tests {
         loop {
             // Acknowledge the repaint before examining state so a racing update
             // either satisfies the predicate or leaves a wakeup for the next pass.
-            let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+            let _ = crate::test_support::run(ctx, egui::RawInput::default(), |_| {});
             {
                 let state = session.state.lock().unwrap();
                 assert!(state.error.is_none(), "{:?}", state.error);
@@ -443,6 +449,30 @@ mod tests {
                 .collect();
             text.contains("NEKOMATA_READY")
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_kitty_pixels_reach_the_frontend_image_store() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let (repaint_tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = repaint_tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), None, None);
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(
+            b"printf '\\033_Ga=T,f=24,s=1,v=1,i=77,q=2;AP8A\\033\\\\'\n".to_vec(),
+        ));
+        wait_for(&session, &ctx, &repaints, |state| {
+            state
+                .images
+                .images()
+                .values()
+                .any(|image| image.is_complete() && image.pixels() == [0, 255, 0])
+        });
+        assert!(!session.state.lock().unwrap().images.placements().is_empty());
     }
 
     #[test]
