@@ -1621,6 +1621,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                 let offset = (i64::from(shadow.viewport()) + i64::from(lines)).max(0) as u32;
                 pane.session.send(InputMsg::Viewport {
                     lines_from_bottom: offset,
+                    anchor: shadow.viewport_anchor(),
                 });
             }
         }
@@ -1774,6 +1775,7 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
             *selection = None;
             session.send(InputMsg::Viewport {
                 lines_from_bottom: 0,
+                anchor: None,
             });
             session.send(InputMsg::Key(KeyEvent {
                 key,

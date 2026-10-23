@@ -8,10 +8,12 @@ description = "A tabbed and split-pane GUI for felis sessions"
 [dependencies]
 anyhow = "1"
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-felis-client-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "71f4a5ca11ed9bee3422444c52fc425e88e00a81" }
-felis-grid = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "71f4a5ca11ed9bee3422444c52fc425e88e00a81" }
-felis-protocol = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "71f4a5ca11ed9bee3422444c52fc425e88e00a81" }
-felis-transport = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "71f4a5ca11ed9bee3422444c52fc425e88e00a81" }
+felis-client-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "631c33cd61f6461212b88fe7af669aa085ea816f" }
+felis-grid = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "631c33cd61f6461212b88fe7af669aa085ea816f" }
+felis-protocol = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "631c33cd61f6461212b88fe7af669aa085ea816f" }
+felis-transport = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "631c33cd61f6461212b88fe7af669aa085ea816f" }
+felis-render-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "631c33cd61f6461212b88fe7af669aa085ea816f" }
+felis-shaping = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "631c33cd61f6461212b88fe7af669aa085ea816f" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

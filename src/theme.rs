@@ -48,5 +48,6 @@ pub fn configure() -> SessionToDaemonMsg {
         fg: Some(rgb(FG)),
         bg: Some(rgb(BG)),
         cursor: Some(rgb(ACCENT)),
+        palette: Default::default(),
     }
 }
