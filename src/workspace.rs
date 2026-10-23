@@ -105,8 +105,11 @@ impl FontSize {
         self.zoom.unwrap_or(self.default)
     }
 
+    /// Zooming back to the default (within float rounding of repeated
+    /// steps) follows the default again rather than pinning it.
     pub fn scale(&mut self, factor: f32) {
-        self.zoom = Some((self.get() * factor).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
+        let size = (self.get() * factor).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        self.zoom = ((size - self.default).abs() > 0.01).then_some(size);
     }
 
     /// Returns to the configured default and keeps following it.
@@ -213,6 +216,19 @@ mod tests {
         size.reset();
         assert_eq!(size.zoom, None);
         assert_eq!(size.get(), 20.0);
+    }
+
+    #[test]
+    fn zooming_back_to_the_default_follows_it_again() {
+        let mut size = FontSize::new(Some(15.0));
+        for _ in 0..3 {
+            size.scale(1.1);
+        }
+        for _ in 0..3 {
+            size.scale(1.0 / 1.1);
+        }
+        assert_eq!(size.zoom, None);
+        assert_eq!(size.get(), 15.0);
     }
 
     #[test]
