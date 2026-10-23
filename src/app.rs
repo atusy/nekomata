@@ -1426,16 +1426,18 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                     Grapheme::Cluster(id) => shadow.cluster_str(id).unwrap_or("�").to_owned(),
                     _ => continue,
                 };
-                painter.text(pos, egui::Align2::LEFT_TOP, &text, font.clone(), fg);
-                if attr.flags.contains(AttrFlags::BOLD) {
-                    painter.text(
-                        pos + Vec2::new(0.4, 0.0),
-                        egui::Align2::LEFT_TOP,
-                        text,
-                        font.clone(),
-                        fg,
-                    );
-                }
+                let wide = col + 1 < visible_cols
+                    && screen
+                        .cell(row, col + 1)
+                        .is_some_and(|next| matches!(next.grapheme, Grapheme::Spacer));
+                crate::glyph::paint_text(
+                    &painter,
+                    &text,
+                    font.clone(),
+                    Rect::from_min_size(pos, Vec2::new(if wide { 2.0 * cw } else { cw }, ch)),
+                    fg,
+                    attr.flags.contains(AttrFlags::BOLD),
+                );
             }
             if attr.flags.contains(AttrFlags::UNDERLINE) {
                 painter.line_segment(

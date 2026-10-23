@@ -1,5 +1,41 @@
 use eframe::egui::{Color32, Painter, Rect, Vec2};
 
+/// Follow felis's fitted_bitmap policy: only an excessive advance triggers
+/// fitting, and fitting rasterizes a smaller font instead of stretching a mesh.
+pub fn paint_text(
+    painter: &Painter,
+    text: &str,
+    mut font: eframe::egui::FontId,
+    cell: Rect,
+    color: Color32,
+    bold: bool,
+) {
+    let mut galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    let ppp = painter.ctx().pixels_per_point();
+    let bold_offset = if bold { 0.4 } else { 0.0 };
+    let mut pos = cell.min;
+    // Like felis, tolerate a physical pixel of advance rounding. Ink overhang
+    // alone does not shrink an otherwise normal-width letter.
+    if galley.size().x > cell.width() + 1.0 / ppp && galley.mesh_bounds.is_positive() {
+        let ink = galley.mesh_bounds;
+        let ratio = ((cell.width() - bold_offset).max(0.0) / ink.width())
+            .min(cell.height() / ink.height())
+            .min(1.0);
+        font.size = (font.size * ppp * ratio).floor().max(1.0) / ppp;
+        galley = painter.layout_no_wrap(text.to_owned(), font, color);
+        // Center the actual rasterized ink, excluding its advance and bearings.
+        pos = cell.center()
+            - galley.mesh_bounds.center().to_vec2()
+            - Vec2::new(bold_offset / 2.0, 0.0);
+        pos.x = (pos.x * ppp).round() / ppp;
+        pos.y = (pos.y * ppp).round() / ppp;
+    }
+    painter.galley(pos, galley.clone(), color);
+    if bold {
+        painter.galley(pos + Vec2::new(bold_offset, 0.0), galley, color);
+    }
+}
+
 pub fn paint_braille(painter: &Painter, ch: char, cell: Rect, color: Color32) -> bool {
     if !('\u{2800}'..='\u{28ff}').contains(&ch) {
         return false;
@@ -26,6 +62,86 @@ pub fn paint_braille(painter: &Painter, ch: char, cell: Rect, color: Color32) ->
 mod tests {
     use super::*;
     use eframe::egui::{self, Pos2, Shape, Vec2};
+
+    #[test]
+    fn oversized_symbol_is_rasterized_at_a_smaller_size_and_its_ink_is_centered() {
+        for ppp in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(ppp);
+            if let Ok(path) = std::env::var("NEKOMATA_FONT") {
+                let mut fonts = egui::FontDefinitions::default();
+                fonts.font_data.insert(
+                    "terminal".into(),
+                    egui::FontData::from_owned(std::fs::read(path).unwrap()).into(),
+                );
+                fonts
+                    .families
+                    .get_mut(&egui::FontFamily::Monospace)
+                    .unwrap()
+                    .insert(0, "terminal".into());
+                ctx.set_fonts(fonts);
+            }
+            let mut cell = Rect::NOTHING;
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                let painter = ctx.layer_painter(egui::LayerId::background());
+                let font = egui::FontId::monospace(15.0);
+                let cw = ctx.fonts_mut(|f| f.glyph_width(&font, 'M'));
+                cell = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(cw, 21.0));
+                paint_text(&painter, "①", font, cell, Color32::RED, false);
+            });
+            let Shape::Text(shape) = &output.shapes[0].shape else {
+                panic!("expected text");
+            };
+            assert!(
+                shape.galley.job.sections[0].format.font_id.size < 15.0,
+                "must rasterize at a smaller font size, not transform a full-size mesh"
+            );
+            let ink = shape.galley.mesh_bounds.translate(shape.pos.to_vec2());
+            assert!(
+                (ink.center() - cell.center()).length() <= 1.0,
+                "ink {ink:?} not centered in {cell:?}"
+            );
+            assert!(ink.width() <= cell.width() + 1.0, "ink exceeds its columns");
+            assert!(
+                ink.width() >= cell.width() * 0.65,
+                "ink unnecessarily small"
+            );
+            assert!(
+                (ink.width() / ink.height() - 1.0).abs() < 0.25,
+                "circle lost its proportions"
+            );
+        }
+    }
+
+    #[test]
+    fn fitting_preserves_native_layout_for_ascii_and_two_column_text() {
+        let ctx = egui::Context::default();
+        let mut expected = Vec::new();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let font = egui::FontId::monospace(15.0);
+            let cw = ctx.fonts_mut(|f| f.glyph_width(&font, 'M'));
+            for (text, columns) in [("M", 1.0), ("i", 1.0), ("猫", 2.0)] {
+                let natural = painter.layout_no_wrap(text.into(), font.clone(), Color32::RED);
+                expected.push(natural);
+                paint_text(
+                    &painter,
+                    text,
+                    font.clone(),
+                    Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(cw * columns, 21.0)),
+                    Color32::RED,
+                    false,
+                );
+            }
+        });
+        for (shape, natural) in output.shapes.iter().zip(expected) {
+            let Shape::Text(shape) = &shape.shape else {
+                panic!("expected text");
+            };
+            assert!(std::sync::Arc::ptr_eq(&shape.galley, &natural));
+            assert_eq!(shape.pos, Pos2::new(10.0, 20.0));
+        }
+    }
 
     #[test]
     fn braille_dots_render_without_a_font_in_unicode_positions() {
