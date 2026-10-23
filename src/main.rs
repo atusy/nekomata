@@ -72,18 +72,24 @@ fn main() -> eframe::Result {
             run_felis(&["sessions", "list"], &options);
         }
     }
-    let options = eframe::NativeOptions {
+    eframe::run_native(
+        APP_ID,
+        native_options(),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
+    )
+}
+
+/// Name passed to eframe; it also keys eframe's on-disk storage.
+const APP_ID: &str = "nekomata";
+
+fn native_options() -> eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("nekomata")
             .with_inner_size([1100.0, 740.0])
             .with_min_inner_size([480.0, 320.0]),
         ..Default::default()
-    };
-    eframe::run_native(
-        "nekomata",
-        options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
-    )
+    }
 }
 
 fn run_felis(command: &[&str], args: &[String]) -> ! {
