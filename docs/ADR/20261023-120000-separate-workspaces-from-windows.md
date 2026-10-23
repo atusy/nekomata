@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | proposed |
+| Status | accepted |
 | Date | 2026-10-23 |
 | Decision-makers | atusy |
 
@@ -32,9 +32,11 @@ font size and felis session references, including local or SSH targets. The
 GUI publishes layout snapshots to the daemon over a versioned Unix socket.
 Each window holds a connection lease. The daemon atomically claims the most
 recently used unclaimed session at startup, creating one when none is available.
-A dropped connection releases the lease without deleting the session.
+A dropped connection releases the lease without deleting the session. Normal
+shutdown saves and waits for an explicit detach acknowledgement before exiting.
 
-Switching reserves the destination while retaining the source lease. The GUI
+Switching first waits for the source snapshot to be accepted, then reserves the
+destination while retaining the source lease. The GUI
 connects destination panes before committing the switch; failure cancels the
 reservation. Explicit pane/tab closure still detaches shells in felis.
 
@@ -80,3 +82,13 @@ Requires a second lifecycle and a small control protocol.
 Keeps every terminal connection in the nekomata daemon, but adds another hop and
 couples UI upgrades to a larger terminal-facing protocol. It is unnecessary for
 retaining layouts because felis already owns terminal state.
+
+## Validation
+
+Implemented on 2026-10-23. Socket tests cover lease arbitration, EOF cleanup,
+acknowledged detach, snapshot validation, source-save rejection and protocol
+version rejection. The isolated integration runner verifies GUI replacement,
+CLI routing from a restored shell, session switches and rollback while retaining
+shared source connections. A macOS native GUI check also verified session
+creation/switching and a full process restart with the same two felis shell IDs
+and split layout. Linux native GUI validation remains outstanding.

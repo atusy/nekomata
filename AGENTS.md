@@ -5,7 +5,9 @@
 nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The felis daemon owns shells, PTYs, terminal parsing, and persistent sessions.
 
 - `src/app.rs`: window UI and terminal rendering.
-- `src/session.rs`: asynchronous felis connections, input, and session state.
+- `src/session.rs`: asynchronous felis connections, input, and terminal state.
+- `src/daemon.rs`, `src/workspace.rs`, `src/workspace_client.rs`: retained nekomata sessions, versioned leases, and asynchronous layout synchronization.
+- `src/control.rs`: per-window CLI commands and session-aware window discovery.
 - `src/layout.rs`, `src/shortcuts.rs`: pane layout, navigation, and keyboard actions.
 - `src/cli.rs`, `src/picker.rs`, `src/theme.rs`: session commands, selection UI, and shared colors.
 - `share/`: fish integration and macOS bundle metadata/native launcher.
@@ -34,7 +36,7 @@ Follow rustfmt defaults: four-space indentation, `snake_case` functions/modules,
 
 ## Testing Guidelines
 
-Rust tests live in inline `#[cfg(test)]` modules. Use descriptive behavior-oriented names. Add regression tests for input, focus, layout, or protocol changes. Ignored `live_*` tests require `scripts/test-live.sh`, which provisions a private socket and cleans up its daemon. Never use the user's normal daemon for destructive tests. Report native GUI checks separately from automated results; no numerical coverage target is configured.
+Rust tests live in inline `#[cfg(test)]` modules. Use descriptive behavior-oriented names. Add regression tests for input, focus, layout, or protocol changes. Ignored `live_*` tests require `scripts/test-live.sh`, which provisions a private socket and cleans up its daemon. The runner isolates both nekomata and felis daemons. Never use the user's normal daemon for destructive tests. Report native GUI checks separately from automated results; no numerical coverage target is configured.
 
 ## Commit & Pull Request Guidelines
 
