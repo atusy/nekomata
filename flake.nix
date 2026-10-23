@@ -90,6 +90,13 @@
                   executable="$out/bin/nekomata-bin"
                 ''}
                 makeWrapper "$executable" "$out/bin/nekomata" "''${wrapperArgs[@]}"
+                ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+                  /usr/bin/codesign --force --sign - --identifier io.github.atusy.nekomata.bin \
+                    "$app/MacOS/nekomata-bin"
+                  /usr/bin/codesign --force --sign - --identifier io.github.atusy.nekomata \
+                    "$out/Applications/nekomata.app"
+                  /usr/bin/codesign --verify --deep --strict "$out/Applications/nekomata.app"
+                ''}
               '';
             }
           );
