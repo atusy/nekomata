@@ -42,23 +42,27 @@ stderr; a file with errors (or one that cannot be read) falls back to
 built-in defaults rather than failing startup. CLI and daemon subcommands do
 not read the file.
 
-nekomata honors:
+nekomata honors what maps onto the shared felis renderer it embeds:
 
-- `[theme]` `foreground`, `background` and `palette` (named slots and
-  `indexed`). Unset values keep nekomata's current Nord-like colors, not
-  felis's xterm defaults. The configured foreground, background and cursor
-  are also announced to felis (`ConfigureTheme`) so `OSC 10/11/12` queries
-  answer with what nekomata draws, and the background luminance decides the
-  dark/light color-scheme report.
+- `[theme]` `foreground`, `background`, `palette` (named slots and
+  `indexed`) and `minimum_contrast`. Unset colors keep nekomata's current
+  Nord-like colors, not felis's xterm defaults. The configured colors are
+  also announced to felis (`ConfigureTheme`) so `OSC 4/10/11/12` queries
+  answer with what nekomata paints, and the background luminance decides
+  the dark/light color-scheme report. felis does not validate hex colors at
+  load time, so nekomata reports malformed ones itself.
 - `[cursor] color`. Unset keeps the accent-colored cursor rather than
   felis's reverse-video cursor.
-- `[font] size_px`, clamped into nekomata's 6–72 band.
+- `[font]` `family`, `features`, `fallback`, `bold`, `italic` and
+  `bold_italic`, passed to font discovery and the renderer as felis does.
+  `NEKOMATA_FONT` still restricts discovery to its file.
+- `[font] size_px`, clamped into nekomata's 6–72 snapshot band.
 
-Other sections and keys (`font.family` and the other font faces, `keymap`,
-`shader`, `window`, `mouse`, `clipboard`, `cursor.blink*`) are not applied.
-egui loads font files by path (`NEKOMATA_FONT`) rather than by family name,
-and nekomata's keymap and drawing do not share felis's model. Tab-bar chrome
-keeps its fixed colors.
+Other sections and keys (`keymap`, `shader`, `window`, `mouse`, `clipboard`,
+`cursor.blink*`) are not applied: nekomata's shortcuts, window and input
+handling do not share felis's model, and the embedded renderer does not run
+post-process shaders or translucent backgrounds. Tab-bar and menu chrome
+keep their fixed colors.
 
 ### Font size is a default, not the session's value
 
@@ -80,7 +84,8 @@ layouts but not felis shells.
 
 Positive:
 
-- felis and nekomata share colors from one file, with per-client overlays.
+- felis and nekomata share colors and fonts from one file, with per-client
+  overlays.
 - Typos and unknown keys produce the same diagnostics felis gives.
 - Sessions that were never zoomed follow later changes to the configured
   size; zoomed sessions keep their zoom.
@@ -90,16 +95,18 @@ Negative:
 - Upgrading requires one nekomata daemon restart.
 - The file is read once at startup; edits apply after restarting the GUI.
   Hot reload (`felis_client_core::config_watcher`) is deferred: live felis
-  connections would need a channel for `ConfigureTheme` besides input.
+  connections would need to resend `ConfigureTheme`, and each pane's
+  renderer would need to rebuild its fonts and theme.
 - Settings that felis honors but nekomata ignores may surprise users; the
   README lists what nekomata applies.
 
 ### Confirmation
 
 Unit tests resolve config text to verify overlay precedence, inert foreign
-overlays, color and palette defaults, invalid-value fallback, font size
-clamping, and that resetting zoom returns to the configured default. Daemon
-tests cover snapshots without a font override. Native GUI validation is
+overlays, color and palette defaults and reports, invalid-value fallback,
+font face mapping, font size clamping, and that resetting zoom returns to the
+configured default. Snapshot validation covers sessions without a font
+override. Native GUI validation is
 reported separately.
 
 ## Pros and Cons of the Options
