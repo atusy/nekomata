@@ -669,7 +669,6 @@ impl App {
                         continue;
                     }
                     if session.is_empty()
-                        || (daemon.is_some() && ssh.is_some())
                         || ssh
                             .as_ref()
                             .is_some_and(|s| s.is_empty() || s.starts_with('-'))
@@ -679,9 +678,8 @@ impl App {
                     }
                     let target = match (daemon, ssh) {
                         (Some(path), None) => Target::Local(path.into()),
-                        (None, Some(host)) => Target::Ssh(host),
+                        (socket, Some(host)) => Target::Ssh { host, socket },
                         (None, None) => pane.session.target.clone(),
-                        _ => unreachable!(),
                     };
                     let session = Arc::new(Session::start(
                         &self.runtime,
@@ -2180,11 +2178,53 @@ mod tests {
             app.panes[&1].session.state.lock().unwrap().session_id,
             Some(remote)
         );
+        if std::env::var("NEKOMATA_TEST_SSH").as_deref() == Ok("1") {
+            // A relative path containing spaces, an apostrophe and shell syntax
+            // must remain remote-relative throughout CLI, IPC and SSH parsing.
+            let directory = other_socket.parent().unwrap();
+            let name = "remote 'socket' $(printf ignored).sock";
+            let alias = directory.join(name);
+            std::os::unix::fs::symlink(&other_socket, &alias).unwrap();
+            let remote_socket = name.to_owned();
+            let mut args = attach(Some(&remote_socket), format!("{remote:032x}"), Some("1"));
+            args.extend(["--ssh".into(), "nekomata-test-host".into()]);
+            let output = command(&mut app, args);
+            assert!(output.status.success(), "{:?}", output);
+            assert_eq!(
+                app.panes[&1].session.target,
+                Target::Ssh {
+                    host: "nekomata-test-host".into(),
+                    socket: Some(remote_socket),
+                }
+            );
+            assert_eq!(
+                app.panes[&1].session.state.lock().unwrap().session_id,
+                Some(remote)
+            );
+            let mut args = attach(
+                Some("missing remote.sock"),
+                format!("{remote:032x}"),
+                Some("1"),
+            );
+            args.extend(["--ssh".into(), "nekomata-test-host".into()]);
+            let output = command(&mut app, args);
+            assert!(!output.status.success());
+            assert_eq!(
+                app.panes[&1].session.state.lock().unwrap().session_id,
+                Some(remote)
+            );
+            // Omitting both flags must retain the remote socket, too.
+            let output = command(&mut app, attach(None, format!("{remote:032x}"), Some("1")));
+            assert!(output.status.success(), "{:?}", output);
+        }
+        let target = app.panes[&1].session.target.clone();
         app.action(&ctx, Action::Split(Axis::Horizontal));
-        assert_eq!(
-            app.panes[&2].session.target,
-            Target::Local(other_socket.clone())
-        );
+        assert_eq!(app.panes[&2].session.target, target);
+        pump(&mut app, &|app| {
+            let state = app.panes[&2].session.state.lock().unwrap();
+            state.connected || state.error.is_some()
+        });
+        assert!(app.panes[&2].session.state.lock().unwrap().connected);
         app.runtime.block_on(async {
             let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
                 .await

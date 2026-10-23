@@ -7,6 +7,7 @@ mod layout;
 mod picker;
 mod session;
 mod shortcuts;
+mod ssh;
 mod theme;
 mod workspace;
 mod workspace_client;

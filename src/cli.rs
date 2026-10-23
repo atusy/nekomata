@@ -34,7 +34,7 @@ nekomata sessions attach SESSION_ID [--window WINDOW_ID]\n\
 nekomata daemon stop\n\
 nekomata felis sessions list [--format human|json]\n\
 nekomata panes list [--window WINDOW_ID]\n\
-nekomata panes attach [PANE_ID] --session SESSION [--daemon SOCKET | --ssh HOST] [--window WINDOW_ID]";
+nekomata panes attach [PANE_ID] --session SESSION [--ssh HOST] [--daemon SOCKET] [--window WINDOW_ID]";
 
 pub fn parse(args: &[String]) -> Result<Command, &'static str> {
     match args
@@ -139,9 +139,6 @@ fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
             _ => return Err("unknown or repeated pane argument"),
         }
     }
-    if ssh.is_some() && daemon.is_some() {
-        return Err("--ssh and --daemon cannot be combined yet");
-    }
     Ok(Command::Pane {
         window,
         action: if verb == "list" {
@@ -160,6 +157,33 @@ fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ssh_attach_accepts_a_remote_daemon_socket() {
+        let args = [
+            "panes",
+            "attach",
+            "--ssh",
+            "dev",
+            "--daemon",
+            "relative socket",
+            "--session",
+            "abc",
+        ]
+        .map(String::from);
+        assert_eq!(
+            parse(&args),
+            Ok(Command::Pane {
+                window: None,
+                action: PaneAction::Attach {
+                    pane: None,
+                    daemon: Some("relative socket".into()),
+                    ssh: Some("dev".into()),
+                    session: "abc".into()
+                },
+            })
+        );
+    }
 
     #[test]
     fn session_switch_commands_select_the_destination_and_window() {
@@ -282,16 +306,6 @@ mod tests {
         for args in [
             vec!["panes", "attach"],
             vec!["panes", "attach", "--session", "abc", "--ssh", "-oops"],
-            vec![
-                "panes",
-                "attach",
-                "--session",
-                "abc",
-                "--ssh",
-                "dev",
-                "--daemon",
-                "/tmp/s",
-            ],
             vec!["panes", "attach", "0", "1", "--session", "abc"],
         ] {
             assert!(parse_args(&args).is_err(), "{args:?}");

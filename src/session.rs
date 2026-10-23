@@ -19,9 +19,41 @@ use std::{path::PathBuf, time::Duration};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "StoredTarget")]
 pub enum Target {
     Local(PathBuf),
-    Ssh(String),
+    Ssh {
+        host: String,
+        socket: Option<String>,
+    },
+}
+
+// Retained workspaces written before explicit remote sockets stored SSH hosts
+// as strings. Accept that representation alongside the new host/socket pair.
+#[derive(serde::Deserialize)]
+enum StoredTarget {
+    Local(PathBuf),
+    Ssh(StoredSsh),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum StoredSsh {
+    Host(String),
+    Socket {
+        host: String,
+        socket: Option<String>,
+    },
+}
+
+impl From<StoredTarget> for Target {
+    fn from(value: StoredTarget) -> Self {
+        match value {
+            StoredTarget::Local(path) => Self::Local(path),
+            StoredTarget::Ssh(StoredSsh::Host(host)) => Self::Ssh { host, socket: None },
+            StoredTarget::Ssh(StoredSsh::Socket { host, socket }) => Self::Ssh { host, socket },
+        }
+    }
 }
 
 impl Target {
@@ -34,7 +66,7 @@ impl Target {
     fn carrier(&self) -> Carrier {
         match self {
             Self::Local(path) => Carrier::Local(path.clone().into()),
-            Self::Ssh(host) => Carrier::Ssh {
+            Self::Ssh { host, .. } => Carrier::Ssh {
                 destination: host.clone(),
                 ssh_args: vec!["-oBatchMode=yes".into()],
             },
@@ -44,7 +76,10 @@ impl Target {
     pub fn label(&self) -> String {
         match self {
             Self::Local(path) => path.display().to_string(),
-            Self::Ssh(host) => format!("ssh:{host}"),
+            Self::Ssh { host, socket } => match socket {
+                Some(socket) => format!("ssh:{host}:{socket}"),
+                None => format!("ssh:{host}"),
+            },
         }
     }
 }
@@ -165,7 +200,7 @@ async fn run(
     cwd: Option<String>,
     env: Vec<(String, String)>,
 ) -> Result<()> {
-    let (mut conn, info) = tokio::time::timeout(Duration::from_secs(20), async {
+    let (mut conn, info, _relay) = tokio::time::timeout(Duration::from_secs(20), async {
         let carrier = target.carrier();
         if attach.is_none()
             && let Target::Local(socket) = &target
@@ -173,8 +208,19 @@ async fn run(
             // Preserve local daemon auto-start for new shells only.
             drop(connect_or_spawn_daemon(socket, Offer::window(false)).await?);
         }
-        let mut conn: CarrierConnection =
-            connect_carrier(carrier.clone(), Offer::window(false), RemoteSpawn::Refuse).await?;
+        let (mut conn, relay): (CarrierConnection, _) = if let Target::Ssh {
+            host,
+            socket: Some(socket),
+        } = &target
+        {
+            let (conn, child) = crate::ssh::connect(host, socket, Offer::window(false)).await?;
+            (conn, Some(child))
+        } else {
+            (
+                connect_carrier(carrier.clone(), Offer::window(false), RemoteSpawn::Refuse).await?,
+                None,
+            )
+        };
         let info = if let Some(id) = attach {
             conn.attach_by_prefix(id, felis_client_core::AttachIntent::Deliberate)
                 .await?
@@ -201,7 +247,7 @@ async fn run(
         conn.writer
             .send(&InputMsg::ColorScheme { dark: true })
             .await?;
-        Ok::<_, anyhow::Error>((conn, info))
+        Ok::<_, anyhow::Error>((conn, info, relay))
     })
     .await
     .context("daemon attach timed out")??;
@@ -275,6 +321,24 @@ mod tests {
         sync::mpsc as sync_mpsc,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn retained_ssh_targets_accept_old_hosts_and_round_trip_remote_sockets() {
+        let legacy: Target = serde_json::from_str(r#"{"Ssh":"dev"}"#).unwrap();
+        assert_eq!(
+            legacy,
+            Target::Ssh {
+                host: "dev".into(),
+                socket: None
+            }
+        );
+        let target = Target::Ssh {
+            host: "dev".into(),
+            socket: Some("relative.sock".into()),
+        };
+        let saved = serde_json::to_string(&target).unwrap();
+        assert_eq!(serde_json::from_str::<Target>(&saved).unwrap(), target);
+    }
 
     fn wait_for(
         session: &Session,
@@ -451,7 +515,10 @@ mod tests {
         let remote = Session::start(
             &runtime,
             ctx.clone(),
-            Target::Ssh("nekomata-test-host".into()),
+            Target::Ssh {
+                host: "nekomata-test-host".into(),
+                socket: None,
+            },
             Some(format!("{id:032x}")),
             None,
             vec![],
@@ -468,7 +535,10 @@ mod tests {
         let spawned = Session::start(
             &runtime,
             ctx.clone(),
-            Target::Ssh("nekomata-test-host".into()),
+            Target::Ssh {
+                host: "nekomata-test-host".into(),
+                socket: None,
+            },
             None,
             Some("/nekomata-local-path-must-not-be-forwarded".into()),
             vec![("NEKOMATA_TEST_LOCAL_ENV".into(), "leaked".into())],

@@ -121,7 +121,7 @@ impl Snapshot {
                 crate::session::Target::Local(path) => {
                     ensure!(path.is_absolute(), "daemon socket must be absolute")
                 }
-                crate::session::Target::Ssh(host) => ensure!(
+                crate::session::Target::Ssh { host, .. } => ensure!(
                     !host.is_empty() && !host.starts_with('-'),
                     "invalid SSH host"
                 ),

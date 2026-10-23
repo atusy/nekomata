@@ -150,7 +150,7 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
             let daemon = daemon
                 .map(|socket| -> Result<PathBuf> {
                     let path = PathBuf::from(socket);
-                    if path.is_absolute() {
+                    if ssh.is_some() || path.is_absolute() {
                         Ok(path)
                     } else {
                         Ok(std::env::current_dir()?.join(path))
