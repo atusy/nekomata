@@ -1,7 +1,7 @@
 use eframe::egui::{Color32, Painter, Rect, Vec2};
 
 /// Fit font fallback glyphs to the columns assigned by the terminal, keeping
-/// their height and texture coordinates intact.
+/// their aspect ratio and texture coordinates intact.
 pub fn paint_text(
     painter: &Painter,
     text: &str,
@@ -23,22 +23,32 @@ pub fn paint_text(
     if width > 0.0 && (width > available || left < 0.0) {
         let scale = (available / width).min(1.0);
         let fit_x = |x: f32| (x - left) * scale;
+        let vertical_offset = if scale < 1.0 {
+            ((cell.height() - galley.rect.height() * scale) / 2.0).max(0.0)
+        } else {
+            0.0
+        };
         let fit_rect = |mut rect: Rect| {
             rect.min.x = fit_x(rect.min.x);
             rect.max.x = fit_x(rect.max.x);
+            rect.min.y *= scale;
+            rect.max.y *= scale;
             rect
         };
         // Clone only overflowing layouts; egui's shared layout cache stays intact.
         let fitted = std::sync::Arc::make_mut(&mut galley);
-        fitted.rect = fit_rect(fitted.rect);
-        fitted.mesh_bounds = fit_rect(fitted.mesh_bounds);
+        fitted.rect = fit_rect(fitted.rect).translate(Vec2::new(0.0, vertical_offset));
+        fitted.mesh_bounds =
+            fit_rect(fitted.mesh_bounds).translate(Vec2::new(0.0, vertical_offset));
         for placed in &mut fitted.rows {
             placed.pos.x *= scale;
+            placed.pos.y = placed.pos.y * scale + vertical_offset;
             let row = std::sync::Arc::make_mut(&mut placed.row);
-            row.size.x *= scale;
+            row.size *= scale;
             row.visuals.mesh_bounds = fit_rect(row.visuals.mesh_bounds);
             for vertex in &mut row.visuals.mesh.vertices {
                 vertex.pos.x = fit_x(vertex.pos.x);
+                vertex.pos.y *= scale;
             }
         }
     }
@@ -75,6 +85,54 @@ pub fn paint_braille(painter: &Painter, ch: char, cell: Rect, color: Color32) ->
 mod tests {
     use super::*;
     use eframe::egui::{self, Pos2, Shape, Vec2};
+
+    #[test]
+    fn oversized_circled_numbers_preserve_their_aspect_ratio() {
+        let ctx = egui::Context::default();
+        if let Ok(path) = std::env::var("NEKOMATA_FONT") {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "terminal".into(),
+                egui::FontData::from_owned(std::fs::read(path).unwrap()).into(),
+            );
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Monospace)
+                .unwrap()
+                .insert(0, "terminal".into());
+            ctx.set_fonts(fonts);
+        }
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let font = egui::FontId::monospace(15.0);
+            let cw = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, 'M'));
+            for text in ["①", "②", "W"] {
+                let natural = painter.layout_no_wrap(text.into(), font.clone(), Color32::RED);
+                let cell = Rect::from_min_size(Pos2::ZERO, Vec2::new(cw, 21.0));
+                paint_text(&painter, text, font.clone(), cell, Color32::RED, false);
+                let shapes = ctx.graphics(|graphics| {
+                    graphics
+                        .get(egui::LayerId::background())
+                        .unwrap()
+                        .all_entries()
+                        .last()
+                        .unwrap()
+                        .shape
+                        .clone()
+                });
+                let Shape::Text(fitted) = shapes else {
+                    panic!("expected text");
+                };
+                let natural_ratio = natural.mesh_bounds.width() / natural.mesh_bounds.height();
+                let fitted_ratio =
+                    fitted.galley.mesh_bounds.width() / fitted.galley.mesh_bounds.height();
+                assert!(
+                    (natural_ratio - fitted_ratio).abs() < 0.001,
+                    "{text} was distorted: {natural_ratio} -> {fitted_ratio}"
+                );
+            }
+        });
+    }
 
     #[test]
     fn oversized_text_mesh_stays_inside_its_cell_even_when_bold() {
