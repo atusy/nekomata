@@ -12,7 +12,7 @@ use felis_client_core::{
 use felis_render_core::{ImageData, ImageSource, SelectionRange};
 use felis_render_wgpu::{FaceSpec, Renderer as GpuRenderer, RendererConfig};
 use felis_shaping::FontStack;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result<()> {
     let gpu = cc
@@ -26,9 +26,10 @@ pub fn initialize(cc: &eframe::CreationContext<'_>, font: &FontConfig) -> Result
             .contains(wgpu::DownlevelFlags::VIEW_FORMATS),
         "terminal rendering requires compatible texture views; select a Vulkan, Metal or DX12 adapter"
     );
+    let cfg = faces(font, std::env::var_os("NEKOMATA_FONT").map(Into::into));
     cc.egui_ctx.data_mut(|data| {
         data.insert_temp(egui::Id::unique("terminal-gpu"), gpu.clone());
-        data.insert_temp(faces_id(), Arc::new(faces(font)));
+        data.insert_temp(faces_id(), Arc::new(cfg));
     });
     load_fonts(&cc.egui_ctx)?;
     Ok(())
@@ -39,7 +40,11 @@ fn faces_id() -> egui::Id {
 }
 
 /// Every `[font]` setting except the size, which each pane chooses.
-fn faces(font: &FontConfig) -> RendererConfig {
+///
+/// `bundled` (`NEKOMATA_FONT`, which the packaged app always sets) is the
+/// default face. Naming `font.family` selects from the system's fonts
+/// instead; otherwise families resolve within the bundled file only.
+fn faces(font: &FontConfig, bundled: Option<PathBuf>) -> RendererConfig {
     let face = |style: &FontStyleConfig| FaceSpec {
         family: style.family.clone(),
         features: style.features.clone(),
@@ -51,9 +56,8 @@ fn faces(font: &FontConfig) -> RendererConfig {
         font_bold: face(&font.bold),
         font_italic: face(&font.italic),
         font_bold_italic: face(&font.bold_italic),
-        // Families then resolve among these files instead of the system's.
-        font_files: std::env::var_os("NEKOMATA_FONT")
-            .map(Into::into)
+        font_files: bundled
+            .filter(|_| font.family.is_none())
             .into_iter()
             .collect(),
         ..Default::default()
@@ -62,7 +66,12 @@ fn faces(font: &FontConfig) -> RendererConfig {
 
 fn configured_faces(ctx: &egui::Context) -> Arc<RendererConfig> {
     ctx.data(|data| data.get_temp(faces_id()))
-        .unwrap_or_else(|| Arc::new(faces(&FontConfig::default())))
+        .unwrap_or_else(|| {
+            Arc::new(faces(
+                &FontConfig::default(),
+                std::env::var_os("NEKOMATA_FONT").map(Into::into),
+            ))
+        })
 }
 
 pub fn load_fonts(ctx: &egui::Context) -> Result<Arc<FontStack>> {
@@ -340,8 +349,12 @@ mod tests {
             "#,
         );
         assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
-        let cfg = faces(&loaded.font);
+        let cfg = faces(&loaded.font, Some("/nix/store/bundled.ttf".into()));
         assert_eq!(cfg.font_family.as_deref(), Some("JetBrains Mono"));
+        assert!(
+            cfg.font_files.is_empty(),
+            "a named family is looked up among the system's fonts"
+        );
         assert_eq!(cfg.font_features, ["calt"]);
         assert_eq!(
             cfg.font_fallbacks,
@@ -369,6 +382,18 @@ mod tests {
         );
         assert_eq!(cfg.font_bold_italic, FaceSpec::default());
         assert_eq!(cfg.font_size_physical_px, None);
+    }
+
+    #[test]
+    fn the_bundled_font_stays_the_default_face() {
+        let loaded = crate::config::resolve("[font]\nfeatures = [\"calt\"]\n");
+        let cfg = faces(&loaded.font, Some("/nix/store/bundled.ttf".into()));
+        assert_eq!(cfg.font_family, None);
+        assert_eq!(
+            cfg.font_files,
+            [std::path::PathBuf::from("/nix/store/bundled.ttf")]
+        );
+        assert!(faces(&loaded.font, None).font_files.is_empty());
     }
 
     #[test]

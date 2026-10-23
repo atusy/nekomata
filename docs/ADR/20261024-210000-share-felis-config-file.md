@@ -55,7 +55,9 @@ nekomata honors what maps onto the shared felis renderer it embeds:
   felis's reverse-video cursor.
 - `[font]` `family`, `features`, `fallback`, `bold`, `italic` and
   `bold_italic`, passed to font discovery and the renderer as felis does.
-  `NEKOMATA_FONT` still restricts discovery to its file.
+  The packaged app sets `NEKOMATA_FONT` to its bundled font, which
+  restricts discovery to that file; naming `font.family` discovers among
+  the system's fonts instead, so the setting works in the packaged app.
 - `[font] size_px`, clamped into nekomata's 6–72 snapshot band.
 
 Other sections and keys (`keymap`, `shader`, `window`, `mouse`, `clipboard`,
