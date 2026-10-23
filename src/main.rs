@@ -2,8 +2,6 @@ mod app;
 mod cli;
 mod control;
 mod daemon;
-#[cfg(test)]
-mod glyph;
 mod layout;
 mod picker;
 mod render;
