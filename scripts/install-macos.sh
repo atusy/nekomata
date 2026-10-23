@@ -9,6 +9,7 @@ fi
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 package_directory="${XDG_DATA_HOME:-$HOME/.local/share}/nekomata"
 application="$HOME/Applications/nekomata.app"
+command_link="$HOME/.local/bin/nekomata"
 
 if [[ -e "$application" ]]; then
   identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$application/Contents/Info.plist")
@@ -38,4 +39,15 @@ if ! mv "$staging/nekomata.app" "$application"; then
   exit 1
 fi
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$application"
+
+# Terminals outside nekomata lack the launcher's PATH, so expose the CLI wrapper.
+# Point at the GC-rooted package link so reinstalling updates the command too.
+if [[ -e "$command_link" || -L "$command_link" ]] \
+  && [[ $(readlink "$command_link" 2>/dev/null) != "$package_directory/package/bin/nekomata" ]]; then
+  echo "Skipping $command_link: it exists and is not managed by this installer" >&2
+else
+  mkdir -p "$(dirname "$command_link")"
+  ln -sfn "$package_directory/package/bin/nekomata" "$command_link"
+  echo "Linked $command_link"
+fi
 echo "Installed $application"

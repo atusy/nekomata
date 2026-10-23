@@ -27,7 +27,7 @@ bash scripts/install-macos.sh
 open ~/Applications/nekomata.app
 ```
 
-`~/Applications/nekomata.app` をDockへドラッグすると固定できます。更新時も同じインストールコマンドを使います。Nixの依存を保持するリンクは `~/.local/share/nekomata/package`（`XDG_DATA_HOME`指定時はその配下）に作成します。アプリから起動するとホームディレクトリでシェルを開き、CLIから起動すると元のカレントディレクトリを使います。
+`~/Applications/nekomata.app` をDockへドラッグすると固定できます。更新時も同じインストールコマンドを使います。Nixの依存を保持するリンクは `~/.local/share/nekomata/package`（`XDG_DATA_HOME`指定時はその配下）に作成します。アプリから起動するとホームディレクトリでシェルを開き、CLIから起動すると元のカレントディレクトリを使います。通常のターミナルから `nekomata` コマンドを使えるよう、インストーラーは `~/.local/bin/nekomata` へのシンボリックリンクも作成します（`~/.local/bin` をPATHに含めてください。同名の別ファイルがある場合は上書きしません）。
 
 macOSの権限帰属を保つため、アプリのエントリーポイントにはネイティブランチャーを使います。シェルを管理するfelisデーモンは既存のものを共有するため、kittyなど別アプリから起動したデーモンを再利用すると、そのアプリ名で権限を求められることがあります。起動元を切り替えるには、既存セッションを終了してデーモンを停止した後、Dockからnekomataを起動してください。
 
