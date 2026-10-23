@@ -376,12 +376,12 @@ impl App {
                 .workspace
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("nekomata daemon is unavailable"))?;
-            client.send(daemon::Request::Save(self.snapshot()))?;
-            client.send(daemon::Request::Prepare(
+            client.prepare(
+                self.snapshot(),
                 session
                     .map(daemon::Selection::Id)
                     .unwrap_or(daemon::Selection::New),
-            ))?;
+            )?;
             Ok(())
         })();
         match result {

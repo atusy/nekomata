@@ -25,6 +25,10 @@ pub struct Event {
 
 enum Command {
     Request(Request),
+    Prepare {
+        snapshot: Snapshot,
+        selection: daemon::Selection,
+    },
     Close {
         snapshot: Option<Snapshot>,
         reply: oneshot::Sender<Result<(), String>>,
@@ -70,33 +74,23 @@ impl Client {
             }
             ctx.request_repaint();
             while let Some(command) = commands.recv().await {
-                match command {
+                let (operation, result) = match command {
                     Command::Request(request) => {
                         let operation = match &request {
                             Request::Save(_) => Operation::Save,
                             Request::List => Operation::List,
-                            Request::Prepare(_) => Operation::Prepare,
                             Request::Finish { .. } => Operation::Finish,
                             _ => unreachable!(),
                         };
-                        let result = daemon::exchange(&mut stream, request).await;
-                        let disconnected = result.as_ref().is_err_and(|error| {
-                            error.downcast_ref::<daemon::Rejection>().is_none()
-                        });
-                        let operation = if disconnected {
-                            Operation::Disconnected
-                        } else {
-                            operation
-                        };
-                        let result = result.map_err(|error| format!("{error:#}"));
-                        if operation != Operation::Save || result.is_err() {
-                            let _ = events_tx.send(Event { operation, result });
-                            ctx.request_repaint();
-                        }
-                        if disconnected {
-                            return;
-                        }
+                        (operation, daemon::exchange(&mut stream, request).await)
                     }
+                    Command::Prepare {
+                        snapshot,
+                        selection,
+                    } => (
+                        Operation::Prepare,
+                        daemon::prepare(&mut stream, snapshot, selection).await,
+                    ),
                     Command::Close { snapshot, reply } => {
                         let result = if let Some(snapshot) = snapshot {
                             daemon::exchange(&mut stream, Request::Save(snapshot))
@@ -117,6 +111,22 @@ impl Client {
                         let _ = reply.send(result);
                         return;
                     }
+                };
+                let disconnected = result
+                    .as_ref()
+                    .is_err_and(|error| error.downcast_ref::<daemon::Rejection>().is_none());
+                let operation = if disconnected {
+                    Operation::Disconnected
+                } else {
+                    operation
+                };
+                let result = result.map_err(|error| format!("{error:#}"));
+                if operation != Operation::Save || result.is_err() {
+                    let _ = events_tx.send(Event { operation, result });
+                    ctx.request_repaint();
+                }
+                if disconnected {
+                    return;
                 }
             }
         });
@@ -130,6 +140,15 @@ impl Client {
     pub fn send(&self, request: Request) -> Result<()> {
         self.tx
             .try_send(Command::Request(request))
+            .map_err(|error| anyhow!("nekomata daemon command unavailable: {error}"))
+    }
+
+    pub fn prepare(&self, snapshot: Snapshot, selection: daemon::Selection) -> Result<()> {
+        self.tx
+            .try_send(Command::Prepare {
+                snapshot,
+                selection,
+            })
             .map_err(|error| anyhow!("nekomata daemon command unavailable: {error}"))
     }
 

@@ -205,6 +205,15 @@ pub async fn exchange(stream: &mut UnixStream, request: Request) -> Result<Paylo
     .context("nekomata daemon request timed out")?
 }
 
+pub async fn prepare(
+    stream: &mut UnixStream,
+    snapshot: Snapshot,
+    selection: Selection,
+) -> Result<Payload> {
+    exchange(stream, Request::Save(snapshot)).await?;
+    exchange(stream, Request::Prepare(selection)).await
+}
+
 pub async fn connect() -> Result<UnixStream> {
     let path = socket()?;
     if let Ok(stream) = UnixStream::connect(&path).await {
@@ -650,5 +659,21 @@ mod tests {
         drop(replacement);
         let _ = task.await;
         let _ = replacement_task.await;
+    }
+    #[tokio::test]
+    async fn rejected_source_save_prevents_destination_reservation() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        exchange(&mut client, Request::Open { window: 11 })
+            .await
+            .unwrap();
+        let invalid = Snapshot {
+            active: 7,
+            ..Default::default()
+        };
+        assert!(prepare(&mut client, invalid, Selection::New).await.is_err());
+        assert_eq!(registry.lock().unwrap().sessions.len(), 1);
+        drop(client);
+        let _ = task.await;
     }
 }
