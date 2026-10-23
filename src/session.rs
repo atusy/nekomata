@@ -315,7 +315,7 @@ mod tests {
             .unwrap()
             .join("nekomata");
         let listed = std::process::Command::new(&executable)
-            .args(["sessions", "list", "--format", "json"])
+            .args(["felis", "sessions", "list", "--format", "json"])
             .output()
             .unwrap();
         assert!(
@@ -324,9 +324,8 @@ mod tests {
             String::from_utf8_lossy(&listed.stderr)
         );
         assert!(String::from_utf8_lossy(&listed.stdout).contains(&format!("{id:032x}")));
-        let detached = std::process::Command::new(&executable)
-            .args(["sessions", "detach"])
-            .env("FELIS_SESSION_ID", format!("{id:032x}"))
+        let detached = std::process::Command::new("felis")
+            .args(["sessions", "evict", &format!("{id:032x}")])
             .output()
             .unwrap();
         assert!(
