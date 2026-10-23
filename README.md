@@ -79,7 +79,7 @@ nekomata felis sessions list
 nekomata felis sessions list --format json
 ```
 
-一覧の取得は同梱のfelis CLIへ委譲します。再接続は `≡` メニューの `Attach…` からセッションを選択してください。ペインを閉じるとdetachし、シェルはデーモン内で動いたままになります。CLIのattach/detachコマンドは提供しません。
+一覧の取得は同梱のfelis CLIへ委譲します。`≡` メニューの `Attach…` では、起動時のローカルdaemonからセッションを選んで新しいタブで開けます。ペインを閉じるとdetachし、シェルはデーモン内で動いたままになります。
 
 インストールせずに使う場合:
 
@@ -88,6 +88,39 @@ nix run . -- felis sessions list
 ```
 
 `FELIS_SOCKET` を指定すると、通常とは別のローカルデーモンに接続できます。
+
+## 起動中のペインの接続先を変更する
+
+CLIから起動中のGUIへ指示し、既存のペインを別のセッションに切り替えられます。
+
+```sh
+# ウィンドウID、ペインID、接続先、セッションIDを確認
+nekomata pane list
+
+# activeなペインを、同じdaemonの別セッションへ切り替える
+nekomata pane attach --session SESSION_ID
+
+# 指定ペインを、別のローカルdaemonのセッションへ切り替える
+nekomata pane attach 2 --daemon /path/to/felis.sock --session SESSION_ID
+
+# SSH先の既定daemonのセッションへ切り替える
+nekomata pane attach --ssh dev-server --session SESSION_ID
+nekomata pane attach 2 --ssh user@host --session SESSION_ID
+
+# 複数のGUIがある場合はウィンドウを指定
+nekomata pane list --window WINDOW_ID
+nekomata pane attach 2 --window WINDOW_ID --session SESSION_ID
+```
+
+ペインIDはウィンドウ内のIDで、felisのセッションIDとは別です。省略すると、GUIが指示を受け取った時点のactiveなペインを使います。`--daemon` と `--ssh` を省略すると対象ペインの現在の接続先を引き継ぎます。ローカルソケットの相対パスは、CLIを実行したディレクトリを基準に解決します。セッションIDはfelisが一意に解決できる短縮形も使えます。
+
+接続先のdaemonは起動済みで、指定セッションが存在している必要があります。接続とattachが成功してからペインを切り替え、元のセッションはdetachして残します。失敗した場合は元のペインを維持し、CLIがエラーを返します。同じペインへのattachが進行中の場合、次のattach要求はエラーになります。分割して新しいシェルを作るときも元ペインの接続先を引き継ぎます。新しいタブは起動時のローカルdaemonを使います。
+
+ウィンドウは `--window`、環境変数 `NEKOMATA_WINDOW_ID`、起動中のGUIが1つの場合の自動選択、の順に決まります。複数候補がある場合はエラーにウィンドウ探索用のディレクトリを表示します。nekomataで新しく作ったローカルシェルには `NEKOMATA_WINDOW_ID` と `NEKOMATA_PANE_ID` を渡します。既存セッションの環境変数は書き換えないため、再接続前のウィンドウIDが残っている場合は `--window` で指定してください。
+
+SSHの指示はGUIと同じマシンで実行します。`~/.ssh/config` のホスト名や `user@host` を使えます。SSH先には互換性のある `felis-daemon` がPATH上に必要です。公開鍵・SSH agentなどによる非対話認証を使い、パスワード入力や初回ホスト鍵確認は事前に通常のsshで済ませてください。リモートで新規シェルを作る際には、ローカルのシェルパス・cwd・環境変数を転送しません。
+
+固定しているfelisの公開APIではSSH先のソケットを指定できないため、`--ssh` と `--daemon` の併用は未対応です。detach専用CLI、自動再接続は提供しません。
 
 ## 開発・検証
 
@@ -100,7 +133,7 @@ cargo fmt --check
 bash scripts/test-live.sh
 ```
 
-`scripts/test-live.sh` は専用ソケットのデーモンを使い、実際の入力・カラー表示・リサイズ・切断後の再接続を検証します。終了時にはテスト専用のデーモンとセッションを片付けます。
+`scripts/test-live.sh` は専用ソケットのデーモンを使い、実際の入力・カラー表示・リサイズ・切断後の再接続を検証します。別daemonへのペイン切り替えと失敗時の維持も検証します。SSHはローカルの専用relay fixtureで通信経路を検証し、外部ホストには接続しません。終了時にはテスト専用のデーモンとセッションを片付けます。
 
 ```sh
 nix flake check
@@ -111,7 +144,7 @@ nix fmt -- flake.nix
 
 テキスト、256色 / RGB、CJK文字、選択・コピー・貼り付け、スクロールバック、名前付きキー、マウス入力、IME確定文字の送信、OSC 52によるシステムクリップボードへの書き込みに対応しています。NeovimのOSC 52プロバイダーからの `"+yy` も利用できます。NixではUDEV Gothic NFを優先して読み込みます。macOSではフォントが見つからない場合にシステムの日本語フォントを使います。別のフォントを使う場合は `NEKOMATA_FONT=/path/to/font.ttf` を指定できます。Linuxでは Noto CJK の標準パスも探します。
 
-このGUIは独自のテキスト描画を使います。felis本体の全描画機能を引き継ぐものではありません。Kitty画像、OSC 66文字サイズ、リガチャ、動的パレット変更、全種類の文字装飾、キー解放イベント、OSC 52クリップボード読み取り、SSH接続・外部からのセッション切替指示には未対応です。デーモン切断後の自動再接続と、タブ・分割配置の保存も未実装です。
+このGUIは独自のテキスト描画を使います。felis本体の全描画機能を引き継ぐものではありません。Kitty画像、OSC 66文字サイズ、リガチャ、動的パレット変更、全種類の文字装飾、キー解放イベント、OSC 52クリップボード読み取りには未対応です。デーモン切断後の自動再接続と、タブ・分割配置の保存も未実装です。
 
 IMEやOSクリップボードの操作、TUIのマウス操作、GUIの見た目は実機での追加確認が必要です。
 
