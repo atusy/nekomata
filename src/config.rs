@@ -87,9 +87,25 @@ fn settle(path: &Path, config: EffectiveConfig, diagnostics: &ConfigDiagnostics)
         theme,
         font_size: FontSize::new(font_size),
         font: config.font,
-        diagnostics: lines,
-        error,
+        diagnostics: lines.iter().map(|line| printable(line)).collect(),
+        error: error.as_deref().map(printable),
     }
+}
+
+/// Escapes control characters a key in the file may carry, so echoing a
+/// diagnostic cannot drive the terminal that launched nekomata.
+fn printable(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            let keep = !c.is_control() || c == '\n';
+            let (kept, escaped) = if keep {
+                (Some(c), None)
+            } else {
+                (None, Some(c.escape_default()))
+            };
+            kept.into_iter().chain(escaped.into_iter().flatten())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -189,6 +205,15 @@ mod tests {
                 "nekomata: /config/felis/config.toml: warning: font.size_px: 5 is outside nekomata's 6..=72 band; using 6"
             ]
         );
+    }
+
+    #[test]
+    fn diagnostics_escape_control_characters_from_the_file() {
+        let loaded = resolve("[theme]\n\"\\u001b]0;x\\u0007\" = 1\n");
+        assert_eq!(loaded.diagnostics.len(), 1, "{:?}", loaded.diagnostics);
+        let line = &loaded.diagnostics[0];
+        assert!(!line.chars().any(|c| c.is_control()), "{line:?}");
+        assert!(line.contains(r"\u{1b}]0;x\u{7}"), "{line}");
     }
 
     #[test]
