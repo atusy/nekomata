@@ -56,7 +56,7 @@ pub struct Renderer {
     layout: felis_client_core::ImageLayout,
     rendered: bool,
     presentation: crate::presentation::Presentation,
-    selection: Option<(usize, usize)>,
+    selection: Option<felis_client_core::Selection>,
 }
 
 impl Renderer {
@@ -131,7 +131,7 @@ impl Renderer {
         state: &mut State,
         rect: Rect,
         focused: bool,
-        selection: Option<(usize, usize)>,
+        selection: Option<felis_client_core::Selection>,
     ) -> Result<()> {
         if state.render_ready() {
             let size = [
@@ -203,13 +203,12 @@ impl Renderer {
             self.gpu
                 .set_cursor_blink_visible(self.presentation.cursor_visible());
             self.gpu.set_preedit(self.presentation.preedit.clone());
-            let cols = usize::from(state.screen.screen().cols()).max(1);
-            self.gpu.set_selection(selection.map(|(a, b)| {
-                let (a, b) = (a.min(b), a.max(b));
+            self.gpu.set_selection(selection.map(|selection| {
+                let (start, end) = selection.range();
                 SelectionRange {
-                    start: ((a / cols) as u16, (a % cols) as u16),
-                    end: ((b / cols) as u16, (b % cols) as u16),
-                    rectangle: false,
+                    start,
+                    end,
+                    rectangle: selection.mode() == felis_client_core::SelectionMode::Rectangle,
                 }
             }));
             let metrics = self.gpu.cell_metrics();

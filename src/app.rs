@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+use felis_client_core::{GridPos, Selection};
 #[cfg(test)]
 use felis_grid::Grapheme;
 use felis_protocol::messages::{InputMsg, RequestedDims};
@@ -20,7 +21,7 @@ use crate::{
 struct Pane {
     session: Arc<Session>,
     dims: (u16, u16),
-    selection: Option<(usize, usize)>,
+    selection: Option<Selection>,
     reported_focus: Option<bool>,
     scroll_remainder: f32,
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
@@ -779,6 +780,13 @@ impl App {
             Action::FontScale(scale) => self.font_size = (self.font_size * scale).clamp(6.0, 72.0),
             Action::FontReset => self.font_size = 15.0,
             Action::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+            Action::Copy => {
+                let pane = &self.panes[&self.tabs[self.active].focused];
+                if let Some(selection) = pane.selection {
+                    let state = pane.session.state.lock().unwrap();
+                    ctx.copy_text(selection.extract_text(state.screen.screen()));
+                }
+            }
             Action::Focus(direction) => {
                 let tab = &mut self.tabs[self.active];
                 if let Some(id) = tab.layout.neighbor(tab.focused, direction) {
@@ -1464,25 +1472,34 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     if let Some(pos) = response.interact_pointer_pos()
         && (!mouse_mode || ui.input(|i| i.modifiers.shift))
     {
-        let col = ((pos.x - text_rect.left()) / cw)
-            .floor()
-            .clamp(0.0, f32::from(screen.cols() - 1)) as usize;
-        let row = ((pos.y - text_rect.top()) / ch)
-            .floor()
-            .clamp(0.0, f32::from(screen.rows() - 1)) as usize;
-        let index = row * usize::from(screen.cols()) + col;
+        let cell_at = |pos: Pos2| GridPos {
+            col: ((pos.x - text_rect.left()) / cw)
+                .floor()
+                .clamp(0.0, f32::from(screen.cols().saturating_sub(1))) as u16,
+            row: ((pos.y - text_rect.top()) / ch)
+                .floor()
+                .clamp(0.0, f32::from(screen.rows().saturating_sub(1))) as u16,
+        };
         if response.drag_started() {
-            pane.selection = Some((index, index));
+            let origin = ui
+                .input(|input| input.pointer.press_origin())
+                .unwrap_or(pos);
+            pane.selection = Some(Selection::new(cell_at(origin)));
         }
         if response.dragged()
-            && let Some((_, end)) = &mut pane.selection
+            && let Some(selection) = &mut pane.selection
         {
-            *end = index;
+            selection.extend(cell_at(pos));
         }
-        if response.clicked() {
+        if response.triple_clicked() {
+            pane.selection = Selection::line_at(screen, cell_at(pos).row);
+        } else if response.double_clicked() {
+            pane.selection = Selection::word_at(screen, cell_at(pos));
+        } else if response.clicked() {
             pane.selection = None;
         }
     }
+
     let report_mouse = mouse_mode && !ui.input(|i| i.modifiers.shift);
     if report_mouse && (response.hovered() || response.dragged() || pane.mouse_capture.is_some()) {
         use felis_protocol::messages::{MouseAction, MouseButton};
@@ -1614,7 +1631,7 @@ fn mouse_input(
     })
 }
 
-fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, session: &Session) {
+fn terminal_input(ctx: &egui::Context, selection: &mut Option<Selection>, session: &Session) {
     use felis_protocol::messages::{Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods};
     let events = ctx.input(|i| i.events.clone());
     let has_text = events
@@ -1647,9 +1664,9 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
                 continue;
             }
             egui::Event::Copy => {
-                if let Some((a, b)) = *selection {
+                if let Some(selection) = *selection {
                     let state = session.state.lock().unwrap();
-                    ctx.copy_text(selected_text(&state.screen, (a, b)));
+                    ctx.copy_text(selection.extract_text(state.screen.screen()));
                 }
                 continue;
             }
@@ -1678,18 +1695,6 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
             }));
         }
     }
-}
-
-fn selected_text(shadow: &felis_client_core::ShadowScreen, (a, b): (usize, usize)) -> String {
-    use felis_client_core::{GridPos, Selection};
-    let cols = usize::from(shadow.screen().cols()).max(1);
-    let position = |index: usize| GridPos {
-        row: (index / cols) as u16,
-        col: (index % cols) as u16,
-    };
-    let mut selection = Selection::new(position(a));
-    selection.extend(position(b));
-    selection.extract_text(shadow.screen())
 }
 
 fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) -> Option<InputMsg> {
@@ -1783,7 +1788,9 @@ mod tests {
                 })
                 .unwrap();
         }
-        assert_eq!(selected_text(&shadow, (0, 7)), "abcdEFGH");
+        let mut selection = Selection::new(GridPos { row: 0, col: 0 });
+        selection.extend(GridPos { row: 1, col: 3 });
+        assert_eq!(selection.extract_text(shadow.screen()), "abcdEFGH");
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub enum Action {
     FontReset,
     Palette,
     Paste,
+    Copy,
 }
 
 #[derive(Default)]
@@ -81,8 +82,12 @@ impl Shortcuts {
                     Key::Minus => Some(Action::FontScale(1.0 / 1.1)),
                     _ => None,
                 }
-            } else if mods.ctrl && mods.shift && !mods.alt && !mods.mac_cmd && *key == Key::V {
-                Some(Action::Paste)
+            } else if mods.ctrl && mods.shift && !mods.alt && !mods.mac_cmd {
+                match key {
+                    Key::V => Some(Action::Paste),
+                    Key::C => Some(Action::Copy),
+                    _ => None,
+                }
             } else {
                 None
             };
@@ -163,6 +168,15 @@ mod tests {
             press(Key::Equals, Modifiers::MAC_CMD),
             press(Key::Minus, Modifiers::MAC_CMD),
             press(
+                Key::C,
+                Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    command: true,
+                    ..Default::default()
+                },
+            ),
+            press(
                 Key::V,
                 Modifiers {
                     ctrl: true,
@@ -189,6 +203,7 @@ mod tests {
                             Action::FontReset,
                             Action::FontScale(1.1),
                             Action::FontScale(1.0 / 1.1),
+                            Action::Copy,
                             Action::Paste
                         ]
                     );
