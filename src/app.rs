@@ -284,7 +284,14 @@ impl eframe::App for App {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let menu = ui.menu_button("≡", |ui| {
+                    ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
+                    ui.spacing_mut().interact_size.y = 30.0;
+                    let (_, menu) = egui::containers::menu::MenuButton::from_button(
+                        egui::Button::new(egui::RichText::new("≡").color(TAB_INACTIVE_FG))
+                            .frame(false)
+                            .min_size(Vec2::splat(30.0)),
+                    )
+                    .ui(ui, |ui| {
                         for (label, command) in [
                             ("+ Tab", Action::NewTab),
                             ("Split ↔", Action::Split(Axis::Horizontal)),
@@ -330,8 +337,7 @@ impl eframe::App for App {
                             ui.close();
                         }
                     });
-                    menu_open = menu.inner.is_some();
-                    ui.separator();
+                    menu_open = menu.is_some();
                     egui::ScrollArea::horizontal()
                         .id_salt("tab-scroll")
                         .show(ui, |ui| {
