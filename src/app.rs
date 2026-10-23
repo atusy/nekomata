@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+#[cfg(test)]
 use felis_grid::Grapheme;
 use felis_protocol::messages::{InputMsg, RequestedDims};
 
@@ -1654,24 +1655,15 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<(usize, usize)>, s
 }
 
 fn selected_text(shadow: &felis_client_core::ShadowScreen, (a, b): (usize, usize)) -> String {
-    let screen = shadow.screen();
-    let cols = usize::from(screen.cols());
-    let mut text = String::new();
-    for index in a.min(b)..=a.max(b) {
-        if index != a.min(b) && index % cols == 0 {
-            text.push('\n');
-        }
-        if let Some(cell) = screen.cell((index / cols) as u16, (index % cols) as u16) {
-            match cell.grapheme {
-                Grapheme::Ascii(c) => text.push(char::from(c)),
-                Grapheme::Char(c) => text.push(c),
-                Grapheme::Cluster(id) => text.push_str(shadow.cluster_str(id).unwrap_or("")),
-                Grapheme::Empty => text.push(' '),
-                _ => {}
-            }
-        }
-    }
-    text
+    use felis_client_core::{GridPos, Selection};
+    let cols = usize::from(shadow.screen().cols()).max(1);
+    let position = |index: usize| GridPos {
+        row: (index / cols) as u16,
+        col: (index % cols) as u16,
+    };
+    let mut selection = Selection::new(position(a));
+    selection.extend(position(b));
+    selection.extract_text(shadow.screen())
 }
 
 fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) -> Option<InputMsg> {
@@ -1732,6 +1724,41 @@ fn key_character(key: egui::Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copying_soft_wrapped_text_keeps_one_logical_line() {
+        use felis_grid::{
+            Cell, StyleTable,
+            wire::{RowEncode, encode_row},
+        };
+        use felis_protocol::{RowPayload, messages::GridMsg};
+        let mut shadow = felis_client_core::ShadowScreen::new(2, 4);
+        for (row, text) in [(0, "abcd"), (1, "EFGH")] {
+            let cells: Vec<Cell> = text
+                .bytes()
+                .map(|b| Cell {
+                    grapheme: Grapheme::Ascii(b),
+                    ..Cell::default()
+                })
+                .collect();
+            let bytes = encode_row(
+                RowEncode {
+                    cells: &cells,
+                    pad_to: 4,
+                    sized_cells: &[],
+                    soft_wrap_continued: row == 1,
+                },
+                &StyleTable::new(),
+            )
+            .unwrap();
+            shadow
+                .apply(&GridMsg::RowDelta {
+                    rows: vec![(row, RowPayload(bytes))],
+                })
+                .unwrap();
+        }
+        assert_eq!(selected_text(&shadow, (0, 7)), "abcdEFGH");
+    }
 
     #[test]
     #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
