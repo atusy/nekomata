@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod control;
 mod layout;
 mod picker;
 mod session;
@@ -14,6 +15,16 @@ fn main() -> eframe::Result {
     });
     match command {
         cli::Command::Gui => {}
+        cli::Command::Pane { window, action } => {
+            match control::run(window, action) {
+                Ok(output) => println!("{output}"),
+                Err(err) => {
+                    eprintln!("{err:#}");
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
         cli::Command::Help => {
             println!("{}", cli::HELP);
             return Ok(());
@@ -32,7 +43,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "nekomata",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
     )
 }
 

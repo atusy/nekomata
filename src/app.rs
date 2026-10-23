@@ -5,9 +5,10 @@ use felis_grid::{AttrFlags, Color, CursorStyle, Grapheme};
 use felis_protocol::messages::{InputMsg, RequestedDims};
 
 use crate::{
+    control::{self, Reply, Request},
     layout::{Axis, Layout},
     picker::SessionPicker,
-    session::Session,
+    session::{Session, Target},
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_ACTIVE_BG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
 };
@@ -54,8 +55,15 @@ impl Tab {
     }
 }
 
+struct PendingAttach {
+    session: Session,
+    reply: tokio::sync::oneshot::Sender<Reply>,
+}
+
 pub struct App {
     runtime: tokio::runtime::Runtime,
+    control: control::Server,
+    pending_attach: BTreeMap<u64, PendingAttach>,
     panes: BTreeMap<u64, Pane>,
     tabs: Vec<Tab>,
     active: usize,
@@ -69,7 +77,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style()).clone();
@@ -101,8 +109,12 @@ impl App {
             }
         }
         cc.egui_ctx.set_fonts(fonts);
+        let runtime = tokio::runtime::Runtime::new()?;
+        let control = control::Server::bind(&runtime, cc.egui_ctx.clone())?;
         let mut app = Self {
-            runtime: tokio::runtime::Runtime::new().expect("create IPC runtime"),
+            runtime,
+            control,
+            pending_attach: BTreeMap::new(),
             panes: BTreeMap::new(),
             tabs: vec![],
             active: 0,
@@ -115,7 +127,7 @@ impl App {
             palette_query: String::new(),
         };
         app.add_tab(&cc.egui_ctx, None);
-        app
+        Ok(app)
     }
 
     fn add_pane(
@@ -123,13 +135,24 @@ impl App {
         ctx: &egui::Context,
         attach: Option<String>,
         cwd: Option<String>,
+        target: Target,
     ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.panes.insert(
             id,
             Pane {
-                session: Session::new(&self.runtime, ctx.clone(), attach, cwd),
+                session: Session::start(
+                    &self.runtime,
+                    ctx.clone(),
+                    target,
+                    attach,
+                    cwd,
+                    vec![
+                        ("NEKOMATA_WINDOW_ID".into(), self.control.window.to_string()),
+                        ("NEKOMATA_PANE_ID".into(), id.to_string()),
+                    ],
+                ),
                 dims: (0, 0),
                 selection: None,
                 reported_focus: None,
@@ -141,7 +164,12 @@ impl App {
     }
 
     fn add_tab(&mut self, ctx: &egui::Context, attach: Option<String>) {
-        let id = self.add_pane(ctx, attach, None);
+        let id = self.add_pane(
+            ctx,
+            attach,
+            None,
+            Target::default_local().expect("resolve local daemon socket"),
+        );
         self.tabs.push(Tab {
             name: format!("Terminal {id}"),
             layout: Layout::Pane(id),
@@ -172,6 +200,125 @@ impl App {
         }
     }
 
+    fn control_requests(&mut self, ctx: &egui::Context) {
+        while let Ok(message) = self.control.requests.try_recv() {
+            match message.request {
+                Request::List => {
+                    let active = self.tabs.get(self.active).map(|tab| tab.focused);
+                    let mut output = format!(
+                        "WINDOW {}\nPANE\tACTIVE\tDAEMON\tSESSION\n",
+                        self.control.window
+                    );
+                    for (id, pane) in &self.panes {
+                        let state = pane.session.state.lock().unwrap();
+                        let session = state
+                            .session_id
+                            .map(|id| format!("{id:032x}"))
+                            .unwrap_or_else(|| "connecting".into());
+                        output.push_str(&format!(
+                            "{id}\t{}\t{}\t{session}\n",
+                            if Some(*id) == active { "*" } else { "" },
+                            pane.session.target.label()
+                        ));
+                    }
+                    let _ = message.reply.send(Ok(output.trim_end().into()));
+                }
+                Request::Attach {
+                    pane,
+                    daemon,
+                    ssh,
+                    session,
+                } => {
+                    let id = pane.or_else(|| self.tabs.get(self.active).map(|tab| tab.focused));
+                    let Some((id, pane)) =
+                        id.and_then(|id| self.panes.get(&id).map(|pane| (id, pane)))
+                    else {
+                        let _ = message.reply.send(Err("pane not found".into()));
+                        continue;
+                    };
+                    if self.pending_attach.contains_key(&id) {
+                        let _ = message
+                            .reply
+                            .send(Err("pane already has an attach in progress".into()));
+                        continue;
+                    }
+                    if session.is_empty()
+                        || (daemon.is_some() && ssh.is_some())
+                        || ssh
+                            .as_ref()
+                            .is_some_and(|s| s.is_empty() || s.starts_with('-'))
+                    {
+                        let _ = message.reply.send(Err("invalid attach target".into()));
+                        continue;
+                    }
+                    let target = match (daemon, ssh) {
+                        (Some(path), None) => Target::Local(path.into()),
+                        (None, Some(host)) => Target::Ssh(host),
+                        (None, None) => pane.session.target.clone(),
+                        _ => unreachable!(),
+                    };
+                    let session = Session::start(
+                        &self.runtime,
+                        ctx.clone(),
+                        target,
+                        Some(session),
+                        None,
+                        vec![],
+                    );
+                    self.pending_attach.insert(
+                        id,
+                        PendingAttach {
+                            session,
+                            reply: message.reply,
+                        },
+                    );
+                }
+            }
+        }
+        let ready: Vec<_> = self
+            .pending_attach
+            .iter()
+            .filter_map(|(&id, pending)| {
+                let state = pending.session.state.lock().unwrap();
+                (state.connected
+                    || state.error.is_some()
+                    || state.exited
+                    || state.detached
+                    || !self.panes.contains_key(&id)
+                    || pending.reply.is_closed())
+                .then_some(id)
+            })
+            .collect();
+        for id in ready {
+            let pending = self.pending_attach.remove(&id).unwrap();
+            let result = {
+                let state = pending.session.state.lock().unwrap();
+                if pending.reply.is_closed() {
+                    Err("request cancelled".into())
+                } else if !self.panes.contains_key(&id) {
+                    Err("pane closed during attach".into())
+                } else if state.connected {
+                    Ok(format!("Attached pane {id}"))
+                } else {
+                    Err(state
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "session ended during attach".into()))
+                }
+            };
+            if result.is_ok() {
+                let pane = self.panes.get_mut(&id).unwrap();
+                pane.session = pending.session;
+                pane.dims = (0, 0);
+                pane.selection = None;
+                pane.reported_focus = None;
+                pane.scroll_remainder = 0.0;
+                pane.mouse_capture = None;
+            }
+            let _ = pending.reply.send(result);
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::Palette => {
@@ -199,7 +346,8 @@ impl App {
                     .cwd()
                     .map(felis_client_core::pipe::local_cwd_from_osc7)
                     .filter(|path| !path.is_empty());
-                let id = self.add_pane(ctx, None, cwd);
+                let target = self.panes[&source].session.target.clone();
+                let id = self.add_pane(ctx, None, cwd, target);
                 let tab = &mut self.tabs[self.active];
                 tab.layout.split(tab.focused, id, axis);
                 tab.focus(id);
@@ -232,6 +380,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.control_requests(ctx);
         for pane in self.panes.values() {
             if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
                 ctx.copy_text(text);
@@ -1100,6 +1249,194 @@ fn key_character(key: egui::Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_pane_attach_routes_cli_and_preserves_sessions_on_failure() {
+        use felis_client_core::Offer;
+        use felis_protocol::messages::SpawnArgs;
+        use std::{sync::mpsc, time::Instant};
+
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let other_socket = std::path::Path::new(&socket).with_file_name("other.sock");
+        struct StopDaemon(std::path::PathBuf);
+        impl Drop for StopDaemon {
+            fn drop(&mut self) {
+                let _ = std::process::Command::new("felis")
+                    .args([
+                        "--socket",
+                        self.0.to_str().unwrap(),
+                        "daemon",
+                        "stop",
+                        "--force",
+                    ])
+                    .output();
+            }
+        }
+        let _cleanup = StopDaemon(other_socket.clone());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let control = control::Server::bind(&runtime, ctx.clone()).unwrap();
+        let window = control.window;
+        let mut app = App {
+            runtime,
+            control,
+            pending_attach: BTreeMap::new(),
+            panes: BTreeMap::new(),
+            tabs: vec![],
+            active: 0,
+            next_id: 1,
+            font_size: 15.0,
+            picker: SessionPicker::default(),
+            help: false,
+            shortcuts: Shortcuts::default(),
+            palette: false,
+            palette_query: String::new(),
+        };
+        app.add_tab(&ctx, None);
+        let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(25);
+            loop {
+                let _ = ctx.run(egui::RawInput::default(), |_| {});
+                app.control_requests(&ctx);
+                if done(app) {
+                    break;
+                }
+                repaints
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("control test timed out");
+            }
+        };
+        pump(&mut app, &|app| {
+            app.panes[&1].session.state.lock().unwrap().connected
+        });
+        let original = app.panes[&1]
+            .session
+            .state
+            .lock()
+            .unwrap()
+            .session_id
+            .unwrap();
+        let remote = app.runtime.block_on(async {
+            let mut conn =
+                felis_client_core::connect_or_spawn_daemon(&other_socket, Offer::window(false))
+                    .await
+                    .unwrap();
+            conn.create_with(SpawnArgs::default()).await.unwrap().id
+        });
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        let command = |app: &mut App, args: Vec<String>| {
+            let executable = executable.clone();
+            let context = ctx.clone();
+            let task = app.runtime.spawn(async move {
+                let output = tokio::process::Command::new(executable)
+                    .args(args)
+                    .args(["--window", &window.to_string()])
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                    .unwrap();
+                context.request_repaint();
+                output
+            });
+            pump(app, &|_| task.is_finished());
+            app.runtime.block_on(task).unwrap()
+        };
+        let output = command(&mut app, vec!["pane".into(), "list".into()]);
+        assert!(output.status.success(), "{:?}", output);
+        assert!(String::from_utf8_lossy(&output.stdout).contains(&format!("{original:032x}")));
+        let attach = |daemon: Option<&str>, session: String, pane: Option<&str>| {
+            let mut args = vec!["pane".into(), "attach".into(), "--session".into(), session];
+            if let Some(id) = pane {
+                args.push(id.into());
+            }
+            if let Some(socket) = daemon {
+                args.extend(["--daemon".into(), socket.into()]);
+            }
+            args
+        };
+        let missing = other_socket.with_file_name("missing.sock");
+        let output = command(
+            &mut app,
+            attach(
+                Some(missing.to_str().unwrap()),
+                format!("{remote:032x}"),
+                None,
+            ),
+        );
+        assert!(!output.status.success());
+        assert_eq!(
+            app.panes[&1].session.state.lock().unwrap().session_id,
+            Some(original)
+        );
+        let output = command(
+            &mut app,
+            attach(
+                Some(other_socket.to_str().unwrap()),
+                format!("{remote:032x}"),
+                Some("999"),
+            ),
+        );
+        assert!(!output.status.success());
+        let output = command(
+            &mut app,
+            attach(
+                Some(other_socket.to_str().unwrap()),
+                format!("{remote:032x}"),
+                None,
+            ),
+        );
+        assert!(output.status.success(), "{:?}", output);
+        assert_eq!(
+            app.panes[&1].session.state.lock().unwrap().session_id,
+            Some(remote)
+        );
+        assert_eq!(
+            app.panes[&1].session.target,
+            Target::Local(other_socket.clone())
+        );
+        // Omitted daemon follows the target pane, even after changing daemons.
+        let output = command(&mut app, attach(None, format!("{remote:032x}"), Some("1")));
+        assert!(output.status.success(), "{:?}", output);
+        let output = command(&mut app, attach(None, "not-a-session".into(), None));
+        assert!(!output.status.success());
+        assert_eq!(
+            app.panes[&1].session.state.lock().unwrap().session_id,
+            Some(remote)
+        );
+        app.action(&ctx, Action::Split(Axis::Horizontal));
+        assert_eq!(
+            app.panes[&2].session.target,
+            Target::Local(other_socket.clone())
+        );
+        app.runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            assert!(
+                ops.list_sessions()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|session| session.id == original),
+                "switching panes killed the old shell"
+            );
+            ops.destroy_session(format!("{original:032x}"))
+                .await
+                .unwrap();
+        });
+    }
 
     #[test]
     fn terminal_space_does_not_activate_a_previously_focused_menu() {

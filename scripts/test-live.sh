@@ -13,4 +13,21 @@ cleanup() {
 trap cleanup EXIT
 bash scripts/test-fish-integration.sh
 cargo build --locked --bin nekomata
-cargo test --locked live_ -- --ignored --nocapture
+cargo test --locked live_ -- --ignored --nocapture --skip live_ssh_carrier
+# Exercise the SSH stdio carrier against a private local relay without contacting
+# an external host or relying on the user's SSH credentials/configuration.
+mkdir "$test_directory/bin"
+cat > "$test_directory/bin/ssh" <<'SSH'
+#!/bin/sh
+set -eu
+[ "$#" = 5 ]
+[ "$1" = '-oBatchMode=yes' ]
+[ "$2" = 'nekomata-test-host' ]
+[ "$3" = 'felis-daemon' ]
+[ "$4" = 'relay' ]
+[ "$5" = '--no-spawn' ]
+exec felis-daemon relay --socket "$NEKOMATA_TEST_SOCKET" --no-spawn
+SSH
+chmod +x "$test_directory/bin/ssh"
+PATH="$test_directory/bin:$PATH" NEKOMATA_TEST_SSH=1 \
+  cargo test --locked live_ssh_carrier -- --ignored --nocapture

@@ -6,13 +6,48 @@ use std::sync::{
 
 use anyhow::{Context, Result, bail};
 use eframe::egui;
-use felis_client_core::{Offer, ShadowScreen, connect_or_spawn_daemon};
+use felis_client_core::{
+    Carrier, CarrierConnection, Offer, RemoteSpawn, ShadowScreen, connect_carrier,
+    connect_or_spawn_daemon,
+};
 use felis_protocol::{
     MessageKind,
-    messages::{GridMsg, InputMsg, SpawnArgs},
+    messages::{GridMsg, InputMsg},
 };
 use felis_transport::{Delivery, Incoming};
+use std::{path::PathBuf, time::Duration};
 use tokio::sync::mpsc;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    Local(PathBuf),
+    Ssh(String),
+}
+
+impl Target {
+    pub fn default_local() -> Result<Self> {
+        Ok(Self::Local(
+            felis_client_core::local_socket::resolve_local_socket(None)?,
+        ))
+    }
+
+    fn carrier(&self) -> Carrier {
+        match self {
+            Self::Local(path) => Carrier::Local(path.clone().into()),
+            Self::Ssh(host) => Carrier::Ssh {
+                destination: host.clone(),
+                ssh_args: vec!["-oBatchMode=yes".into()],
+            },
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Local(path) => path.display().to_string(),
+            Self::Ssh(host) => format!("ssh:{host}"),
+        }
+    }
+}
 
 pub struct State {
     pub screen: ShadowScreen,
@@ -27,16 +62,36 @@ pub struct State {
 pub struct Session {
     pub state: Arc<Mutex<State>>,
     pub input_failed: AtomicBool,
+    pub target: Target,
     tx: mpsc::Sender<InputMsg>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl Session {
+    #[cfg(test)]
     pub fn new(
         runtime: &tokio::runtime::Runtime,
         ctx: egui::Context,
         attach: Option<String>,
         cwd: Option<String>,
+    ) -> Self {
+        Self::start(
+            runtime,
+            ctx,
+            Target::default_local().expect("resolve local daemon socket"),
+            attach,
+            cwd,
+            vec![],
+        )
+    }
+
+    pub fn start(
+        runtime: &tokio::runtime::Runtime,
+        ctx: egui::Context,
+        target: Target,
+        attach: Option<String>,
+        cwd: Option<String>,
+        env: Vec<(String, String)>,
     ) -> Self {
         let state = Arc::new(Mutex::new(State {
             screen: ShadowScreen::new(24, 80),
@@ -49,8 +104,18 @@ impl Session {
         }));
         let (tx, rx) = mpsc::channel(256);
         let shared = state.clone();
+        let destination = target.clone();
         let task = runtime.spawn(async move {
-            let result = run(shared.clone(), ctx.clone(), rx, attach, cwd).await;
+            let result = run(
+                shared.clone(),
+                ctx.clone(),
+                rx,
+                destination,
+                attach,
+                cwd,
+                env,
+            )
+            .await;
             let mut state = shared.lock().unwrap();
             state.connected = false;
             state.error = if state.detached || state.exited {
@@ -70,6 +135,7 @@ impl Session {
             tx,
             task,
             input_failed: AtomicBool::new(false),
+            target,
         }
     }
 
@@ -91,45 +157,58 @@ async fn run(
     shared: Arc<Mutex<State>>,
     ctx: egui::Context,
     mut rx: mpsc::Receiver<InputMsg>,
+    target: Target,
     attach: Option<String>,
     cwd: Option<String>,
+    env: Vec<(String, String)>,
 ) -> Result<()> {
-    let socket = felis_client_core::local_socket::resolve_local_socket(None)?;
-    let mut conn = connect_or_spawn_daemon(&socket, Offer::window(false)).await?;
-    let info = if let Some(id) = attach {
-        conn.attach_by_prefix(id, felis_client_core::AttachIntent::Deliberate)
-            .await?
-    } else {
-        conn.create_with(SpawnArgs {
-            command: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
-            args: if cfg!(target_os = "macos") {
-                vec!["-l".into()]
-            } else {
-                vec![]
-            },
-            cwd: match cwd {
-                Some(cwd) => cwd,
-                None => std::env::current_dir()?.to_string_lossy().into_owned(),
-            },
-            env: vec![("NEKOMATA_SHELL_INTEGRATION".into(), "1".into())],
-            dims: None,
-            env_base: felis_client_core::env_base::capture(),
-            tags: vec!["nekomata".into()],
-        })
-        .await
-        .context("create felis session")?
-    };
+    let (mut conn, info) = tokio::time::timeout(Duration::from_secs(20), async {
+        let carrier = target.carrier();
+        if attach.is_none()
+            && let Target::Local(socket) = &target
+        {
+            // Preserve local daemon auto-start for new shells only.
+            drop(connect_or_spawn_daemon(socket, Offer::window(false)).await?);
+        }
+        let mut conn: CarrierConnection =
+            connect_carrier(carrier.clone(), Offer::window(false), RemoteSpawn::Refuse).await?;
+        let info = if let Some(id) = attach {
+            conn.attach_by_prefix(id, felis_client_core::AttachIntent::Deliberate)
+                .await?
+        } else {
+            let mut args = felis_client_core::launch_args(vec![], &carrier)?;
+            if matches!(target, Target::Local(_)) {
+                args.command = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                if cfg!(target_os = "macos") {
+                    args.args = vec!["-l".into()];
+                }
+                if let Some(cwd) = cwd {
+                    args.cwd = cwd;
+                }
+                args.env = env;
+                args.env
+                    .push(("NEKOMATA_SHELL_INTEGRATION".into(), "1".into()));
+            }
+            args.tags = vec!["nekomata".into()];
+            conn.create_with(args)
+                .await
+                .context("create felis session")?
+        };
+        conn.writer.send(&crate::theme::configure()).await?;
+        conn.writer
+            .send(&InputMsg::ColorScheme { dark: true })
+            .await?;
+        Ok::<_, anyhow::Error>((conn, info))
+    })
+    .await
+    .context("daemon attach timed out")??;
     {
         let mut state = shared.lock().unwrap();
         state.screen = ShadowScreen::new(info.dims.rows, info.dims.cols);
         state.session_id = Some(info.id);
         state.connected = true;
     }
-    conn.writer.send(&crate::theme::configure()).await?;
     ctx.request_repaint();
-    conn.writer
-        .send(&InputMsg::ColorScheme { dark: true })
-        .await?;
     loop {
         tokio::select! {
             command = rx.recv() => {
@@ -188,7 +267,7 @@ async fn run(
 mod tests {
     use super::*;
     use felis_grid::{Color, Grapheme};
-    use felis_protocol::messages::RequestedDims;
+    use felis_protocol::messages::{RequestedDims, SpawnArgs};
     use std::{
         sync::mpsc as sync_mpsc,
         time::{Duration, Instant},
@@ -350,6 +429,75 @@ mod tests {
             ops.destroy_session(format!("{id:032x}")).await.unwrap();
         });
     }
+    #[test]
+    #[ignore = "requires the isolated SSH relay fixture; run scripts/test-live.sh via nix develop"]
+    fn live_ssh_carrier_attaches_and_keeps_remote_spawn_environment_remote() {
+        assert_eq!(std::env::var("NEKOMATA_TEST_SSH").as_deref(), Ok("1"));
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").unwrap();
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let original = Session::new(&runtime, ctx.clone(), None, None);
+        wait_for(&original, &ctx, &repaints, |state| state.connected);
+        let id = original.state.lock().unwrap().session_id.unwrap();
+        drop(original);
+        let remote = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Ssh("nekomata-test-host".into()),
+            Some(format!("{id:032x}")),
+            None,
+            vec![],
+        );
+        wait_for(&remote, &ctx, &repaints, |state| state.connected);
+        assert_eq!(remote.state.lock().unwrap().session_id, Some(id));
+        remote.send(InputMsg::KeyBytes(
+            b"printf 'SSH_%s_OK\\n' CARRIER\r".to_vec(),
+        ));
+        wait_for(&remote, &ctx, &repaints, |state| {
+            contains_text(state, "SSH_CARRIER_OK")
+        });
+        drop(remote);
+        let spawned = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Ssh("nekomata-test-host".into()),
+            None,
+            Some("/nekomata-local-path-must-not-be-forwarded".into()),
+            vec![("NEKOMATA_TEST_LOCAL_ENV".into(), "leaked".into())],
+        );
+        wait_for(&spawned, &ctx, &repaints, |state| state.connected);
+        let spawned_id = spawned.state.lock().unwrap().session_id.unwrap();
+        spawned.send(InputMsg::KeyBytes(
+            b"/bin/sh -c 'printf \"REMOTE_ENV_%s_DONE\\n\" \"${NEKOMATA_TEST_LOCAL_ENV-unset}\"'\r"
+                .to_vec(),
+        ));
+        wait_for(&spawned, &ctx, &repaints, |state| {
+            contains_text(state, "REMOTE_ENV_unset_DONE")
+        });
+        drop(spawned);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            assert!(
+                ops.list_sessions()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|session| session.id == id)
+            );
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+            ops.destroy_session(format!("{spawned_id:032x}"))
+                .await
+                .unwrap();
+        });
+    }
+
     fn contains_text(state: &State, needle: &str) -> bool {
         let screen = state.screen.screen();
         (0..screen.rows()).any(|row| {
