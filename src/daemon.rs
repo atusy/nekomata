@@ -425,4 +425,190 @@ mod tests {
         assert_eq!(registry.claim(3, 103, Selection::Latest).unwrap(), newer);
         assert_eq!(registry.claim(4, 104, Selection::Latest).unwrap(), older);
     }
+    fn connection(
+        registry: &Arc<Mutex<Registry>>,
+        owner: u64,
+    ) -> (UnixStream, tokio::task::JoinHandle<Result<()>>) {
+        let (client, server) = UnixStream::pair().unwrap();
+        let registry = registry.clone();
+        let task = tokio::spawn(serve_connection(
+            server,
+            registry,
+            Arc::new(Notify::new()),
+            owner,
+        ));
+        (client, task)
+    }
+
+    fn session(payload: Payload) -> (u64, Snapshot) {
+        let Payload::Session { id, snapshot } = payload else {
+            panic!("expected session")
+        };
+        (id, snapshot)
+    }
+
+    #[tokio::test]
+    async fn disconnected_window_restores_its_saved_layout_and_releases_reservations() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut first, task) = connection(&registry, 1);
+        let (id, mut snapshot) = session(
+            exchange(&mut first, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        snapshot.font_size = 21.0;
+        exchange(&mut first, Request::Save(snapshot.clone()))
+            .await
+            .unwrap();
+        let (reserved, _) = session(
+            exchange(&mut first, Request::Prepare(Selection::New))
+                .await
+                .unwrap(),
+        );
+        drop(first);
+        assert!(task.await.unwrap().is_err());
+        assert!(registry.lock().unwrap().sessions[&reserved].owner.is_none());
+        let (mut replacement, task) = connection(&registry, 2);
+        let restored = session(
+            exchange(&mut replacement, Request::Open { window: 22 })
+                .await
+                .unwrap(),
+        );
+        assert_eq!(restored, (id, snapshot));
+        drop(replacement);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn reserved_switch_preserves_source_until_commit_and_cancel_keeps_it_attached() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let (source, _) = session(
+            exchange(&mut client, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        let (target, _) = session(
+            exchange(&mut client, Request::Prepare(Selection::New))
+                .await
+                .unwrap(),
+        );
+        assert!(registry.lock().unwrap().sessions[&source].owner.is_some());
+        exchange(&mut client, Request::Finish { snapshot: None })
+            .await
+            .unwrap();
+        assert!(registry.lock().unwrap().sessions[&source].owner.is_some());
+        assert!(registry.lock().unwrap().sessions[&target].owner.is_none());
+        exchange(&mut client, Request::Prepare(Selection::Id(target)))
+            .await
+            .unwrap();
+        let snapshot = Snapshot {
+            font_size: 19.0,
+            ..Default::default()
+        };
+        exchange(
+            &mut client,
+            Request::Finish {
+                snapshot: Some(snapshot.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(registry.lock().unwrap().sessions[&source].owner.is_none());
+        assert_eq!(
+            registry.lock().unwrap().sessions[&target].snapshot,
+            snapshot
+        );
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn occupied_sessions_cannot_be_claimed_or_stopped_by_another_client() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut first, first_task) = connection(&registry, 1);
+        let (id, _) = session(
+            exchange(&mut first, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        let (mut second, second_task) = connection(&registry, 2);
+        let (other, _) = session(
+            exchange(&mut second, Request::Open { window: 22 })
+                .await
+                .unwrap(),
+        );
+        assert_ne!(id, other);
+        assert!(
+            exchange(&mut second, Request::Prepare(Selection::Id(id)))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("already attached")
+        );
+        assert!(exchange(&mut second, Request::Stop).await.is_err());
+        drop(first);
+        drop(second);
+        let _ = first_task.await;
+        let _ = second_task.await;
+    }
+
+    #[tokio::test]
+    async fn incompatible_clients_do_not_claim_a_session() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        write_json(
+            &mut client,
+            &Envelope {
+                version: VERSION + 1,
+                request: Request::Open { window: 11 },
+            },
+        )
+        .await
+        .unwrap();
+        let response: Response = read_json(&mut client).await.unwrap();
+        assert!(
+            response
+                .unwrap_err()
+                .contains("incompatible nekomata protocol")
+        );
+        assert!(registry.lock().unwrap().sessions.is_empty());
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn malformed_snapshots_preserve_the_last_saved_layout() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let (id, _) = session(
+            exchange(&mut client, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        let invalid = Snapshot {
+            active: 9,
+            ..Default::default()
+        };
+        assert!(exchange(&mut client, Request::Save(invalid)).await.is_err());
+        assert_eq!(
+            registry.lock().unwrap().sessions[&id].snapshot,
+            Snapshot::default()
+        );
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn oversized_frames_are_rejected_before_reading_the_body() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        client.write_u32(MAX_MESSAGE as u32 + 1).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.unwrap_err().to_string().contains("too large"));
+        assert!(registry.lock().unwrap().sessions.is_empty());
+    }
 }
