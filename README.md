@@ -181,11 +181,11 @@ nix fmt -- flake.nix
 
 テキスト、256色 / RGB、CJK文字、選択・コピー・貼り付け、スクロールバック、名前付きキー、マウス入力、IME確定文字の送信、OSC 52によるシステムクリップボードへの書き込みに対応しています。NeovimのOSC 52プロバイダーからの `"+yy` も利用できます。Braille文字（U+2800–U+28FF）はフォントに依存せずセル内に直接描画するため、Codexのロゴなどの点字アートも表示できます。NixではUDEV Gothic NFを優先して読み込みます。`NEKOMATA_FONT` が未指定なら felis のシステムフォント探索を使います。別のフォントを使う場合は `NEKOMATA_FONT=/path/to/font.ttf` を指定できます。
 
-端末描画には `felis-render-wgpu` を使い、egui と同じ GPU device/queue 上のテクスチャを合成します。felis のシェーピング、行・グリフ・画像キャッシュ、装飾、Kitty 画像、動的パレット変更を利用し、通常描画で CPU への画像読み戻しは行いません。ローカル接続は表示中のペインだけが次の画面を要求し、非表示ペインの更新要求を停止します。SSH 接続は往復遅延を増やさない push 方式です。デーモン接続が切れた場合は同じセッションへの再接続を試み、配送が不確かな入力は再送しません。[描画性能と検証範囲](docs/rendering-performance.md)、[Vitro での検証](docs/vitro-rendering-validation.md)、[上流実装の流用監査](docs/felis-rendering-reuse-audit.md)を参照してください。
+端末描画には `felis-render-wgpu` を使い、egui と同じ GPU device/queue 上のテクスチャを合成します。felis のシェーピング、行・グリフ・画像キャッシュ、装飾、Kitty 画像、動的パレット変更を利用し、通常描画で CPU への画像読み戻しは行いません。ローカル接続は表示中のペインだけが次の画面を要求し、非表示ペインの更新要求を停止します。SSH 接続は往復遅延を増やさない push 方式です。デーモン接続が切れた場合は同じセッションへの再接続を試み、配送が不確かな入力は再送しません。[描画性能と検証範囲](docs/rendering-performance.md)、[Vitro での検証](docs/vitro-rendering-validation.md)、[上流実装の流用監査](docs/felis-rendering-reuse-audit.md)、[macOS実機での累積改善](docs/native-rendering-validation.md)を参照してください。
 
 設定によるリガチャの有効化、キー解放イベント、OSC 52 クリップボード読み取り、タブ・分割配置のディスク永続化には未対応です。
 
-以前のメッシュ描画ではmacOSでセッション切り替え・GUI再起動後の復帰を確認済みです。現在の共有GPU描画はVitroのLinux/X11で画像・パレット・入力・選択コピーを確認しています。macOSのGPU描画、ネイティブIME、TUIのマウス操作は実機での追加確認が必要です。
+以前のメッシュ描画ではmacOSでセッション切り替え・GUI再起動後の復帰を確認済みです。現在の共有GPU描画はLinux/X11で画像・パレット・入力・選択コピー、macOS/Metalで文字・画像・パレット・OSC 52書き込みを確認しています。macOSのキー入力・選択操作、ネイティブIME、高DPI、TUIのマウス操作は追加確認が必要です。
 
 ## ライセンス
 

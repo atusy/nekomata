@@ -20,6 +20,9 @@ See [Vitro validation and GPU submission measurements](vitro-rendering-validatio
 for the shared-device path. The figures below document the earlier mesh adapter,
 which is now retained only under `tests/support` as a comparison fixture.
 
+See [native Metal validation and total improvements](native-rendering-validation.md)
+for the same-process initial/mesh/GPU comparison on Apple M4.
+
 ## Historical CPU mesh comparison
 
 Run the same-process comparison in the Nix development environment:

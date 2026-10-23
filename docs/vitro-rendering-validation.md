@@ -89,8 +89,9 @@ machine/load and timings are separate from the table above.
 ## Limits
 
 The guest proves Linux software-Vulkan integration and protocol behavior.
-Native macOS GPU latency, high-DPI presentation and IME require separate GUI
-checks. The native X11 smoke test additionally passed typed shell input, double-click
+A subsequent [native macOS inspection](native-rendering-validation.md) verified
+Metal rendering and CPU submission costs. End-to-end GPU latency, high-DPI
+presentation and IME still require separate checks. The native X11 smoke test additionally passed typed shell input, double-click
 word selection, Ctrl+Shift+C clipboard copy, and drag copy from the pressed cell.
 The eframe clipboard feature is explicitly enabled. An X11 startup input failure was traced to enabling IME before native focus
 and fixed. The isolated desktop regression verifies a typed command reaches
