@@ -1338,7 +1338,7 @@ impl App {
                 ui.label("Alt+W, then C: close pane · H/J/K/L: focus left/down/up/right");
                 ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
                 ui.label("Alt+Shift+P: command palette");
-                ui.label("Drag a divider to resize. Shift+drag selects when mouse reporting is active.");
+                ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
                 ui.label("Hover an OSC 8 link to preview its URL; Cmd+click (macOS) or Ctrl+click (Linux) opens it.");
             });
@@ -1900,7 +1900,10 @@ fn draw_pane(
             let origin = ui
                 .input(|input| input.pointer.press_origin())
                 .unwrap_or(pos);
-            pane.selection = Some(Selection::new(cell_at(origin)));
+            pane.selection = Some(crate::rectangle::start_selection(
+                cell_at(origin),
+                ui.input(|input| input.modifiers),
+            ));
         }
         if response.dragged()
             && let Some(selection) = &mut pane.selection

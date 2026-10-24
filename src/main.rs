@@ -10,6 +10,7 @@ mod links;
 mod mesh_baseline;
 mod picker;
 mod presentation;
+mod rectangle;
 mod render;
 mod session;
 mod shortcuts;
