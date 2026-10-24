@@ -873,6 +873,23 @@ impl App {
             if entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                 navigate = Some(!ui.input(|input| input.modifiers.shift));
             }
+            let options = search_icon_button(ui, SearchIcon::Options);
+            egui::Popup::menu(&options).show(|ui| {
+                ui.checkbox(&mut pane.search_ignore_case, "Ignore case");
+                ui.checkbox(&mut pane.search_regex, "Regex");
+            });
+            ui.add_enabled_ui(!pane.search_query.is_empty(), |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(24.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    if search_icon_button(ui, SearchIcon::Previous).clicked() {
+                        navigate = Some(false);
+                    }
+                    if search_icon_button(ui, SearchIcon::Next).clicked() {
+                        navigate = Some(true);
+                    }
+                });
+            });
             {
                 let search = pane.session.search.search.lock().unwrap();
                 let response = ui.add_sized(
@@ -897,23 +914,6 @@ impl App {
                     response.on_hover_text("Searching…");
                 }
             }
-            ui.add_enabled_ui(!pane.search_query.is_empty(), |ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(24.0);
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    if search_icon_button(ui, SearchIcon::Previous).clicked() {
-                        navigate = Some(false);
-                    }
-                    if search_icon_button(ui, SearchIcon::Next).clicked() {
-                        navigate = Some(true);
-                    }
-                });
-            });
-            let options = search_icon_button(ui, SearchIcon::Options);
-            egui::Popup::menu(&options).show(|ui| {
-                ui.checkbox(&mut pane.search_ignore_case, "Ignore case");
-                ui.checkbox(&mut pane.search_regex, "Regex");
-            });
             close |= search_icon_button(ui, SearchIcon::Close).clicked();
         });
         if close {
@@ -1501,10 +1501,18 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
             ));
         }
         SearchIcon::Options => {
-            for x in [-4.0, 0.0, 4.0] {
-                ui.painter()
-                    .circle_filled(center + Vec2::new(x, 0.0), 1.0, color);
-            }
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    center + Vec2::new(-6.0, -5.0),
+                    center + Vec2::new(6.0, -5.0),
+                    center + Vec2::new(2.0, 0.0),
+                    center + Vec2::new(2.0, 5.0),
+                    center + Vec2::new(-2.0, 3.0),
+                    center + Vec2::new(-2.0, 0.0),
+                    center + Vec2::new(-6.0, -5.0),
+                ],
+                stroke,
+            ));
         }
         SearchIcon::Close => {
             for direction in [-1.0, 1.0] {
