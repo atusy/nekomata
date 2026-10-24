@@ -79,6 +79,14 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
 }
 
 impl Shortcuts {
+    pub fn from_config(config: &felis_client_core::config::EffectiveConfig) -> Self {
+        let mut shortcuts = Self::default();
+        shortcuts
+            .terminal
+            .apply_overrides(config.keymap.compile(None));
+        shortcuts
+    }
+
     pub fn consume(&mut self, input: &mut InputState) -> Vec<Action> {
         let mut actions = Vec::new();
         let mut suppress_text = false;
@@ -154,6 +162,34 @@ impl Shortcuts {
 mod tests {
     use super::*;
     use eframe::egui::Modifiers;
+
+    #[test]
+    fn configured_binding_can_replace_a_shared_action() {
+        let document = felis_client_core::config::ConfigDocument::parse(
+            "[client.nekomata.keymap]\n\"ctrl+shift+f\" = { kind = \"copy\", what = \"system\" }",
+            None,
+        )
+        .unwrap();
+        let (config, diagnostics) = document.resolve("nekomata");
+        assert!(!diagnostics.has_errors());
+        let mut shortcuts = Shortcuts::from_config(&config);
+        let ctx = eframe::egui::Context::default();
+        let _ = crate::test_support::run(
+            &ctx,
+            eframe::egui::RawInput {
+                events: vec![press(Key::F, Modifiers::CTRL | Modifiers::SHIFT)],
+                ..Default::default()
+            },
+            |ui| {
+                assert_eq!(
+                    ui.ctx().input_mut(|input| shortcuts.consume(input)),
+                    vec![Action::Terminal(TerminalAction::Copy {
+                        what: ClipboardScope::System
+                    })]
+                );
+            },
+        );
+    }
 
     fn press(key: Key, modifiers: Modifiers) -> Event {
         Event::Key {

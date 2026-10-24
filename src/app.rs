@@ -238,7 +238,7 @@ impl App {
             font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
             picker: SessionPicker::default(),
             help: false,
-            shortcuts: Shortcuts::default(),
+            shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx)),
             palette: false,
             palette_query: String::new(),
         };
