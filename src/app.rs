@@ -1148,7 +1148,7 @@ impl eframe::App for App {
                 ui.label("Alt+W, then C: close pane · H/J/K/L: focus left/down/up/right");
                 ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
                 ui.label("Alt+Shift+P: command palette");
-                ui.label("Drag a divider to resize. Shift+drag selects when mouse reporting is active.");
+                ui.label("Drag to select; Alt+drag selects a rectangle. Hold Shift to override terminal mouse reporting.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
             });
         }
@@ -1490,7 +1490,10 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             let origin = ui
                 .input(|input| input.pointer.press_origin())
                 .unwrap_or(pos);
-            pane.selection = Some(Selection::new(cell_at(origin)));
+            pane.selection = Some(crate::interactions::start_selection(
+                cell_at(origin),
+                ui.input(|input| input.modifiers),
+            ));
         }
         if response.dragged()
             && let Some(selection) = &mut pane.selection

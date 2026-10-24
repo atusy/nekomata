@@ -4,6 +4,7 @@ mod colors;
 mod control;
 mod daemon;
 mod doctor;
+mod interactions;
 mod layout;
 #[cfg(test)]
 #[path = "../tests/support/mesh_renderer.rs"]
