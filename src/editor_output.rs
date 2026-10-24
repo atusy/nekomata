@@ -25,6 +25,48 @@ fn staging_directory() -> std::io::Result<tempfile::TempDir> {
 pub struct EditorSession {
     pub id: u128,
     pub target: Target,
+    pub staged_file: PathBuf,
+}
+
+impl EditorSession {
+    /// Dispose only an editor that was created but never presented to its owner.
+    pub async fn discard(self) -> Result<()> {
+        let Target::Local(socket) = &self.target else {
+            bail!("output editors must run locally");
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut connection = felis_client_core::connect(socket, Offer::ops()).await?;
+            connection
+                .destroy_session(format!("{:032x}", self.id))
+                .await?;
+            anyhow::Ok(())
+        })
+        .await
+        .context("cancel unused output editor timed out")??;
+        // Never remove staging while an unconfirmed destroy may leave an editor running.
+        let directory = match validate_staging_file(&self.staged_file) {
+            Ok(directory) => directory,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        for result in [
+            std::fs::remove_file(&self.staged_file),
+            std::fs::remove_dir(directory),
+        ] {
+            if let Err(error) = result
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.into());
+            }
+        }
+        Ok(())
+    }
 }
 
 fn editor_argv(visual: Option<String>, editor: Option<String>) -> Result<Vec<String>> {
@@ -96,6 +138,7 @@ pub async fn open(
     Ok(EditorSession {
         id: info.id,
         target: Target::Local(socket),
+        staged_file: file,
     })
 }
 
