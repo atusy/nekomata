@@ -83,7 +83,10 @@
                   --prefix PATH : "$out/bin:${
                     pkgs.lib.makeBinPath (
                       [ felis.packages.${system}.felis ]
-                      ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.openssh ]
+                      ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+                        pkgs.openssh
+                        pkgs.xdg-utils
+                      ]
                     )
                   }" \
                   --set-default NEKOMATA_FONT "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf" \
@@ -133,7 +136,10 @@
                 rust-analyzer
                 felis.packages.${system}.felis
               ]
-              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.openssh ];
+              ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+                pkgs.openssh
+                pkgs.xdg-utils
+              ];
             NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
             nativeBuildInputs = [ pkgs.pkg-config ];
             shellHook = ''
