@@ -1555,6 +1555,7 @@ name = "nekomata"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "eframe",
  "felis-client-core",
  "felis-grid",
