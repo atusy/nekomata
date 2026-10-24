@@ -3,6 +3,7 @@ mod cli;
 mod colors;
 mod control;
 mod daemon;
+mod interactions;
 mod layout;
 mod links;
 #[cfg(test)]
