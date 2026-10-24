@@ -8,6 +8,7 @@ mod control;
 mod daemon;
 mod font_size;
 mod input;
+mod doctor;
 mod layout;
 mod links;
 #[cfg(test)]
@@ -41,6 +42,14 @@ fn main() -> eframe::Result {
     });
     match command {
         cli::Command::Gui => {}
+        cli::Command::Doctor { json } => match doctor::run(json) {
+            Ok(true) => return Ok(()),
+            Ok(false) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+        },
         cli::Command::DaemonRun => {
             if let Err(error) = daemon::run() {
                 eprintln!("{error:#}");
