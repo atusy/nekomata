@@ -39,6 +39,7 @@ struct Pane {
         u16,
     )>,
     pending_paste: Option<crate::interactions::PendingPaste>,
+    links: crate::links::LinkOpener,
 }
 
 impl Pane {
@@ -59,6 +60,7 @@ impl Pane {
             search_ignore_case: true,
             search_paint_key: None,
             pending_paste: None,
+            links: Default::default(),
         }
     }
 
@@ -772,6 +774,7 @@ impl App {
                 let pane = self.panes.get_mut(&id).unwrap();
                 pane.session = pending.session;
                 pane.pending_paste = None;
+                pane.links = Default::default();
                 pane.dims = (0, 0);
                 pane.selection = None;
                 pane.reported_focus = None;
@@ -1088,6 +1091,7 @@ impl eframe::App for App {
             return;
         }
         for pane in self.panes.values_mut() {
+            pane.links.tick(&self.runtime, ctx);
             let state = pane.session.state.lock().unwrap();
             if pane
                 .pending_paste
@@ -1401,6 +1405,7 @@ impl eframe::App for App {
                 ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");
                 ui.label("Alt+Shift+P: command palette");
                 ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
+                ui.label("Hover an OSC 8 link to preview its URL; Cmd+click (macOS) or Ctrl+click (Linux) opens it.");
                 ui.label("Pastes containing control characters ask for confirmation when bracketed paste is off.");
             });
         }
@@ -1638,6 +1643,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     if generation != pane.connection_generation {
         pane.connection_generation = generation;
         pane.pending_paste = None;
+        pane.links = Default::default();
         pane.dims = (0, 0);
         pane.reported_focus = None;
         pane.selection = None;
@@ -1767,8 +1773,82 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
             FG,
         );
     }
+    if let Some(error) = &pane.links.error {
+        let overlay = Rect::from_min_size(
+            text_rect.left_bottom() - Vec2::new(0.0, 32.0),
+            Vec2::new(text_rect.width(), 32.0),
+        );
+        painter.rect_filled(overlay, 0, BG);
+        painter.text(
+            overlay.left_center(),
+            egui::Align2::LEFT_CENTER,
+            error,
+            FontId::proportional(12.0),
+            Color32::LIGHT_RED,
+        );
+    }
+    let modifiers = ui.input(|input| input.modifiers);
+    let click_modifiers = ui.input(|input| {
+        input
+            .events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                egui::Event::PointerButton {
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } => Some(*modifiers),
+                _ => None,
+            })
+            .unwrap_or(modifiers)
+    });
+    let mut link_gesture = false;
+    if response.hovered()
+        && let Some(pos) = ui.input(|input| input.pointer.hover_pos())
+        && text_rect.contains(pos)
+    {
+        let col = ((pos.x - text_rect.left()) / cw).floor() as u16;
+        let row = ((pos.y - text_rect.top()) / ch).floor() as u16;
+        if let Some(link) = screen
+            .cell(row, col)
+            .and_then(|cell| cell.link)
+            .and_then(|id| shadow.hyperlink(id))
+        {
+            match felis_client_core::ActivationTarget::parse(link.uri.as_str()) {
+                Ok(target) => {
+                    let hint = if cfg!(target_os = "macos") {
+                        "Cmd+click to open"
+                    } else {
+                        "Ctrl+click to open"
+                    };
+                    response.clone().on_hover_ui_at_pointer(|ui| {
+                        ui.label(target.preview(240));
+                        ui.label(hint);
+                    });
+                    link_gesture = crate::links::modifier(modifiers, cfg!(target_os = "macos"))
+                        || (response.clicked()
+                            && crate::links::modifier(click_modifiers, cfg!(target_os = "macos")));
+                    if link_gesture {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        if response.clicked() {
+                            pane.links.request(target);
+                            ui.ctx().request_repaint();
+                        }
+                    }
+                }
+                Err(reason) => {
+                    response
+                        .clone()
+                        .on_hover_text(format!("This link cannot be opened: {reason:?}"));
+                }
+            }
+        }
+    }
     let mouse_mode = shadow.mouse_protocol_active();
     if let Some(pos) = response.interact_pointer_pos()
+        && !link_gesture
         && (!mouse_mode || ui.input(|i| i.modifiers.shift))
     {
         let cell_at = |pos: Pos2| GridPos {
@@ -1802,7 +1882,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         }
     }
 
-    let report_mouse = mouse_mode && !ui.input(|i| i.modifiers.shift);
+    let report_mouse = mouse_mode && !link_gesture && !ui.input(|i| i.modifiers.shift);
     if report_mouse && (response.hovered() || response.dragged() || pane.mouse_capture.is_some()) {
         use felis_protocol::messages::{MouseAction, MouseButton};
         for event in ui.input(|i| i.events.clone()) {

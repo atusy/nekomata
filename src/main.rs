@@ -6,6 +6,7 @@ mod daemon;
 mod doctor;
 mod interactions;
 mod layout;
+mod links;
 #[cfg(test)]
 #[path = "../tests/support/mesh_renderer.rs"]
 mod mesh_baseline;
