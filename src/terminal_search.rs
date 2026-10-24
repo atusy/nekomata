@@ -545,10 +545,10 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
             session
-                .tools
+                .search
                 .search("NEKOMATA_SEARCH_MARKER".into(), SearchOptions::default());
-            wait(&|| !session.tools.search.lock().unwrap().running);
-            let search = session.tools.search.lock().unwrap();
+            wait(&|| !session.search.search.lock().unwrap().running);
+            let search = session.search.search.lock().unwrap();
             assert!(search.error.is_none(), "{:?}", search.error);
             if !search.hits.is_empty() {
                 break;
@@ -559,21 +559,21 @@ mod tests {
         }
         assert!(session.state.lock().unwrap().connected);
         assert!(!session.state.lock().unwrap().detached);
-        session.tools.search(
+        session.search.search(
             "(".into(),
             SearchOptions {
                 regex: true,
                 case_insensitive: false,
             },
         );
-        wait(&|| !session.tools.search.lock().unwrap().running);
-        assert!(session.tools.search.lock().unwrap().error.is_some());
+        wait(&|| !session.search.search.lock().unwrap().running);
+        assert!(session.search.search.lock().unwrap().error.is_some());
         assert!(session.state.lock().unwrap().connected);
-        session.tools.cancel_search();
-        assert!(!session.tools.search.lock().unwrap().active);
+        session.search.cancel_search();
+        assert!(!session.search.search.lock().unwrap().active);
         assert!(
             session
-                .tools
+                .search
                 .search
                 .lock()
                 .unwrap()

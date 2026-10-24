@@ -14,7 +14,7 @@ mod render;
 mod session;
 mod shortcuts;
 mod ssh;
-mod terminal_tools;
+mod terminal_search;
 #[cfg(test)]
 mod test_support;
 mod theme;

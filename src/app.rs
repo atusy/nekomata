@@ -68,11 +68,11 @@ impl Pane {
 
     fn navigate_search(&mut self, older: bool) {
         if self.search_query.is_empty() {
-            self.session.tools.cancel_search();
+            self.session.search.cancel_search();
             self.search_submitted = None;
             return;
         }
-        let mut search = self.session.tools.search.lock().unwrap();
+        let mut search = self.session.search.search.lock().unwrap();
         let unchanged =
             self.search_submitted
                 .as_ref()
@@ -91,7 +91,7 @@ impl Pane {
             }
         } else {
             drop(search);
-            self.session.tools.search(
+            self.session.search.search(
                 self.search_query.clone(),
                 felis_protocol::messages::SearchOptions {
                     regex: self.search_regex,
@@ -874,7 +874,7 @@ impl App {
                 navigate = Some(!ui.input(|input| input.modifiers.shift));
             }
             {
-                let search = pane.session.tools.search.lock().unwrap();
+                let search = pane.session.search.search.lock().unwrap();
                 let response = ui.add_sized(
                     [40.0, 30.0],
                     egui::Label::new(if search.error.is_some() {
@@ -918,7 +918,7 @@ impl App {
         });
         if close {
             pane.search_open = false;
-            pane.session.tools.cancel_search();
+            pane.session.search.cancel_search();
         } else if let Some(older) = navigate {
             pane.navigate_search(older);
         }
@@ -1033,7 +1033,7 @@ impl App {
             });
         }
         for pane in self.panes.values() {
-            pane.session.tools.invalidate_changed_session();
+            pane.session.search.invalidate_changed_session();
             if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
                 ctx.copy_text(text);
             }
@@ -1707,7 +1707,7 @@ fn draw_pane(
     let connected = state.connected;
     let painter = painter.with_clip_rect(text_rect);
     {
-        let mut search = pane.session.tools.search.lock().unwrap();
+        let mut search = pane.session.search.search.lock().unwrap();
         if let Some(jump) = search.take_jump(&state.screen) {
             pane.session.send(jump);
         }
@@ -2185,11 +2185,11 @@ mod tests {
         pane.search_query = "needle".into();
         pane.search_submitted = Some(("needle".into(), false, true));
         {
-            let mut search = pane.session.tools.search.lock().unwrap();
+            let mut search = pane.session.search.search.lock().unwrap();
             search.active = true;
             search.current = Some(0);
             search.hits = (0..3)
-                .map(|line| crate::terminal_tools::Hit {
+                .map(|line| crate::terminal_search::Hit {
                     line,
                     spans: vec![],
                     anchor: None,
@@ -2197,31 +2197,34 @@ mod tests {
                 .collect();
         }
         pane.navigate_search(true);
-        assert_eq!(pane.session.tools.search.lock().unwrap().current, Some(1));
+        assert_eq!(pane.session.search.search.lock().unwrap().current, Some(1));
         pane.navigate_search(false);
-        assert_eq!(pane.session.tools.search.lock().unwrap().current, Some(0));
+        assert_eq!(pane.session.search.search.lock().unwrap().current, Some(0));
         pane.search_regex = true;
         pane.navigate_search(true);
         let revision = {
-            let search = pane.session.tools.search.lock().unwrap();
+            let search = pane.session.search.search.lock().unwrap();
             assert!(search.running);
             assert!(search.hits.is_empty());
             search.revision
         };
         pane.navigate_search(true);
-        assert_eq!(pane.session.tools.search.lock().unwrap().revision, revision);
-        pane.session.tools.search.lock().unwrap().running = false;
+        assert_eq!(
+            pane.session.search.search.lock().unwrap().revision,
+            revision
+        );
+        pane.session.search.search.lock().unwrap().running = false;
         pane.navigate_search(true);
         assert!(
-            pane.session.tools.search.lock().unwrap().revision > revision,
+            pane.session.search.search.lock().unwrap().revision > revision,
             "an empty completed search can be retried"
         );
         pane.search_query = "changed".into();
         pane.navigate_search(true);
-        assert!(pane.session.tools.search.lock().unwrap().revision > revision);
+        assert!(pane.session.search.search.lock().unwrap().revision > revision);
         pane.search_query.clear();
         pane.navigate_search(true);
-        assert!(!pane.session.tools.search.lock().unwrap().active);
+        assert!(!pane.session.search.search.lock().unwrap().active);
     }
 
     #[test]
@@ -2628,7 +2631,7 @@ mod tests {
             |ui| app.search_bar(ui),
         );
         assert!(!app.searching());
-        assert!(!app.panes[&1].session.tools.search.lock().unwrap().active);
+        assert!(!app.panes[&1].session.search.search.lock().unwrap().active);
 
         let original = app.panes[&1]
             .session
