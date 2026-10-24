@@ -51,30 +51,20 @@ Implement option 3.
   not a third document.
 
 Option 1 is rejected because it places nekomata's vocabulary in a schema
-nekomata does not own, where felis's later additions can collide with it and
-validation stays lenient by felis's design. Option 2 is rejected because users
-of the felis GUI would duplicate fonts and colors, and nekomata would
-reimplement configuration felis-client-core already provides.
+nekomata does not own, where felis's later additions can collide with it.
+Option 2 is rejected because users of the felis GUI would duplicate fonts and
+colors, and nekomata would reimplement configuration felis-client-core already
+provides.
 
 ## Consequences
 
 Users who also run the felis GUI share terminal settings without duplication.
-nekomata owns and can strictly validate its application vocabulary, free from
-name collisions with felis.
+nekomata owns its application vocabulary, free from name collisions with felis.
 
-Users must learn two documents and which layer a setting belongs to, and
-settings near the boundary need documenting. The shared document may contain
-terminal sections nekomata does not honor; nekomata opts in to each one, so
-users can write settings that silently have no effect there. nekomata depends
-on felis-client-core's configuration API, so felis revision updates must check
-it.
+Users must learn two documents and which layer a setting belongs to. The
+shared document may contain terminal sections nekomata does not honor, so users
+can write settings that silently have no effect there. nekomata depends on
+felis-client-core's configuration API, so felis revision updates must check it.
 
-## Validation
-
-Review each new setting against the boundary rule before adding it. Check that
-the application layer never reads felis's document and that the terminal layer
-never extends felis's schema. Document both layers and their boundary in the
-README.
-
-Reusing felis-client-core for the terminal layer continues
-[sharing felis client policies](20261024-180000-share-felis-client-and-gpu.md).
+Continues [sharing felis client policies](20261024-180000-share-felis-client-and-gpu.md)
+by reusing felis-client-core for the terminal layer.
