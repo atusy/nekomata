@@ -843,7 +843,22 @@ mod tests {
         wait_for(&session, &ctx, &repaints, |state| state.render_ready());
         assert!(!session.state.lock().unwrap().attention);
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
-        wait_for(&session, &ctx, &repaints, |state| state.attention);
+        // Hidden panes do not submit frames or replenish grid pulls. Attention
+        // still arrives through the independent facet stream.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pulls = session.state.lock().unwrap().pull.sent();
+        loop {
+            let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
+            if session.state.lock().unwrap().attention {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "hidden pane did not receive attention"
+            );
+            let _ = repaints.recv_timeout(Duration::from_millis(50));
+        }
+        assert_eq!(session.state.lock().unwrap().pull.sent(), pulls);
         drop(session);
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
         wait_for(&session, &ctx, &repaints, |state| state.render_ready());

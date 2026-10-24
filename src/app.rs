@@ -1375,13 +1375,13 @@ impl eframe::App for App {
         {
             let (frame, generation, origin) = self.paste_requested.take().unwrap();
             let pane = &self.panes[&focused];
-            let state = pane.session.state.lock().unwrap();
             explicit_paste = os_focused
                 && !modal
-                && ctx.cumulative_frame_nr() == frame + 1
-                && Arc::ptr_eq(&origin, &pane.session)
-                && state.connected
-                && state.reconnects == generation;
+                && requested_paste_is_current(
+                    (frame, generation, &origin),
+                    ctx.cumulative_frame_nr(),
+                    &pane.session,
+                );
             stale_paste = !explicit_paste;
         }
         if stale_paste {
@@ -2035,6 +2035,19 @@ fn mouse_input(
     })
 }
 
+/// Native clipboard replies are valid for one frame and one connection only.
+fn requested_paste_is_current(
+    (frame, generation, origin): (u64, u64, &Arc<Session>),
+    current_frame: u64,
+    focused: &Arc<Session>,
+) -> bool {
+    let state = focused.state.lock().unwrap();
+    current_frame == frame + 1
+        && Arc::ptr_eq(origin, focused)
+        && state.connected
+        && state.reconnects == generation
+}
+
 fn terminal_input(
     ctx: &egui::Context,
     selection: &mut Option<Selection>,
@@ -2200,6 +2213,24 @@ mod tests {
             None,
             vec![],
         );
+        let session = Arc::new(session);
+        session.state.lock().unwrap().connected = true;
+        assert!(requested_paste_is_current((4, 0, &session), 5, &session));
+        assert!(!requested_paste_is_current((4, 0, &session), 6, &session));
+        assert!(!requested_paste_is_current((4, 1, &session), 5, &session));
+        let other = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local("/unused-other.sock".into()),
+            None,
+            None,
+            vec![],
+        );
+        let other = Arc::new(other);
+        other.state.lock().unwrap().connected = true;
+        assert!(!requested_paste_is_current((4, 0, &session), 5, &other));
+        session.state.lock().unwrap().connected = false;
+        assert!(!requested_paste_is_current((4, 0, &session), 5, &session));
         session.state.lock().unwrap().connected = true;
         let original = Some(Selection::new(GridPos { row: 0, col: 1 }));
         let mut selection = original;
