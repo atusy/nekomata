@@ -60,6 +60,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 | 文字サイズを初期値に戻す | Cmd+0 |
 | 文字サイズを1.1倍 / 1÷1.1倍にする | Cmd+= / Cmd+- |
 | コマンドパレット | Alt+Shift+P |
+| スクロールバック検索 | Ctrl+Shift+F / Cmd+F（macOS） |
 | 選択をコピー | Cmd+C（macOS） / Ctrl+Shift+C（Linux） |
 | 貼り付け | Ctrl+Shift+V（Cmd+Vも利用可能） |
 
@@ -76,6 +77,18 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 - ホイール・トラックパッドで履歴をスクロールします。連続したスクロール要求はfelisの共有処理で扱い、対応デーモンには相対移動として送ります。マウス入力を要求するTUIにはホイール入力を送ります。
 - `≡` メニューの `Smaller text` / `Larger text` で文字サイズを変更します。
 - ウィンドウ・ペイン・タブを閉じても、シェルと実行中のコマンドはデーモン内に残ります。シェル自体を終了するには `exit` などを使います。
+
+## スクロールバック検索
+
+`≡` → `Find in scrollback`、コマンドパレット、または検索ショートカットで、タブバー右側に検索欄を開きます。文字列を入力して Enter または「⌄」で検索し、同じ検索語・条件のまま操作すると次の結果へ進みます。「⌃」または Shift+Enter で前の結果へ戻ります。検索欄の右には、フィルター、上下のナビゲーター、件数、閉じるボタンの順で並びます。漏斗型のフィルターアイコンの詳細メニューに `Ignore case`（初期オン）と `Regex`（初期オフ）があります。条件を変更すると次の移動操作で検索し直します。
+
+検索結果は最大1,000件、応答の合計は1MiBまでです。件数の末尾の `+` は結果が制限されたことを示します。検索エラーは「!」にカーソルを重ねると確認できます。検索中は入力を端末へ送らず、Escape または「×」で検索欄と強調表示を閉じます。
+
+![検索結果](docs/images/terminal-tools-search.png)
+
+![詳細メニュー](docs/images/terminal-tools-search-options.png)
+
+![ホバー時のボタン](docs/images/terminal-tools-search-hover.png)
 
 ## nekomataセッションの保存・切り替え
 

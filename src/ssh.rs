@@ -1,4 +1,4 @@
-//! SSH relay adapter for explicit remote sockets, which Carrier::Ssh cannot carry.
+//! SSH relay adapter retaining child ownership for cancellation and reconnects.
 use anyhow::{Context, Result, bail};
 use felis_client_core::{CarrierConnection, CarrierReader, CarrierWriter, Connection, Offer};
 use felis_protocol::{
@@ -11,23 +11,29 @@ use tokio::{
     process::{Child, Command},
 };
 
-fn relay_command(host: &str, socket: &str) -> Command {
-    // SSH joins remote argv into shell text. Quote the path for that shell,
-    // including embedded apostrophes, rather than treating argv as an escape.
-    let quoted = format!("'{}'", socket.replace('\'', "'\\''"));
+fn relay_command(host: &str, socket: Option<&str>) -> Command {
+    // SSH joins remote argv into shell text. Quote an explicit socket for that
+    // shell, including embedded apostrophes. None keeps the remote default.
+    let mut remote = "exec felis-daemon relay --no-spawn".to_owned();
+    if let Some(socket) = socket {
+        remote.push_str(&format!(" --socket '{}'", socket.replace('\'', "'\\''")));
+    }
     let mut command = Command::new("ssh");
-    command
-        .arg("-oBatchMode=yes")
-        .arg(host)
-        .arg(format!(
-            "exec felis-daemon relay --no-spawn --socket {quoted}"
-        ))
-        .kill_on_drop(true);
+    command.arg("-oBatchMode=yes").arg(host).arg(remote);
     command
 }
 
-pub async fn connect(host: &str, socket: &str, offer: Offer) -> Result<(CarrierConnection, Child)> {
-    let session = felis_transport::spawn_command(relay_command(host, socket))?;
+pub async fn connect(
+    host: &str,
+    socket: Option<&str>,
+    offer: Offer,
+) -> Result<(CarrierConnection, Child)> {
+    connect_command(relay_command(host, socket), offer).await
+}
+
+async fn connect_command(mut command: Command, offer: Offer) -> Result<(CarrierConnection, Child)> {
+    command.kill_on_drop(true);
+    let session = felis_transport::spawn_command(command)?;
     // Retain the child for the lifetime of the connection so failed handshakes,
     // cancellation, and closing the pane also reap the relay process.
     let child = session.child;
@@ -96,9 +102,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_socket_is_resolved_on_the_remote_host() {
+        let command = relay_command("dev", None);
+        assert_eq!(
+            command.as_std().get_args().last().unwrap(),
+            "exec felis-daemon relay --no-spawn"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_handshake_reaps_the_relay_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("pid");
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "echo $$ > \"$1\"; exec sleep 60", "relay"])
+            .arg(&marker);
+        let task = tokio::spawn(connect_command(command, Offer::ops()));
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let pid = std::fs::read_to_string(marker).unwrap();
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        loop {
+            let alive = Command::new("/bin/kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await
+                .unwrap()
+                .success();
+            if !alive {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "cancelled relay survived"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    #[test]
     fn remote_shell_receives_the_socket_as_literal_data() {
         let socket = "relative dir/a'b $(printf expanded); \"socket\"\n.sock";
-        let command = relay_command("dev", socket);
+        let command = relay_command("dev", Some(socket));
         let remote = command
             .as_std()
             .get_args()

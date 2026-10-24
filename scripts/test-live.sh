@@ -26,6 +26,9 @@ set -eu
 [ "$1" = '-oBatchMode=yes' ]
 [ "$2" = 'nekomata-test-host' ]
 if [ "$#" = 3 ]; then
+  if [ "$3" = 'exec felis-daemon relay --no-spawn' ]; then
+    exec felis-daemon relay --socket "$NEKOMATA_TEST_SOCKET" --no-spawn
+  fi
   # Run the same shell command a remote SSH server would execute. The caller
   # supplies a private test socket; shell quoting must preserve it exactly.
   cd "$(dirname "$NEKOMATA_TEST_SOCKET")"

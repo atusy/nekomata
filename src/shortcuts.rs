@@ -17,6 +17,7 @@ pub enum Action {
     FontScale(f32),
     FontReset,
     Palette,
+    Search,
     Paste,
     Copy,
 }
@@ -77,6 +78,7 @@ impl Shortcuts {
                 }
             } else if mods.mac_cmd && !mods.ctrl && !mods.alt {
                 match key {
+                    Key::F if !mods.shift => Some(Action::Search),
                     Key::Num0 => Some(Action::FontReset),
                     Key::Equals | Key::Plus => Some(Action::FontScale(1.1)),
                     Key::Minus => Some(Action::FontScale(1.0 / 1.1)),
@@ -84,6 +86,7 @@ impl Shortcuts {
                 }
             } else if mods.ctrl && mods.shift && !mods.alt && !mods.mac_cmd {
                 match key {
+                    Key::F => Some(Action::Search),
                     Key::V => Some(Action::Paste),
                     Key::C => Some(Action::Copy),
                     _ => None,
@@ -115,6 +118,42 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers,
+        }
+    }
+
+    #[test]
+    fn search_shortcuts_capture_only_the_documented_chords() {
+        for (modifiers, opens_search) in [
+            (Modifiers::CTRL | Modifiers::SHIFT, true),
+            (Modifiers::MAC_CMD, true),
+            (Modifiers::CTRL, false),
+            (Modifiers::MAC_CMD | Modifiers::SHIFT, false),
+            (Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT, false),
+            (Modifiers::NONE, false),
+        ] {
+            let ctx = eframe::egui::Context::default();
+            let mut shortcuts = Shortcuts::default();
+            let _ = crate::test_support::run(
+                &ctx,
+                eframe::egui::RawInput {
+                    events: vec![press(Key::F, modifiers), Event::Text("f".into())],
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.ctx().input_mut(|input| {
+                        let actions = shortcuts.consume(input);
+                        assert_eq!(
+                            actions,
+                            if opens_search {
+                                vec![Action::Search]
+                            } else {
+                                vec![]
+                            }
+                        );
+                        assert_eq!(input.events.is_empty(), opens_search);
+                    });
+                },
+            );
         }
     }
 

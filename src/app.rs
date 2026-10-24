@@ -29,6 +29,18 @@ struct Pane {
     renderer: Option<crate::render::Renderer>,
     connection_generation: u64,
     links: crate::links::LinkOpener,
+    search_open: bool,
+    search_focus: bool,
+    search_query: String,
+    search_regex: bool,
+    search_ignore_case: bool,
+    search_submitted: Option<(String, bool, bool)>,
+    search_paint_key: Option<(
+        u64,
+        u32,
+        Option<felis_protocol::messages::ViewportAnchor>,
+        u16,
+    )>,
 }
 
 impl Pane {
@@ -44,7 +56,55 @@ impl Pane {
             renderer: None,
             connection_generation: 0,
             links: Default::default(),
+            search_open: false,
+            search_focus: false,
+            search_query: String::new(),
+            search_regex: false,
+            search_ignore_case: true,
+            search_submitted: None,
+            search_paint_key: None,
         }
+    }
+
+    fn navigate_search(&mut self, older: bool) {
+        if self.search_query.is_empty() {
+            self.session.search.cancel_search();
+            self.search_submitted = None;
+            return;
+        }
+        let mut search = self.session.search.search.lock().unwrap();
+        let unchanged =
+            self.search_submitted
+                .as_ref()
+                .is_some_and(|(query, regex, ignore_case)| {
+                    query == &self.search_query
+                        && *regex == self.search_regex
+                        && *ignore_case == self.search_ignore_case
+                });
+        if unchanged
+            && search.active
+            && search.error.is_none()
+            && (search.running || !search.hits.is_empty())
+        {
+            if !search.running {
+                search.advance(older);
+            }
+        } else {
+            drop(search);
+            self.session.search.search(
+                self.search_query.clone(),
+                felis_protocol::messages::SearchOptions {
+                    regex: self.search_regex,
+                    case_insensitive: self.search_ignore_case,
+                },
+            );
+            self.search_submitted = Some((
+                self.search_query.clone(),
+                self.search_regex,
+                self.search_ignore_case,
+            ));
+        }
+        self.search_focus = true;
     }
 
     fn connect(
@@ -766,11 +826,110 @@ impl App {
         }
     }
 
+    fn searching(&self) -> bool {
+        self.tabs
+            .get(self.active)
+            .and_then(|tab| self.panes.get(&tab.focused))
+            .is_some_and(|pane| pane.search_open)
+    }
+
+    fn open_search(&mut self) {
+        if let Some(pane) = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| self.panes.get_mut(&tab.focused))
+        {
+            pane.search_open = true;
+            pane.search_focus = true;
+        }
+    }
+
+    fn search_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let pane = self.panes.get_mut(&tab.focused).unwrap();
+        if !pane.search_open {
+            return;
+        }
+        let mut navigate = None;
+        let mut close = !egui::Popup::is_any_open(ui.ctx())
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
+            let entry = ui.add_sized(
+                [(ui.available_width() - 132.0).max(48.0), 30.0],
+                egui::TextEdit::singleline(&mut pane.search_query)
+                    .id_salt(("scrollback-query", tab.focused))
+                    .hint_text("Search scrollback")
+                    .align(egui::Align2::LEFT_CENTER)
+                    .desired_width((ui.available_width() - 132.0).max(48.0))
+                    .char_limit(1024),
+            );
+            if std::mem::take(&mut pane.search_focus) {
+                entry.request_focus();
+            }
+            if entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                navigate = Some(!ui.input(|input| input.modifiers.shift));
+            }
+            let options = search_icon_button(ui, SearchIcon::Options);
+            egui::Popup::menu(&options).show(|ui| {
+                ui.checkbox(&mut pane.search_ignore_case, "Ignore case");
+                ui.checkbox(&mut pane.search_regex, "Regex");
+            });
+            ui.add_enabled_ui(!pane.search_query.is_empty(), |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(24.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    if search_icon_button(ui, SearchIcon::Previous).clicked() {
+                        navigate = Some(false);
+                    }
+                    if search_icon_button(ui, SearchIcon::Next).clicked() {
+                        navigate = Some(true);
+                    }
+                });
+            });
+            {
+                let search = pane.session.search.search.lock().unwrap();
+                let response = ui.add_sized(
+                    [40.0, 30.0],
+                    egui::Label::new(if search.error.is_some() {
+                        egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
+                    } else if search.running {
+                        egui::RichText::new("…")
+                    } else {
+                        egui::RichText::new(format!(
+                            "{}/{}{}",
+                            search.current.map_or(0, |i| i + 1),
+                            search.hits.len(),
+                            if search.limited { "+" } else { "" }
+                        ))
+                    })
+                    .truncate(),
+                );
+                if let Some(error) = &search.error {
+                    response.on_hover_text(error);
+                } else if search.running {
+                    response.on_hover_text("Searching…");
+                }
+            }
+            close |= search_icon_button(ui, SearchIcon::Close).clicked();
+        });
+        if close {
+            pane.search_open = false;
+            pane.session.search.cancel_search();
+        } else if let Some(older) = navigate {
+            pane.navigate_search(older);
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         if self.pending_workspace.is_some() {
             return;
         }
         match action {
+            Action::Search => self.open_search(),
             Action::NewSession => self.begin_workspace(None, None),
             Action::Sessions => {
                 self.workspaces_open = true;
@@ -843,8 +1002,8 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl App {
+    fn show(&mut self, root_ui: &mut egui::Ui) {
         let context = root_ui.ctx().clone();
         let ctx = &context;
         self.workspace_events(ctx);
@@ -874,6 +1033,7 @@ impl eframe::App for App {
             });
         }
         for pane in self.panes.values() {
+            pane.session.search.invalidate_changed_session();
             if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
                 ctx.copy_text(text);
             }
@@ -907,6 +1067,7 @@ impl eframe::App for App {
             && !self.help
             && !self.palette
             && !self.workspaces_open
+            && !self.searching()
             && self.pending_workspace.is_none()
         {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
@@ -921,6 +1082,7 @@ impl eframe::App for App {
             && !self.help
             && !self.palette
             && !self.workspaces_open
+            && !self.searching()
             && self.pending_workspace.is_none()
             && !egui::Popup::is_any_open(ctx)
         {
@@ -954,6 +1116,7 @@ impl eframe::App for App {
                     .ui(ui, |ui| {
                         ui.set_width(crate::theme::MENU_WIDTH);
                         for (label, command) in [
+                            ("Find in scrollback", Action::Search),
                             ("New session", Action::NewSession),
                             ("Switch session…", Action::Sessions),
                         ] {
@@ -1047,7 +1210,18 @@ impl eframe::App for App {
                         }
                     });
                     menu_open = menu.is_some();
+                    let search_width = if self.searching() {
+                        ui.available_width().min(360.0)
+                    } else {
+                        0.0
+                    };
                     egui::ScrollArea::horizontal()
+                        .max_width(
+                            (ui.available_width() - search_width - ui.spacing().item_spacing.x)
+                                .max(0.0),
+                        )
+                        .min_scrolled_width(0.0)
+                        .auto_shrink([false, true])
                         .id_salt("tab-scroll")
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -1093,6 +1267,13 @@ impl eframe::App for App {
                                 }
                             });
                         });
+                    if self.searching() {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(search_width, 30.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| self.search_bar(ui),
+                        );
+                    }
                 });
             });
         if let Some(action) = action {
@@ -1101,7 +1282,8 @@ impl eframe::App for App {
         if self.tabs.is_empty() {
             return;
         }
-        let modal = self.picker.visible
+        let modal = self.searching()
+            || self.picker.visible
             || self.help
             || self.palette
             || self.workspaces_open
@@ -1126,6 +1308,7 @@ impl eframe::App for App {
                     &mut self.panes,
                     &mut tab.focused,
                     self.font_size,
+                    !modal,
                 );
                 if tab.focused != previous {
                     tab.focus(tab.focused);
@@ -1144,8 +1327,6 @@ impl eframe::App for App {
         if !modal {
             let pane = self.panes.get_mut(&focused).unwrap();
             terminal_input(ctx, &mut pane.selection, &pane.session);
-        } else {
-            ctx.output_mut(|output| output.ime = None);
         }
         if let Some(id) = self.picker.show(&self.runtime, ctx) {
             self.add_tab(ctx, Some(id));
@@ -1174,6 +1355,7 @@ impl eframe::App for App {
                         response.request_focus();
                     }
                     for (label, command) in [
+                        ("Find in scrollback", Action::Search),
                         ("New session", Action::NewSession),
                         ("Switch session", Action::Sessions),
                         ("New tab", Action::NewTab),
@@ -1216,6 +1398,13 @@ impl eframe::App for App {
         self.save_workspace();
         ctx.request_repaint_after(Duration::from_millis(250));
     }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(root_ui);
+    }
+
     // Not egui memory: felis and the workspace daemon own session state,
     // every window process shares one eframe store while pane ids repeat
     // across sessions, and `App::new` sets the style and theme anyway.
@@ -1258,6 +1447,84 @@ fn focus_terminal(ctx: &egui::Context) {
     });
 }
 
+#[derive(Clone, Copy)]
+enum SearchIcon {
+    Previous,
+    Next,
+    Options,
+    Close,
+}
+
+fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
+    let (height, label) = match icon {
+        SearchIcon::Previous => (15.0, "Previous result · Shift+Enter"),
+        SearchIcon::Next => (15.0, "Search / next result · Enter"),
+        SearchIcon::Options => (30.0, "Search options"),
+        SearchIcon::Close => (30.0, "Close search · Escape"),
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(24.0, height), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 4.0, TAB_HOVER_BG);
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let color = if !ui.is_enabled() {
+        ui.visuals().weak_text_color()
+    } else if response.hovered() {
+        FG
+    } else {
+        TAB_INACTIVE_FG
+    };
+    let center = rect.center();
+    let stroke = Stroke::new(1.4, color);
+    match icon {
+        SearchIcon::Previous | SearchIcon::Next => {
+            let direction = if matches!(icon, SearchIcon::Previous) {
+                1.0
+            } else {
+                -1.0
+            };
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    center + Vec2::new(-4.0, 2.0 * direction),
+                    center + Vec2::new(0.0, -2.0 * direction),
+                    center + Vec2::new(4.0, 2.0 * direction),
+                ],
+                stroke,
+            ));
+        }
+        SearchIcon::Options => {
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    center + Vec2::new(-6.0, -5.0),
+                    center + Vec2::new(6.0, -5.0),
+                    center + Vec2::new(2.0, 0.0),
+                    center + Vec2::new(2.0, 5.0),
+                    center + Vec2::new(-2.0, 3.0),
+                    center + Vec2::new(-2.0, 0.0),
+                    center + Vec2::new(-6.0, -5.0),
+                ],
+                stroke,
+            ));
+        }
+        SearchIcon::Close => {
+            for direction in [-1.0, 1.0] {
+                let offset = Vec2::new(3.0, direction * 3.0);
+                ui.painter()
+                    .line_segment([center - offset, center + offset], stroke);
+            }
+        }
+    }
+    response.on_hover_text(label)
+}
+
 fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
     ui.add_sized(
         [ui.available_width(), crate::theme::MENU_ROW_HEIGHT],
@@ -1281,11 +1548,19 @@ fn draw_layout(
     panes: &mut BTreeMap<u64, Pane>,
     focused: &mut u64,
     font_size: f32,
+    terminal_input_enabled: bool,
 ) -> Option<Rect> {
     let rect = ui.max_rect();
     match layout {
         Layout::Pane(id) => {
-            draw_pane(ui, *id, panes.get_mut(id).unwrap(), focused, font_size);
+            draw_pane(
+                ui,
+                *id,
+                panes.get_mut(id).unwrap(),
+                focused,
+                font_size,
+                terminal_input_enabled,
+            );
             (*focused == *id).then_some(rect)
         }
         Layout::Split {
@@ -1333,12 +1608,19 @@ fn draw_layout(
             }
             let first_focus = ui
                 .scope_builder(egui::UiBuilder::new().id_salt("first").max_rect(a), |ui| {
-                    draw_layout(ui, first, panes, focused, font_size)
+                    draw_layout(ui, first, panes, focused, font_size, terminal_input_enabled)
                 })
                 .inner;
             let second_focus = ui
                 .scope_builder(egui::UiBuilder::new().id_salt("second").max_rect(b), |ui| {
-                    draw_layout(ui, second, panes, focused, font_size)
+                    draw_layout(
+                        ui,
+                        second,
+                        panes,
+                        focused,
+                        font_size,
+                        terminal_input_enabled,
+                    )
                 })
                 .inner;
             let painter = ui.painter();
@@ -1367,7 +1649,14 @@ fn draw_layout(
     }
 }
 
-fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
+fn draw_pane(
+    ui: &mut egui::Ui,
+    id: u64,
+    pane: &mut Pane,
+    focused: &mut u64,
+    font_size: f32,
+    terminal_input_enabled: bool,
+) {
     let generation = pane.session.state.lock().unwrap().reconnects;
     if generation != pane.connection_generation {
         pane.connection_generation = generation;
@@ -1425,11 +1714,27 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let mut state = pane.session.state.lock().unwrap();
     let connected = state.connected;
     let painter = painter.with_clip_rect(text_rect);
+    {
+        let mut search = pane.session.search.search.lock().unwrap();
+        if let Some(jump) = search.take_jump(&state.screen) {
+            pane.session.send(jump);
+        }
+        let key = (
+            search.revision,
+            state.screen.viewport(),
+            state.screen.viewport_anchor(),
+            state.screen.screen().rows(),
+        );
+        if pane.search_paint_key != Some(key) {
+            renderer.set_search_overlay(search.overlay(&state.screen));
+            pane.search_paint_key = Some(key);
+        }
+    }
     if let Err(error) = renderer.paint(
         &painter,
         &mut state,
         text_rect,
-        *focused == id && connected && ui.input(|input| input.focused),
+        terminal_input_enabled && *focused == id && connected && ui.input(|input| input.focused),
         pane.selection,
     ) {
         state.error = Some(format!("Terminal renderer: {error:#}"));
@@ -1442,7 +1747,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let cursor = screen.cursor();
     // Enabling XIM before the native window receives focus can consume its
     // pending input/focus events. Only the active native window owns the IME.
-    if *focused == id && ui.input(|input| input.focused) {
+    if terminal_input_enabled && *focused == id && ui.input(|input| input.focused) {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
@@ -1865,6 +2170,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn search_navigation_reuses_results_until_query_or_options_change() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: requests stay queued without contacting a daemon.
+        let session = Arc::new(Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-search-test.sock".into()),
+            None,
+            None,
+            vec![],
+        ));
+        {
+            let mut state = session.state.lock().unwrap();
+            state.connected = true;
+            state.session_id = Some(1);
+        }
+        let mut pane = Pane::from_session(session);
+        pane.search_query = "needle".into();
+        pane.search_submitted = Some(("needle".into(), false, true));
+        {
+            let mut search = pane.session.search.search.lock().unwrap();
+            search.active = true;
+            search.current = Some(0);
+            search.hits = (0..3)
+                .map(|line| crate::terminal_search::Hit {
+                    line,
+                    spans: vec![],
+                    anchor: None,
+                })
+                .collect();
+        }
+        pane.navigate_search(true);
+        assert_eq!(pane.session.search.search.lock().unwrap().current, Some(1));
+        pane.navigate_search(false);
+        assert_eq!(pane.session.search.search.lock().unwrap().current, Some(0));
+        pane.search_regex = true;
+        pane.navigate_search(true);
+        let revision = {
+            let search = pane.session.search.search.lock().unwrap();
+            assert!(search.running);
+            assert!(search.hits.is_empty());
+            search.revision
+        };
+        pane.navigate_search(true);
+        assert_eq!(
+            pane.session.search.search.lock().unwrap().revision,
+            revision
+        );
+        pane.session.search.search.lock().unwrap().running = false;
+        pane.navigate_search(true);
+        assert!(
+            pane.session.search.search.lock().unwrap().revision > revision,
+            "an empty completed search can be retried"
+        );
+        pane.search_query = "changed".into();
+        pane.navigate_search(true);
+        assert!(pane.session.search.search.lock().unwrap().revision > revision);
+        pane.search_query.clear();
+        pane.navigate_search(true);
+        assert!(!pane.session.search.search.lock().unwrap().active);
+    }
+
+    #[test]
     fn copying_soft_wrapped_text_keeps_one_logical_line() {
         use felis_grid::{
             Cell, StyleTable,
@@ -2214,6 +2585,62 @@ mod tests {
         pump(&mut app, &|app| {
             app.panes[&1].session.state.lock().unwrap().connected
         });
+        app.action(&ctx, Action::Search);
+        assert!(app.searching());
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.search_bar(ui));
+        assert!(
+            ctx.egui_wants_keyboard_input(),
+            "search field must own typing"
+        );
+        app.open_search();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.show(ui));
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.show(ui));
+        assert!(
+            frame.platform_output.ime.is_some(),
+            "search IME must survive the complete UI frame"
+        );
+        assert_ne!(
+            frame.platform_output.ime.as_ref().unwrap().purpose,
+            egui::IMEPurpose::Terminal
+        );
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "にほん".into(),
+                    active_range_chars: None,
+                })],
+                ..Default::default()
+            },
+            |ui| app.show(ui),
+        );
+        let frame = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Ime(egui::ImeEvent::Commit("日本".into()))],
+                ..Default::default()
+            },
+            |ui| app.show(ui),
+        );
+        assert_eq!(app.panes[&1].search_query, "日本");
+        assert!(frame.platform_output.ime.is_some());
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| app.search_bar(ui),
+        );
+        assert!(!app.searching());
+        assert!(!app.panes[&1].session.search.search.lock().unwrap().active);
+
         let original = app.panes[&1]
             .session
             .state
