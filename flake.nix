@@ -64,7 +64,7 @@
             common
             // {
               inherit cargoArtifacts;
-              # Rendering regression tests must use the same font as the app.
+              # Legacy rendering fixtures use an explicit font independent of user config.
               NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
               postInstall = ''
                 install -Dm644 ${./share/fish/vendor_conf.d/nekomata.fish} \
