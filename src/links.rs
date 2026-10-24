@@ -7,6 +7,36 @@ use std::{
 };
 
 #[derive(Default)]
+pub struct LinkGesture(Option<ActivationTarget>);
+
+impl LinkGesture {
+    pub fn active(&self) -> bool {
+        self.0.is_some()
+    }
+
+    pub fn press(
+        &mut self,
+        target: Option<ActivationTarget>,
+        modifier: bool,
+        terminal_captured: bool,
+    ) {
+        if modifier && !terminal_captured {
+            self.0 = target;
+        }
+    }
+
+    pub fn release(
+        &mut self,
+        target: Option<ActivationTarget>,
+        clicked: bool,
+    ) -> Option<ActivationTarget> {
+        let pressed = self.0.take()?;
+        (clicked && target.is_some_and(|target| target.as_str() == pressed.as_str()))
+            .then_some(pressed)
+    }
+}
+
+#[derive(Default)]
 pub struct LinkOpener {
     queued: Option<ActivationTarget>,
     task: Option<tokio::task::JoinHandle<()>>,
@@ -90,6 +120,25 @@ async fn open(target: ActivationTarget) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn link_gestures_keep_the_press_owner_through_modifier_changes() {
+        let target = || ActivationTarget::parse("https://example.org/").unwrap();
+        let mut gesture = LinkGesture::default();
+        gesture.press(Some(target()), false, false);
+        // Adding the modifier only on release cannot steal a TUI click.
+        assert!(gesture.release(Some(target()), true).is_none());
+        gesture.press(Some(target()), true, true);
+        assert!(!gesture.active());
+        gesture.press(Some(target()), true, false);
+        assert!(gesture.active());
+        // Release needs no modifier: ownership was fixed at press time.
+        assert!(gesture.release(Some(target()), true).is_some());
+        assert!(!gesture.active());
+        gesture.press(Some(target()), true, false);
+        assert!(gesture.release(None, false).is_none());
+        assert!(!gesture.active());
+    }
+
     #[test]
     fn opener_preserves_the_validated_uri_as_one_literal_argument() {
         let target =

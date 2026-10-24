@@ -25,6 +25,7 @@ struct Pane {
     reported_focus: Option<bool>,
     scroll_remainder: f32,
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
+    link_capture: crate::links::LinkGesture,
     renderer: Option<crate::render::Renderer>,
     connection_generation: u64,
     search_open: bool,
@@ -51,6 +52,7 @@ impl Pane {
             reported_focus: None,
             scroll_remainder: 0.0,
             mouse_capture: None,
+            link_capture: Default::default(),
             renderer: None,
             connection_generation: 0,
             search_open: false,
@@ -794,6 +796,7 @@ impl App {
                 pane.reported_focus = None;
                 pane.scroll_remainder = 0.0;
                 pane.mouse_capture = None;
+                pane.link_capture = Default::default();
             }
             let _ = pending.reply.send(result);
         }
@@ -1816,6 +1819,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         pane.reported_focus = None;
         pane.selection = None;
         pane.mouse_capture = None;
+        pane.link_capture = Default::default();
     }
     let rect = ui.max_rect().shrink(2.0);
     let response = ui.interact(rect, ui.scope_id().with(id), Sense::click_and_drag());
@@ -1959,23 +1963,49 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         );
     }
     let modifiers = ui.input(|input| input.modifiers);
-    let click_modifiers = ui.input(|input| {
-        input
-            .events
-            .iter()
-            .rev()
-            .find_map(|event| match event {
-                egui::Event::PointerButton {
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers,
-                    ..
-                } => Some(*modifiers),
-                _ => None,
-            })
-            .unwrap_or(modifiers)
-    });
-    let mut link_gesture = false;
+    let target_at = |pos: Pos2| {
+        if !text_rect.contains(pos) {
+            return None;
+        }
+        let col = ((pos.x - text_rect.left()) / cw).floor() as u16;
+        let row = ((pos.y - text_rect.top()) / ch).floor() as u16;
+        screen
+            .cell(row, col)
+            .and_then(|cell| cell.link)
+            .and_then(|id| shadow.hyperlink(id))
+            .and_then(|link| felis_client_core::ActivationTarget::parse(link.uri.as_str()).ok())
+    };
+    // A link owns its whole primary-button gesture, even after the modifier
+    // changes or the pointer leaves the URL. A TUI press retains its release.
+    let mut link_gesture = pane.link_capture.active();
+    for event in ui.input(|input| input.events.clone()) {
+        if let egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+            ..
+        } = event
+        {
+            if pressed && response.contains_pointer() {
+                pane.link_capture.press(
+                    target_at(pos),
+                    crate::links::modifier(modifiers, cfg!(target_os = "macos")),
+                    pane.mouse_capture.is_some(),
+                );
+                link_gesture |= pane.link_capture.active();
+            } else if !pressed {
+                link_gesture |= pane.link_capture.active();
+                if let Some(target) = pane
+                    .link_capture
+                    .release(target_at(pos), response.clicked())
+                {
+                    pane.links.request(target);
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+    }
     if response.hovered()
         && let Some(pos) = ui.input(|input| input.pointer.hover_pos())
         && text_rect.contains(pos)
@@ -1998,15 +2028,8 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                         ui.label(target.preview(240));
                         ui.label(hint);
                     });
-                    link_gesture = crate::links::modifier(modifiers, cfg!(target_os = "macos"))
-                        || (response.clicked()
-                            && crate::links::modifier(click_modifiers, cfg!(target_os = "macos")));
-                    if link_gesture {
+                    if crate::links::modifier(modifiers, cfg!(target_os = "macos")) {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        if response.clicked() {
-                            pane.links.request(target);
-                            ui.ctx().request_repaint();
-                        }
                     }
                 }
                 Err(reason) => {
@@ -2053,7 +2076,8 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         }
     }
 
-    let report_mouse = mouse_mode && !link_gesture && !ui.input(|i| i.modifiers.shift);
+    let report_mouse = mouse_mode
+        && (pane.mouse_capture.is_some() || (!link_gesture && !ui.input(|i| i.modifiers.shift)));
     if report_mouse && (response.hovered() || response.dragged() || pane.mouse_capture.is_some()) {
         use felis_protocol::messages::{MouseAction, MouseButton};
         for event in ui.input(|i| i.events.clone()) {
