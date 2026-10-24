@@ -95,7 +95,10 @@ impl Renderer {
             color_revision: 0,
             layout: Default::default(),
             rendered: false,
-            presentation: crate::presentation::Presentation::new(std::time::Instant::now()),
+            presentation: crate::presentation::Presentation::new(
+                std::time::Instant::now(),
+                &crate::terminal_config::get(ctx).cursor,
+            ),
             selection: None,
         })
     }
@@ -159,7 +162,11 @@ impl Renderer {
                     &input.events,
                 )
             });
-            if let Some(deadline) = self.presentation.next_deadline(wants_blink) {
+            if focused
+                && cursor.visible
+                && state.screen.viewport() == 0
+                && let Some(deadline) = self.presentation.next_deadline(wants_blink)
+            {
                 painter
                     .ctx()
                     .request_repaint_after(deadline.saturating_duration_since(now));
