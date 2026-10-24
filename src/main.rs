@@ -1,4 +1,5 @@
 mod app;
+mod attention;
 mod cli;
 mod colors;
 mod control;
