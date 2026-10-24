@@ -948,11 +948,11 @@ impl App {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
             let entry = ui.add_sized(
-                [(ui.available_width() - 156.0).max(48.0), 30.0],
+                [(ui.available_width() - 132.0).max(48.0), 30.0],
                 egui::TextEdit::singleline(&mut pane.search_query)
                     .id_salt(("scrollback-query", tab.focused))
                     .hint_text("Search scrollback")
-                    .desired_width((ui.available_width() - 156.0).max(48.0))
+                    .desired_width((ui.available_width() - 132.0).max(48.0))
                     .char_limit(1024),
             );
             if std::mem::take(&mut pane.search_focus) {
@@ -985,36 +985,24 @@ impl App {
                     response.on_hover_text("Searching…");
                 }
             }
-            if ui
-                .add_enabled(
-                    !pane.search_query.is_empty(),
-                    egui::Button::new("⌃").min_size(Vec2::splat(24.0)),
-                )
-                .on_hover_text("Previous result · Shift+Enter")
-                .clicked()
-            {
-                navigate = Some(false);
-            }
-            if ui
-                .add_enabled(
-                    !pane.search_query.is_empty(),
-                    egui::Button::new("⌄").min_size(Vec2::splat(24.0)),
-                )
-                .on_hover_text("Search / next result · Enter")
-                .clicked()
-            {
-                navigate = Some(true);
-            }
-            ui.menu_button("⋯", |ui| {
+            ui.add_enabled_ui(!pane.search_query.is_empty(), |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(24.0);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    if search_icon_button(ui, SearchIcon::Previous).clicked() {
+                        navigate = Some(false);
+                    }
+                    if search_icon_button(ui, SearchIcon::Next).clicked() {
+                        navigate = Some(true);
+                    }
+                });
+            });
+            let options = search_icon_button(ui, SearchIcon::Options);
+            egui::Popup::menu(&options).show(|ui| {
                 ui.checkbox(&mut pane.search_ignore_case, "Ignore case");
                 ui.checkbox(&mut pane.search_regex, "Regex");
-            })
-            .response
-            .on_hover_text("Search options");
-            close |= ui
-                .button("×")
-                .on_hover_text("Close search · Escape")
-                .clicked();
+            });
+            close |= search_icon_button(ui, SearchIcon::Close).clicked();
         });
         if close {
             pane.search_open = false;
@@ -1762,6 +1750,76 @@ fn focus_terminal(ctx: &egui::Context) {
             },
         );
     });
+}
+
+#[derive(Clone, Copy)]
+enum SearchIcon {
+    Previous,
+    Next,
+    Options,
+    Close,
+}
+
+fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
+    let (height, label) = match icon {
+        SearchIcon::Previous => (15.0, "Previous result · Shift+Enter"),
+        SearchIcon::Next => (15.0, "Search / next result · Enter"),
+        SearchIcon::Options => (30.0, "Search options"),
+        SearchIcon::Close => (30.0, "Close search · Escape"),
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(24.0, height), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 4.0, TAB_HOVER_BG);
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            Stroke::new(1.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let color = if !ui.is_enabled() {
+        ui.visuals().weak_text_color()
+    } else if response.hovered() {
+        FG
+    } else {
+        TAB_INACTIVE_FG
+    };
+    let center = rect.center();
+    let stroke = Stroke::new(1.4, color);
+    match icon {
+        SearchIcon::Previous | SearchIcon::Next => {
+            let direction = if matches!(icon, SearchIcon::Previous) {
+                1.0
+            } else {
+                -1.0
+            };
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    center + Vec2::new(-4.0, 2.0 * direction),
+                    center + Vec2::new(0.0, -2.0 * direction),
+                    center + Vec2::new(4.0, 2.0 * direction),
+                ],
+                stroke,
+            ));
+        }
+        SearchIcon::Options => {
+            for x in [-4.0, 0.0, 4.0] {
+                ui.painter()
+                    .circle_filled(center + Vec2::new(x, 0.0), 1.0, color);
+            }
+        }
+        SearchIcon::Close => {
+            for direction in [-1.0, 1.0] {
+                let offset = Vec2::new(3.0, direction * 3.0);
+                ui.painter()
+                    .line_segment([center - offset, center + offset], stroke);
+            }
+        }
+    }
+    response.on_hover_text(label)
 }
 
 fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {

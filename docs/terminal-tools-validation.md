@@ -33,11 +33,15 @@ mouse, link-launch and editor-tab operations were not exercised in this pass.
 
 Search is displayed at the right of the tab bar. Enter / ⌄ submits a changed
 query or moves to the next result; ⌃ moves back. Ignore case and Regex are in
-the ⋯ menu. The minimum 480-point window was also inspected for clipped controls.
+the ⋯ menu. The chevrons are drawn shapes stacked vertically; search-button
+backgrounds appear only on hover. The minimum 480-point window was also inspected
+for clipped controls.
 
 ![Search result and highlight](images/terminal-tools-search.png)
 
 ![Search options at minimum window width](images/terminal-tools-search-options.png)
+
+![Only the hovered chevron has a background](images/terminal-tools-search-hover.png)
 
 ## Conditional paste confirmation
 
