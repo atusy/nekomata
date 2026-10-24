@@ -2,6 +2,7 @@ mod app;
 mod app_config;
 mod cli;
 mod colors;
+mod command_output;
 mod command_palette;
 mod commands;
 mod control;
@@ -24,7 +25,6 @@ mod shortcuts;
 mod ssh;
 mod terminal_config;
 mod terminal_search;
-mod terminal_tools;
 #[cfg(test)]
 mod test_support;
 mod theme;
