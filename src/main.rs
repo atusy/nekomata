@@ -4,8 +4,8 @@ mod colors;
 mod control;
 mod daemon;
 mod doctor;
-mod interactions;
 mod editor_output;
+mod interactions;
 mod layout;
 mod links;
 #[cfg(test)]
