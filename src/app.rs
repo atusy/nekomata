@@ -176,6 +176,8 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
+        crate::terminal_config::load(&cc.egui_ctx)?;
+
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
@@ -192,26 +194,19 @@ impl App {
         style.visuals.window_stroke = Stroke::new(1.0_f32, crate::theme::MENU_BORDER);
         style.visuals.window_corner_radius = egui::CornerRadius::same(8);
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
-        // Nix supplies UDEV Gothic NF; system CJK fonts remain a fallback.
+        // Application chrome uses egui fonts with a system CJK fallback.
         let mut fonts = egui::FontDefinitions::default();
         let candidates = [
-            std::env::var("NEKOMATA_FONT").unwrap_or_default(),
-            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc".into(),
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc".into(),
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         ];
-        for (index, path) in candidates.into_iter().enumerate() {
+        for path in candidates {
             if let Ok(bytes) = std::fs::read(path) {
                 fonts
                     .font_data
                     .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
                 for kind in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
-                    let terminal = kind == egui::FontFamily::Monospace;
-                    let family = fonts.families.entry(kind).or_default();
-                    if index == 0 && terminal {
-                        family.insert(0, "cjk".into());
-                    } else {
-                        family.push("cjk".into());
-                    }
+                    fonts.families.entry(kind).or_default().push("cjk".into());
                 }
                 break;
             }
@@ -240,7 +235,7 @@ impl App {
             tabs: vec![],
             active: 0,
             next_id: 1,
-            font_size: 15.0,
+            font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
             picker: SessionPicker::default(),
             help: false,
             shortcuts: Shortcuts::default(),
@@ -282,7 +277,11 @@ impl App {
         self.tabs = snapshot.tabs;
         self.active = snapshot.active;
         self.next_id = snapshot.next_id;
-        self.font_size = snapshot.font_size;
+        self.font_size = if self.tabs.is_empty() {
+            crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
+        } else {
+            snapshot.font_size
+        };
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
@@ -1062,8 +1061,16 @@ impl App {
                 self.palette = true;
                 self.palette_query.clear();
             }
-            Action::FontScale(scale) => self.font_size = (self.font_size * scale).clamp(6.0, 72.0),
-            Action::FontReset => self.font_size = 15.0,
+            Action::FontScale(scale) => {
+                self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
+                    self.font_size * scale,
+                    0.0,
+                )
+            }
+            Action::FontReset => {
+                self.font_size =
+                    crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
+            }
             Action::Paste => {
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
                 let state = pane.session.state.lock().unwrap();
@@ -1319,7 +1326,7 @@ impl App {
                                         .on_hover_text("Larger text")
                                         .clicked()
                                     {
-                                        self.font_size = (self.font_size * 1.1).min(72.0);
+                                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(self.font_size * 1.1, 0.0);
                                     }
                                     if ui
                                         .add_sized(
@@ -1330,7 +1337,7 @@ impl App {
                                         .on_hover_text("Reset text size")
                                         .clicked()
                                     {
-                                        self.font_size = 15.0;
+                                        self.font_size = crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
                                     }
                                     if ui
                                         .add_sized(
@@ -1340,7 +1347,7 @@ impl App {
                                         .on_hover_text("Smaller text")
                                         .clicked()
                                     {
-                                        self.font_size = (self.font_size / 1.1).max(6.0);
+                                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(self.font_size / 1.1, 0.0);
                                     }
                                 },
                             );
@@ -1871,7 +1878,12 @@ fn draw_pane(
     font_size: f32,
     terminal_input_enabled: bool,
 ) {
-    let generation = pane.session.state.lock().unwrap().reconnects;
+    let (generation, background) = {
+        let state = pane.session.state.lock().unwrap();
+        let [r, g, b, _] =
+            felis_render_core::palette::linear_rgba_to_srgb8(state.colors.theme().bg);
+        (state.reconnects, Color32::from_rgb(r, g, b))
+    };
     if generation != pane.connection_generation {
         pane.connection_generation = generation;
         pane.links = Default::default();
@@ -1888,7 +1900,7 @@ fn draw_pane(
         *focused = id;
     }
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0, BG);
+    painter.rect_filled(rect, 0, background);
     let ppp = ui.ctx().pixels_per_point();
     if pane.renderer.is_none() {
         match crate::render::Renderer::new(ui.ctx(), font_size, ppp) {
@@ -2623,8 +2635,15 @@ mod tests {
                     .values()
                     .all(|p| p.session.state.lock().unwrap().connected)
         };
+        let mut config = felis_client_core::config::EffectiveConfig::default();
+        config.font.size_px = Some(21.0);
+        crate::terminal_config::install(&ctx, config);
         let mut app = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
         pump(&mut app, &connected);
+        assert_eq!(app.font_size, 21.0);
+        app.font_size = 30.0;
+        app.action(&ctx, Action::FontReset);
+        assert_eq!(app.font_size, 21.0);
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
         pump(&mut app, &connected);

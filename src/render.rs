@@ -8,7 +8,7 @@ use eframe::{
 use felis_client_core::ImageShadow;
 use felis_render_core::{ImageData, ImageSource, SelectionRange};
 use felis_render_wgpu::{Renderer as GpuRenderer, RendererConfig};
-use felis_shaping::{FontStack, StyleFaces};
+use felis_shaping::FontStack;
 use std::sync::Arc;
 
 pub fn initialize(cc: &eframe::CreationContext<'_>) -> Result<()> {
@@ -34,12 +34,13 @@ pub fn load_fonts(ctx: &egui::Context) -> Result<Arc<FontStack>> {
     if let Some(stack) = ctx.data(|data| data.get_temp::<Arc<FontStack>>(key)) {
         return Ok(stack);
     }
-    let styles = StyleFaces::default();
-    let stack = if let Some(path) = std::env::var_os("NEKOMATA_FONT") {
-        FontStack::discover_in_files(&[path.into()], None, &[], &[], &styles)?
-    } else {
-        FontStack::auto_discover(None, &[], &[], &styles)?
-    };
+    let cfg = crate::terminal_config::renderer(&crate::terminal_config::get(ctx));
+    let stack = FontStack::auto_discover(
+        cfg.font_family.as_deref(),
+        &cfg.font_features,
+        &cfg.font_fallbacks,
+        &cfg.style_faces(),
+    )?;
     let stack = Arc::new(stack);
     ctx.data_mut(|data| data.insert_temp(key, stack.clone()));
     Ok(stack)
@@ -66,13 +67,9 @@ impl Renderer {
             .context("terminal GPU was not initialized")?;
         let cfg = RendererConfig {
             font_size_physical_px: Some(font_size * ppp),
-            font_files: std::env::var_os("NEKOMATA_FONT")
-                .map(Into::into)
-                .into_iter()
-                .collect(),
-            ..Default::default()
+            ..crate::terminal_config::renderer(&crate::terminal_config::get(ctx))
         };
-        let mut gpu = GpuRenderer::new_embedded(
+        let gpu = GpuRenderer::new_embedded(
             host.device.clone(),
             host.queue.clone(),
             1,
@@ -80,7 +77,6 @@ impl Renderer {
             cfg,
             (*load_fonts(ctx)?).clone(),
         )?;
-        gpu.set_theme(&crate::theme::terminal_theme());
         let view = gpu
             .embedded_texture_view()
             .context("missing embedded GPU target")?;
@@ -315,7 +311,6 @@ mod tests {
             (*load_fonts(&ctx).unwrap()).clone(),
         )
         .unwrap();
-        gpu.set_theme(&crate::theme::terminal_theme());
         gpu.set_window_focused(false);
         assert!(gpu.embedded_texture_view().is_some());
         let mut shadow = felis_client_core::ShadowScreen::new(2, 4);

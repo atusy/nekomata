@@ -42,7 +42,6 @@ int main(int argc, char **argv) {
 
     prefix("PATH", "@package@/bin:@felis@/bin", "/usr/bin:/bin:/usr/sbin:/sbin");
     prefix("XDG_DATA_DIRS", "@package@/share", "/usr/local/share:/usr/share");
-    if (setenv("NEKOMATA_FONT", "@font@", 0) != 0) fail("NEKOMATA_FONT");
     const char *home = getenv("HOME");
     if (!home || chdir(home) != 0) {
         fprintf(stderr, "nekomata could not open the home directory\n");

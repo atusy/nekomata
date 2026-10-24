@@ -89,7 +89,6 @@
                       ]
                     )
                   }" \
-                  --set-default NEKOMATA_FONT "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf" \
                   --set-default XDG_DATA_DIRS /usr/local/share:/usr/share \
                   --prefix XDG_DATA_DIRS : "$out/share" \
                   ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}"}
@@ -97,8 +96,7 @@
                 ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                   substitute ${./share/macos/launcher.c} launcher.c \
                     --subst-var-by package "$out" \
-                    --subst-var-by felis "${felis.packages.${system}.felis}" \
-                    --subst-var-by font "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf"
+                    --subst-var-by felis "${felis.packages.${system}.felis}"
                   $CC -Wall -Wextra -Werror launcher.c -o "$app/MacOS/nekomata"
                 ''}
                 ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''

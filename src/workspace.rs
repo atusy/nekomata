@@ -57,7 +57,7 @@ impl Default for Snapshot {
             panes: Default::default(),
             active: 0,
             next_id: 1,
-            font_size: 15.0,
+            font_size: felis_render_wgpu::DEFAULT_FONT_SIZE_LOGICAL_PX,
         }
     }
 }
@@ -67,7 +67,10 @@ impl Snapshot {
         use anyhow::ensure;
         use std::collections::BTreeSet;
         ensure!(
-            self.font_size.is_finite() && (6.0..=72.0).contains(&self.font_size),
+            self.font_size.is_finite()
+                && (felis_client_core::config::MIN_FONT_SIZE_LOGICAL_PX
+                    ..=felis_client_core::config::MAX_FONT_SIZE_LOGICAL_PX)
+                    .contains(&self.font_size),
             "invalid font size"
         );
         ensure!(self.active < self.tabs.len().max(1), "invalid active tab");

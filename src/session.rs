@@ -232,7 +232,9 @@ impl Session {
             effective_minor: 0,
             pull: felis_client_core::pull::PullScheduler::new(matches!(target, Target::Local(_))),
             redraw: felis_client_core::redraw::RedrawScheduler::new(),
-            colors: crate::colors::Colors::default(),
+            colors: crate::colors::Colors::new(felis_render_wgpu::Renderer::theme_from_config(
+                &crate::terminal_config::renderer(&crate::terminal_config::get(&ctx)),
+            )),
             images: felis_client_core::ImageShadow::new(),
             session_id: None,
             error: None,
@@ -369,7 +371,11 @@ async fn run(
                 .await
                 .context("create felis session")?
         };
-        conn.writer.send(&crate::theme::configure()).await?;
+        conn.writer
+            .send(&crate::terminal_config::configure(
+                &crate::terminal_config::get(&ctx),
+            ))
+            .await?;
         conn.writer
             .send(&InputMsg::ColorScheme { dark: true })
             .await?;
@@ -409,7 +415,12 @@ async fn run(
         drop(conn);
         drop(relay.take());
         let (mut recovered, child) = redial_target(&target, info.id).await?;
-        recovered.writer.send(&crate::theme::configure()).await?;
+        recovered
+            .writer
+            .send(&crate::terminal_config::configure(
+                &crate::terminal_config::get(&ctx),
+            ))
+            .await?;
         recovered
             .writer
             .send(&InputMsg::ColorScheme { dark: true })
@@ -1263,6 +1274,9 @@ mod tests {
             }).await.unwrap().id
         });
         let ctx = egui::Context::default();
+        let mut config = felis_client_core::config::EffectiveConfig::default();
+        config.theme.background = Some("#123456".into());
+        crate::terminal_config::install(&ctx, config);
         let (tx, repaints) = sync_mpsc::channel();
         ctx.set_request_repaint_callback(move |_| {
             let _ = tx.send(());
@@ -1275,7 +1289,7 @@ mod tests {
         });
         assert!(contains_text(
             &session.state.lock().unwrap(),
-            "COLOR_REPLY=1414/1717/1f1f"
+            "COLOR_REPLY=1212/3434/5656"
         ));
         drop(session);
         runtime.block_on(async {
