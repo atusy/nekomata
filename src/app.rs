@@ -479,7 +479,7 @@ impl App {
                 // The outgoing snapshot is already captured. Do not let an old
                 // output reply create an editor tab in either workspace now.
                 for pane in self.panes.values() {
-                    pane.session.tools.cancel_output();
+                    pane.session.output.cancel_output();
                 }
                 self.workspace_error = None;
                 self.workspaces_open = false;
@@ -944,14 +944,14 @@ impl App {
             .get(self.active)
             .and_then(|tab| self.panes.get(&tab.focused))
         {
-            pane.session.tools.command_output(edit);
+            pane.session.output.command_output(edit);
         }
     }
 
     fn poll_command_output(&mut self, ctx: &egui::Context) {
         for pane in self.panes.values() {
-            pane.session.tools.invalidate_changed_session();
-            let result = pane.session.tools.take_output();
+            pane.session.output.invalidate_changed_session();
+            let result = pane.session.output.take_output();
             match result {
                 Some(Ok(output)) if output.edit => {
                     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -2497,9 +2497,9 @@ mod tests {
         replacement.pending_editors.clear();
         drop(editor_tx);
         let outgoing = replacement.panes[&1].session.clone();
-        outgoing.tools.output.lock().unwrap().result = Some(Err("outgoing result".into()));
+        outgoing.output.output.lock().unwrap().result = Some(Err("outgoing result".into()));
         let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
-        assert!(outgoing.tools.output.lock().unwrap().result.is_none());
+        assert!(outgoing.output.output.lock().unwrap().result.is_none());
         assert!(output.status.success(), "{output:?}");
         let other = replacement.workspace_id.unwrap();
         assert_ne!(Some(other), session_id);

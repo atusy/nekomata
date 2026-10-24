@@ -301,9 +301,9 @@ mod tests {
         session.send(InputMsg::KeyBytes(b"printf '\\033]133;A\\007prompt> \\033]133;B\\007fake-command\\n\\033]133;C\\007OUTPUT_ONLY\\n\\033]133;D;0\\007'\r".to_vec()));
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            session.tools.command_output(false);
-            wait(&|| !session.tools.output.lock().unwrap().running);
-            let result = session.tools.take_output();
+            session.output.command_output(false);
+            wait(&|| !session.output.output.lock().unwrap().running);
+            let result = session.output.take_output();
             if let Some(Ok(output)) = result {
                 let text = String::from_utf8(output.data).unwrap();
                 if text.contains("OUTPUT_ONLY") {

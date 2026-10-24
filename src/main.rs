@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod colors;
+mod command_output;
 mod control;
 mod daemon;
 mod editor_output;
@@ -16,7 +17,6 @@ mod session;
 mod shortcuts;
 mod ssh;
 mod terminal_search;
-mod terminal_tools;
 #[cfg(test)]
 mod test_support;
 mod theme;

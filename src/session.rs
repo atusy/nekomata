@@ -181,7 +181,7 @@ pub struct Session {
     pub target: Target,
     pub attachment: Option<String>,
     pub search: crate::terminal_search::Tools,
-    pub tools: crate::terminal_tools::Tools,
+    pub output: crate::command_output::Tools,
     tx: Arc<InputQueue>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -230,8 +230,8 @@ impl Session {
         }));
         let search =
             crate::terminal_search::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
-        let tools =
-            crate::terminal_tools::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
+        let output =
+            crate::command_output::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
         let tx = Arc::new(InputQueue::default());
         let rx = tx.clone();
         let input_failed = Arc::new(AtomicBool::new(false));
@@ -275,7 +275,7 @@ impl Session {
             target,
             attachment,
             search,
-            tools,
+            output,
         }
     }
 
