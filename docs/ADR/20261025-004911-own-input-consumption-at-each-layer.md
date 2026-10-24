@@ -8,140 +8,94 @@
 
 ## Context and Problem Statement
 
-Input passes through nekomata, the felis client library, the felis daemon and
-the terminal application (a shell or TUI). These are responsibility boundaries:
-the client library runs inside nekomata, while the daemon owns the PTY and
-terminal state. Sharing terminal keybindings in [PR #9](https://github.com/atusy/nekomata/pull/9)
-raises the question of which layer interprets a key and whether handling it
-also forwards input to the next layer.
-
-Users may need to bypass a frontend shortcut to reach felis or a terminal
-application. Without an explicit boundary, "direct input" could incorrectly
-promise that bypassing nekomata also bypasses felis's own input handling.
+Input crosses several responsibility boundaries: nekomata, the felis client
+library, the felis daemon and the terminal application (a shell or TUI). The
+client library runs within the frontend process, while the daemon owns the PTY
+and terminal state. These components need a clear division of authority over
+input interpretation and propagation so that frontend policy and terminal
+behavior can evolve independently.
 
 ## Decision Drivers
 
-- Avoid duplicate actions and unintended input reaching a shell or TUI.
-- Reuse felis's common keybindings without duplicating them in nekomata.
-- Keep platform modifiers, IME and GUI focus decisions with the local client.
-- Keep terminal history and PTY operations with the daemon that owns them.
-- Make bypass behavior explicit without imposing an upstream felis feature.
+- Keep input policy close to the context and state it depends on.
+- Share common terminal input policy across frontends.
+- Avoid coupling the daemon to frontend-specific interaction state.
+- Respect each component's authority over its own input boundary.
 
 ## Considered Options
 
-1. Let each layer own consumption and forwarding, with common key interpretation
-   in the felis client library.
-2. Forward keys to the felis daemon and centralize shortcut interpretation there.
-3. Implement all shortcut interpretation in nekomata.
+1. Distribute input authority across layers, sharing common client policy in
+   the felis client library.
+2. Centralize input interpretation in the felis daemon.
+3. Centralize input interpretation in nekomata.
 
 ## Decision Outcome
 
-Choose option 1. Each layer decides whether input it receives is consumed or
-forwarded to its immediate next layer. Handling an input consumes it by default;
-handling and forwarding the same input requires an explicit behavior contract.
-An unhandled input remains available to the next layer, subject to the input
-context: text entered in a GUI search field, for example, belongs to that field
-rather than to the terminal.
-
-Forwarding does not require preserving a raw key event. A layer may translate
-input into a semantic action, a daemon request or terminal input bytes. A
-consumed shortcut can cause a downstream operation without forwarding its
-original keystroke to the shell.
+Choose option 1. Each layer owns the interpretation of input it receives and
+whether that input, or an operation derived from it, is forwarded to the next
+layer. Processing input at one layer does not by itself determine its effect
+on subsequent layers; propagation is the responsibility of the layer at that
+boundary.
 
 | Layer | Responsibility |
 | --- | --- |
-| nekomata | Route GUI input and handle workspace/UI-specific shortcuts, including tab and pane prefixes. Adapt remaining terminal input to the felis client library. |
-| felis client library | Interpret common terminal keybindings and expose their actions. Keep this policy reusable across frontends. |
-| nekomata and the client library adapter | Execute local actions such as font or clipboard changes, or translate terminal actions into daemon requests. |
-| felis daemon | Execute terminal/history requests and deliver application input through the PTY according to felis's protocol. |
-| Terminal application | Interpret the input that reaches its shell or TUI. |
+| nekomata | Frontend-specific interaction policy and integration with shared client policy. |
+| felis client library | Common terminal input interpretation reusable across frontends. |
+| felis daemon | Operations on daemon-owned terminal state and delivery through the PTY. |
+| Terminal application | Interpretation of input delivered to the shell or TUI. |
 
-For example, the client library maps `Ctrl+Shift+End` to a scroll-to-live action.
-The adapter sends the corresponding viewport request, and the daemon updates
-the view. The shell does not also receive `Ctrl+Shift+End`. The exact keybinding
-belongs to felis's keymap; this ADR does not freeze that binding or require a
-particular adapter API.
+This separation places common key interpretation in the client library, where
+frontend context is available, and terminal-state operations in the daemon.
+The interface between them can express operations rather than requiring the
+daemon to interpret frontend interactions.
 
-Sharing keymap ownership does not establish user-configuration support. The
-PR #9 implementation examined for this decision constructs
-`Keymap::default_for_platform()`; that alone does not load user overrides or
-propagate daemon configuration changes to nekomata. Configuration sources,
-loading and reload behavior need a separate contract. A future shared client
-configuration loader could avoid a duplicate nekomata keybinding configuration.
+Authority to bypass input interpretation is also local to each boundary.
+nekomata can delegate input to felis without applying its own interpretation,
+but cannot thereby determine how felis handles that input. Reaching a terminal
+application through such delegation depends on the interfaces felis provides.
+Bypassing interpretation does not bypass the architectural layers themselves.
 
-### Bypassing shortcut interpretation
-
-nekomata may provide an explicit operation, such as a prefix followed by a key,
-that bypasses its own shortcut interpretation and passes input to felis. Here,
-"direct" means bypassing a selected layer's shortcut interpretation, not
-skipping libraries, transport or the PTY.
-
-Bypassing nekomata does not bypass felis. Delivering a key directly to the
-terminal application requires felis to support the corresponding passthrough
-contract, including bypassing any applicable felis shortcut interpretation.
-Whether and how felis provides that mechanism is an upstream decision. nekomata
-must not promise application passthrough merely because it forwards a key to
-felis. This ADR permits a bypass feature but does not require or implement one.
+Specific bindings, consumption rules for individual interactions, bypass
+mechanisms and configuration loading are outside this decision's scope.
 
 ### Consequences
 
 Positive:
 
-- Common keybindings have one reusable interpretation policy, while nekomata
-  retains its workspace-specific controls.
-- The daemon receives terminal operations without needing GUI focus, platform
-  modifier policy or a return path for locally executed shortcuts.
-- Consumption and bypass contracts make duplicate input and shortcut conflicts
-  testable at each boundary.
+- Common input policy can evolve independently of nekomata-specific controls.
+- The daemon remains independent of frontend interaction state.
+- Ownership of propagation is explicit at each component boundary.
 
 Negative:
 
-- nekomata still needs an adapter for supported actions and GUI input events.
-- Reaching a terminal application through conflicting shortcuts can require
-  support at multiple layers; a nekomata-only bypass cannot guarantee it.
-- Upstream keymap changes require compatibility checks for supported actions
-  and for keys that must continue to reach terminal applications.
+- Frontends still need integration between local interactions and shared policy.
+- End-to-end input behavior requires coordination across component interfaces.
+- A frontend cannot independently guarantee behavior beyond its own boundary.
 
 ### Confirmation
 
-When implementing or changing input routing, verify that:
-
-- A nekomata shortcut executes once and does not leak its key or accompanying
-  text event into the terminal input path.
-- A supported common shortcut resolves through the shared keymap and executes
-  once, with the expected local action or daemon request.
-- Unhandled terminal input, including bare `End`, Option composition and IME
-  commits, remains available to the terminal input path. Unsupported common
-  actions do not silently swallow their keys.
-- GUI text fields retain their input, and workspace prefixes retain their
-  documented scope.
-- If a bypass feature is added, tests demonstrate exactly which interpretation
-  layer it skips. Application passthrough is verified against felis's contract.
-- Isolated daemon tests confirm history/navigation requests without delivering
-  the original shortcut to the shell. Native GUI input checks are reported
-  separately from unit and daemon tests.
-
-This record is proposed pending implementation and confirmation of the shared
-keymap routing. It does not claim that optional bypass support exists today.
+Architecture reviews should verify that input policy depends on the context
+owned by its layer, that common client policy remains reusable, and that
+propagation across each boundary is governed by the component responsible for
+that boundary. The daemon should not acquire dependencies on frontend-specific
+interaction state.
 
 ## Pros and Cons of the Options
 
-### Layer-owned routing with a shared client keymap
+### Layer-owned interpretation and forwarding
 
-Keeps common policy reusable and interprets local input where GUI context is
-available. Requires explicit adapters and consumption contracts between layers.
+Aligns authority with local context and state ownership while sharing client
+policy. Requires explicit interfaces and coordination across layers.
 
-### Daemon-owned shortcut interpretation
+### Daemon-owned interpretation
 
-Could centralize bindings across connected clients, but would couple daemon
-input policy to client capabilities and contexts. Local actions such as font
-changes would need to return to the originating client, and remote connections
-would need a policy for local versus remote shortcut configuration.
+Centralizes input policy for connected clients, but couples the daemon to
+frontend contexts and requires a return path for frontend-owned operations.
 
-### nekomata-owned shortcut interpretation
+### nekomata-owned interpretation
 
-Gives the frontend complete control but duplicates common felis bindings and
-their platform behavior. Each frontend would need to maintain that policy.
+Gives the frontend direct control, but duplicates common terminal policy and
+couples its evolution to each frontend implementation.
 
 ## More Information
 
