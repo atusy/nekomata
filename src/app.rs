@@ -1504,7 +1504,15 @@ impl App {
                 explicit_paste,
             );
         } else {
-            ctx.output_mut(|output| output.ime = None);
+            ctx.output_mut(|output| {
+                if output
+                    .ime
+                    .as_ref()
+                    .is_some_and(|ime| ime.purpose == egui::IMEPurpose::Terminal)
+                {
+                    output.ime = None;
+                }
+            });
         }
         self.paste_confirmation(ctx);
         if let Some(id) = self.picker.show(&self.runtime, ctx) {
