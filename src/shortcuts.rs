@@ -13,6 +13,8 @@ pub enum Action {
     Terminal(TerminalAction),
     NewWorkspace,
     OpenWorkspaces,
+    CopyCommandOutput,
+    EditCommandOutput,
     NewTab,
     Split(Axis),
     ClosePane,
