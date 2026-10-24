@@ -687,9 +687,11 @@ mod tests {
         assert_eq!(state.current, Some(0));
         state.advance(false);
         assert_eq!(state.current, Some(1));
-        assert!(!state.push(generation, hit("x".repeat(MAX_SEARCH_BYTES))));
+        let chunk = "x".repeat(MAX_SEARCH_BYTES / 2);
+        assert!(state.push(generation, hit(chunk.clone())));
+        assert!(!state.push(generation, hit(chunk)));
         assert!(state.limited);
-        assert_eq!(state.hits.len(), 2);
+        assert_eq!(state.hits.len(), 3);
     }
     #[test]
     #[ignore = "requires private felis daemon; run scripts/test-live.sh"]
