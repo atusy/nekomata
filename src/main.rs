@@ -5,6 +5,7 @@ mod control;
 mod daemon;
 mod doctor;
 mod interactions;
+mod editor_output;
 mod layout;
 mod links;
 #[cfg(test)]
@@ -30,6 +31,14 @@ fn main() -> eframe::Result {
         std::process::exit(2);
     });
     match command {
+        cli::Command::EditOutput { file, argv } => {
+            let code =
+                editor_output::run(std::path::Path::new(&file), &argv).unwrap_or_else(|error| {
+                    eprintln!("{error:#}");
+                    1
+                });
+            std::process::exit(code);
+        }
         cli::Command::Gui => {}
         cli::Command::Doctor { json } => match doctor::run(json) {
             Ok(true) => return Ok(()),

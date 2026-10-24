@@ -4,6 +4,10 @@ pub enum Command {
     Doctor {
         json: bool,
     },
+    EditOutput {
+        file: String,
+        argv: Vec<String>,
+    },
     DaemonRun,
     DaemonStop,
     SessionsList,
@@ -51,6 +55,10 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         ["doctor"] => Ok(Command::Doctor { json: false }),
         ["doctor", "--json"] => Ok(Command::Doctor { json: true }),
         ["doctor", "--help" | "-h"] => Ok(Command::Help),
+        ["__edit-output", file, "--", argv @ ..] if !argv.is_empty() => Ok(Command::EditOutput {
+            file: (*file).into(),
+            argv: argv.iter().map(|s| (*s).into()).collect(),
+        }),
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
         ["sessions", "list"] => Ok(Command::SessionsList),

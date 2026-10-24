@@ -9,6 +9,7 @@ use crate::layout::Axis;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Terminal(TerminalAction),
+    EditCommandOutput,
     NewSession,
     Sessions,
     NewTab,
@@ -53,6 +54,7 @@ fn supported_terminal_action(action: &TerminalAction) -> bool {
         } | TerminalAction::FontSize(_)
             | TerminalAction::Scroll(_)
             | TerminalAction::ScrollToPrompt(_)
+            | TerminalAction::Ipc(felis_client_core::IpcAction::OpenScrollbackSearch)
     )
 }
 
@@ -376,6 +378,37 @@ mod tests {
                     assert!(shortcuts.consume(input).is_empty());
                     assert_eq!(input.events, events);
                 });
+            },
+        );
+    }
+    #[test]
+    fn shared_search_chord_is_consumed_before_terminal_input() {
+        let ctx = eframe::egui::Context::default();
+        let mut shortcuts = Shortcuts::default();
+        let _ = crate::test_support::run(
+            &ctx,
+            eframe::egui::RawInput {
+                events: vec![press(
+                    Key::F,
+                    Modifiers {
+                        ctrl: true,
+                        shift: true,
+                        command: !cfg!(target_os = "macos"),
+                        ..Default::default()
+                    },
+                )],
+                ..Default::default()
+            },
+            |ui| {
+                ui.ctx().input_mut(|input| {
+                    assert_eq!(
+                        shortcuts.consume(input),
+                        [Action::Terminal(TerminalAction::Ipc(
+                            felis_client_core::IpcAction::OpenScrollbackSearch
+                        ))]
+                    );
+                    assert!(input.events.is_empty());
+                })
             },
         );
     }

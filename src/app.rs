@@ -117,6 +117,9 @@ pub struct App {
     runtime: tokio::runtime::Runtime,
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
+    pending_editors:
+        Vec<tokio::sync::oneshot::Receiver<anyhow::Result<crate::editor_output::EditorSession>>>,
+    output_error: Option<String>,
     panes: BTreeMap<u64, Pane>,
     tabs: Vec<Tab>,
     active: usize,
@@ -191,6 +194,8 @@ impl App {
             runtime,
             control,
             pending_attach: BTreeMap::new(),
+            pending_editors: vec![],
+            output_error: None,
             panes: BTreeMap::new(),
             tabs: vec![],
             active: 0,
@@ -785,44 +790,73 @@ impl App {
         }
     }
 
-    fn terminal_action(&mut self, ctx: &egui::Context, action: felis_client_core::Action) {
-        use felis_client_core::{Action as TerminalAction, ClipboardScope, FontSizeStep};
-        match action {
-            TerminalAction::Copy {
-                what: ClipboardScope::System,
-            } => self.action(ctx, Action::Copy),
-            TerminalAction::Paste {
-                from: ClipboardScope::System,
-            } => self.action(ctx, Action::Paste),
-            TerminalAction::FontSize(step) => self.action(
-                ctx,
-                match step {
-                    FontSizeStep::Increase => Action::FontScale(1.1),
-                    FontSizeStep::Decrease => Action::FontScale(1.0 / 1.1),
-                    FontSizeStep::Reset => Action::FontReset,
+    fn command_output(&self, edit: bool) {
+        if let Some(pane) = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| self.panes.get(&tab.focused))
+        {
+            pane.session.tools.command_output(edit);
+        }
+    }
+
+    fn poll_command_output(&mut self, ctx: &egui::Context) {
+        for pane in self.panes.values() {
+            let result = pane.session.tools.take_output();
+            match result {
+                Some(Ok(output)) if output.edit => {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    self.pending_editors.push(rx);
+                    let ctx = ctx.clone();
+                    self.runtime.spawn(async move {
+                        let result = crate::editor_output::open(
+                            output.data,
+                            output.position,
+                            output.origin,
+                            output.dims,
+                            output.target,
+                        )
+                        .await;
+                        let _ = tx.send(result);
+                        ctx.request_repaint();
+                    });
+                }
+                Some(Ok(output)) => match String::from_utf8(output.data) {
+                    Ok(text) => ctx.copy_text(text),
+                    Err(_) => self.output_error = Some("Command output is not UTF-8".into()),
                 },
-            ),
-            TerminalAction::Scroll(step) => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
-                let state = pane.session.state.lock().unwrap();
-                if state.connected
-                    && let Some(request) = state.scroll_action(step)
-                {
-                    pane.selection = None;
-                    pane.session.send(request);
-                }
+                Some(Err(error)) => self.output_error = Some(error),
+                None => {}
             }
-            TerminalAction::ScrollToPrompt(direction) => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
-                let state = pane.session.state.lock().unwrap();
-                if state.connected && !state.screen.alt_screen() {
-                    pane.selection = None;
-                    pane.session.send(InputMsg::JumpPrompt { direction });
-                }
+        }
+        let mut ready = vec![];
+        self.pending_editors.retain_mut(|rx| match rx.try_recv() {
+            Ok(result) => {
+                ready.push(result);
+                false
             }
-            // Only supported terminal actions are admitted by Shortcuts. Keep
-            // unsupported shared defaults available to the terminal program.
-            _ => {}
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
+        });
+        for result in ready {
+            match result {
+                Ok(editor) => {
+                    let id = self.add_pane(
+                        ctx,
+                        Some(format!("{:032x}", editor.id)),
+                        None,
+                        editor.target,
+                    );
+                    self.tabs.push(Tab {
+                        name: "Command output".into(),
+                        layout: Layout::Pane(id),
+                        focused: id,
+                        focus_history: vec![id],
+                    });
+                    self.active = self.tabs.len() - 1;
+                }
+                Err(error) => self.output_error = Some(format!("{error:#}")),
+            }
         }
     }
 
@@ -945,11 +979,61 @@ impl App {
         }
     }
 
+    fn terminal_action(&mut self, ctx: &egui::Context, action: felis_client_core::Action) {
+        use felis_client_core::{Action as TerminalAction, ClipboardScope, FontSizeStep};
+        match action {
+            TerminalAction::Ipc(felis_client_core::IpcAction::OpenScrollbackSearch) => {
+                self.open_search()
+            }
+            TerminalAction::PipeRegion {
+                source: felis_client_core::PipeRegionSource::CommandOutput,
+                target: felis_client_core::PipeTarget::Clipboard,
+                ansi: false,
+            } => self.command_output(false),
+            TerminalAction::Copy {
+                what: ClipboardScope::System,
+            } => self.action(ctx, Action::Copy),
+            TerminalAction::Paste {
+                from: ClipboardScope::System,
+            } => self.action(ctx, Action::Paste),
+            TerminalAction::FontSize(step) => self.action(
+                ctx,
+                match step {
+                    FontSizeStep::Increase => Action::FontScale(1.1),
+                    FontSizeStep::Decrease => Action::FontScale(1.0 / 1.1),
+                    FontSizeStep::Reset => Action::FontReset,
+                },
+            ),
+            TerminalAction::Scroll(step) => {
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let state = pane.session.state.lock().unwrap();
+                if state.connected
+                    && let Some(request) = state.scroll_action(step)
+                {
+                    pane.selection = None;
+                    pane.session.send(request);
+                }
+            }
+            TerminalAction::ScrollToPrompt(direction) => {
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let state = pane.session.state.lock().unwrap();
+                if state.connected && !state.screen.alt_screen() {
+                    pane.selection = None;
+                    pane.session.send(InputMsg::JumpPrompt { direction });
+                }
+            }
+            // Only supported terminal actions are admitted by Shortcuts. Keep
+            // unsupported shared defaults available to the terminal program.
+            _ => {}
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         if self.pending_workspace.is_some() {
             return;
         }
         match action {
+            Action::EditCommandOutput => self.command_output(true),
             Action::Terminal(action) => self.terminal_action(ctx, action),
             Action::NewSession => self.begin_workspace(None, None),
             Action::Sessions => {
@@ -1059,6 +1143,20 @@ impl eframe::App for App {
             return;
         }
         self.control_requests(ctx);
+        self.poll_command_output(ctx);
+        if self.output_error.is_some() {
+            egui::Panel::bottom("command-output-error").show(root_ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        egui::Color32::LIGHT_RED,
+                        self.output_error.as_deref().unwrap_or_default(),
+                    );
+                    if ui.button("Dismiss").clicked() {
+                        self.output_error = None;
+                    }
+                });
+            });
+        }
         if let Some(error) = &self.workspace_error {
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
@@ -1159,6 +1257,21 @@ impl eframe::App for App {
                     .ui(ui, |ui| {
                         ui.set_width(crate::theme::MENU_WIDTH);
                         for (label, command) in [
+                            (
+                                "Find in scrollback",
+                                Action::Terminal(felis_client_core::Action::Ipc(
+                                    felis_client_core::IpcAction::OpenScrollbackSearch,
+                                )),
+                            ),
+                            (
+                                "Copy last command output",
+                                Action::Terminal(felis_client_core::Action::PipeRegion {
+                                    source: felis_client_core::PipeRegionSource::CommandOutput,
+                                    target: felis_client_core::PipeTarget::Clipboard,
+                                    ansi: false,
+                                }),
+                            ),
+                            ("Edit last command output", Action::EditCommandOutput),
                             ("New session", Action::NewSession),
                             ("Switch session…", Action::Sessions),
                         ] {
@@ -1185,6 +1298,14 @@ impl eframe::App for App {
                         }
                         if menu_item(ui, "Attach terminal…", "").clicked() {
                             self.picker.open(&self.runtime, ctx);
+                            ui.close();
+                        }
+                        if menu_item(ui, "Copy last command output", "").clicked() {
+                            self.command_output(false);
+                            ui.close();
+                        }
+                        if menu_item(ui, "Edit last command output", "").clicked() {
+                            self.command_output(true);
                             ui.close();
                         }
                         if menu_item(ui, "Find in scrollback…", "").clicked() {
@@ -1433,6 +1554,21 @@ impl eframe::App for App {
                         response.request_focus();
                     }
                     for (label, command) in [
+                        (
+                            "Find in scrollback",
+                            Action::Terminal(felis_client_core::Action::Ipc(
+                                felis_client_core::IpcAction::OpenScrollbackSearch,
+                            )),
+                        ),
+                        (
+                            "Copy last command output",
+                            Action::Terminal(felis_client_core::Action::PipeRegion {
+                                source: felis_client_core::PipeRegionSource::CommandOutput,
+                                target: felis_client_core::PipeTarget::Clipboard,
+                                ansi: false,
+                            }),
+                        ),
+                        ("Edit last command output", Action::EditCommandOutput),
                         ("New session", Action::NewSession),
                         ("Switch session", Action::Sessions),
                         ("New tab", Action::NewTab),
@@ -2577,6 +2713,8 @@ mod tests {
             runtime,
             control,
             pending_attach: BTreeMap::new(),
+            pending_editors: vec![],
+            output_error: None,
             panes: BTreeMap::new(),
             tabs: vec![],
             active: 0,
@@ -2605,6 +2743,33 @@ mod tests {
         pump(&mut app, &|app| {
             app.panes[&1].session.state.lock().unwrap().connected
         });
+        app.terminal_action(
+            &ctx,
+            felis_client_core::Action::Ipc(felis_client_core::IpcAction::OpenScrollbackSearch),
+        );
+        assert!(app.searching());
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.search_bar(ui));
+        assert!(
+            ctx.egui_wants_keyboard_input(),
+            "search field must own typing"
+        );
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| app.search_bar(ui),
+        );
+        assert!(!app.searching());
+        assert!(!app.panes[&1].session.tools.search.lock().unwrap().active);
+
         let original = app.panes[&1]
             .session
             .state

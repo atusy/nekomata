@@ -8,7 +8,8 @@ use felis_client_core::{AttachIntent, CarrierConnection, Offer, RemoteSpawn, Sha
 use felis_protocol::{
     MessageKind,
     messages::{
-        ColSpan, ConnToClientMsg, ConnToDaemonMsg, InputMsg, SearchOptions, SearchSource,
+        ColSpan, ConnToClientMsg, ConnToDaemonMsg, GridDims, InputMsg, RegionPosition,
+        RegionSource, RegionToClientMsg, RegionToDaemonMsg, SearchOptions, SearchSource,
         SearchToClientMsg, SearchToDaemonMsg, StreamId, Subject, ViewportAnchor,
     },
 };
@@ -204,7 +205,25 @@ impl Drop for Job {
     }
 }
 
+pub struct Output {
+    pub data: Vec<u8>,
+    pub position: Option<RegionPosition>,
+    pub origin: felis_client_core::pipe::Origin,
+    pub dims: GridDims,
+    pub target: Target,
+    pub edit: bool,
+}
+#[derive(Default)]
+pub struct OutputState {
+    generation: u64,
+    source: Option<Source>,
+    pub running: bool,
+    pub result: Option<Result<Output, String>>,
+}
+
 pub struct Tools {
+    pub output: Arc<Mutex<OutputState>>,
+    output_task: Mutex<Option<Job>>,
     pub search: Arc<Mutex<SearchState>>,
     task: Mutex<Option<Job>>,
 
@@ -222,6 +241,8 @@ impl Tools {
         session: Arc<Mutex<State>>,
     ) -> Self {
         Self {
+            output: Arc::default(),
+            output_task: Mutex::default(),
             search: Arc::default(),
             task: Mutex::default(),
 
@@ -230,6 +251,85 @@ impl Tools {
             target,
             session,
         }
+    }
+
+    pub fn take_output(&self) -> Option<Result<Output, String>> {
+        let live = source(&self.session);
+        let mut state = self.output.lock().unwrap();
+        let result = state.result.take()?;
+        Some(if state.source == live {
+            result
+        } else {
+            Err("The session changed; request output again".into())
+        })
+    }
+
+    pub fn command_output(&self, edit: bool) {
+        self.output_task.lock().unwrap().take();
+        let from = source(&self.session);
+        let generation = {
+            let mut state = self.output.lock().unwrap();
+            state.generation = state.generation.wrapping_add(1);
+            state.source = from;
+            state.running = from.is_some();
+            state.result = from
+                .is_none()
+                .then(|| Err("Wait for the session to connect".into()));
+            state.generation
+        };
+        let Some(from) = from else {
+            return;
+        };
+        let (origin, dims) = {
+            let state = self.session.lock().unwrap();
+            (
+                felis_client_core::pipe::Origin {
+                    session_id: from.id,
+                    host: match &self.target {
+                        Target::Ssh { host, .. } => Some(host.clone()),
+                        _ => None,
+                    },
+                    osc7: state.screen.cwd().map(str::to_owned),
+                },
+                GridDims {
+                    rows: state.screen.screen().rows(),
+                    cols: state.screen.screen().cols(),
+                    pixel_w: 0,
+                    pixel_h: 0,
+                },
+            )
+        };
+        let (cancel, mut cancelled) = watch::channel(false);
+        *self.output_task.lock().unwrap() = Some(Job { cancel });
+        let target = self.target.clone();
+        let shared = self.output.clone();
+        let session = self.session.clone();
+        let ctx = self.ctx.clone();
+        self.runtime.spawn(async move {
+            let result = region_request(&target, from.id, &mut cancelled)
+                .await
+                .map(|(data, position)| Output {
+                    data,
+                    position,
+                    origin,
+                    dims,
+                    target,
+                    edit,
+                })
+                .map_err(|e| format!("{e:#}"));
+            let live = source(&session) == Some(from);
+            let mut state = shared.lock().unwrap();
+            if state.generation != generation {
+                return;
+            }
+            state.running = false;
+            state.result = Some(if live {
+                result
+            } else {
+                Err("The session changed; request output again".into())
+            });
+            ctx.request_repaint();
+        });
     }
 
     pub fn cancel_search(&self) {
@@ -296,6 +396,13 @@ impl Tools {
         };
         if stale {
             self.cancel_search();
+        }
+        let mut output = self.output.lock().unwrap();
+        if output.source != live && output.running {
+            self.output_task.lock().unwrap().take();
+            output.generation = output.generation.wrapping_add(1);
+            output.running = false;
+            output.result = Some(Err("The session changed; request output again".into()));
         }
     }
 }
@@ -410,6 +517,65 @@ async fn search_request(
     }
 }
 
+const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+async fn region_request(
+    target: &Target,
+    id: u128,
+    cancelled: &mut watch::Receiver<bool>,
+) -> Result<(Vec<u8>, Option<RegionPosition>)> {
+    let mut ops = tokio::select! {
+        _ = cancelled.changed() => bail!("output request cancelled"),
+        connected = tokio::time::timeout(Duration::from_secs(5), attached_ops(target, id)) => connected.context("output connection timed out")??,
+    };
+    let request = ops.conn.driver.issue_request()?;
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        ops.conn.writer.send_correlated(
+            &RegionToDaemonMsg::Request {
+                source: RegionSource::CommandOutput,
+                ansi: false,
+            },
+            felis_protocol::messages::Correlation::request(request),
+        ),
+    )
+    .await
+    .context("output request timed out")??;
+    let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
+    loop {
+        let frame = tokio::select! {
+            _ = cancelled.changed() => { bail!("output request cancelled"); },
+            _ = tokio::time::sleep_until(deadline) => { bail!("output request timed out"); },
+            frame = ops.conn.next_frame() => frame?.context("output connection closed")?,
+        };
+        match ops.conn.driver.classify(&frame)? {
+            Incoming::Payload(payload) if payload.kind == MessageKind::Region => {
+                if let Delivery::Deliver(delivered) =
+                    ops.conn.driver.decode::<RegionToClientMsg>(&payload)?
+                {
+                    let RegionToClientMsg::Reply { data, position, .. } = delivered.msg else {
+                        bail!("Unexpected streamed output response");
+                    };
+                    if data.is_empty() {
+                        bail!("No command output is available (shell integration required)");
+                    }
+                    if data.len() > MAX_OUTPUT_BYTES {
+                        bail!("Command output exceeds the 8 MiB limit");
+                    }
+                    return Ok((data, position));
+                }
+            }
+            Incoming::Control(ConnToClientMsg::Error {
+                subject: Subject::Request(id),
+                detail,
+                ..
+            }) if id == request => bail!("{detail}"),
+            Incoming::Payload(payload) if payload.correlation.is_none() => {}
+            Incoming::CancelIgnored { .. } => {}
+            other => bail!("Unexpected output response: {other:?}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,6 +592,68 @@ mod tests {
             anchor: None,
         }
     }
+    #[test]
+    fn search_navigation_rebases_history_and_drops_invalid_overlay_generations() {
+        let old = ViewportAnchor {
+            pushed: 100,
+            generation: 1,
+        };
+        let shown = ViewportAnchor {
+            pushed: 110,
+            generation: 1,
+        };
+        let mut screen = ShadowScreen::new(24, 80);
+        screen
+            .apply(&felis_protocol::messages::GridMsg::ViewportState {
+                lines_from_bottom: 20,
+                max: 124,
+                anchor: Some(shown),
+            })
+            .unwrap();
+        let mut state = SearchState {
+            active: true,
+            current: Some(0),
+            jump_pending: true,
+            hits: vec![Hit {
+                line: -10,
+                spans: vec![ColSpan {
+                    line_index: -10,
+                    col_start: 1,
+                    col_end: 3,
+                }],
+                anchor: Some(old),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            state.take_jump(&screen),
+            Some(InputMsg::Viewport {
+                lines_from_bottom: 32,
+                anchor: Some(shown)
+            })
+        );
+        assert_eq!(state.overlay(&screen).unwrap().visible_hits[0].row, 0);
+        screen
+            .apply(&felis_protocol::messages::GridMsg::ViewportState {
+                lines_from_bottom: 20,
+                max: 124,
+                anchor: Some(ViewportAnchor {
+                    generation: 2,
+                    ..shown
+                }),
+            })
+            .unwrap();
+        assert!(state.overlay(&screen).unwrap().visible_hits.is_empty());
+        state.jump_pending = true;
+        assert_eq!(
+            state.take_jump(&screen),
+            Some(InputMsg::Viewport {
+                lines_from_bottom: 22,
+                anchor: Some(old)
+            })
+        );
+    }
+
     #[test]
     fn superseded_search_results_cannot_replace_the_current_query() {
         let mut state = SearchState::default();
@@ -511,5 +739,40 @@ mod tests {
         assert!(session.state.lock().unwrap().connected);
         session.tools.cancel_search();
         assert!(!session.tools.search.lock().unwrap().active);
+        assert!(
+            session
+                .tools
+                .search
+                .lock()
+                .unwrap()
+                .overlay(&session.state.lock().unwrap().screen)
+                .is_none()
+        );
+        session.send(InputMsg::KeyBytes(b"printf '\\033]133;A\\007prompt> \\033]133;B\\007fake-command\\n\\033]133;C\\007OUTPUT_ONLY\\n\\033]133;D;0\\007'\r".to_vec()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            session.tools.command_output(false);
+            wait(&|| !session.tools.output.lock().unwrap().running);
+            let result = session.tools.take_output();
+            if let Some(Ok(output)) = result {
+                let text = String::from_utf8(output.data).unwrap();
+                if text.contains("OUTPUT_ONLY") {
+                    assert!(!text.contains("fake-command"), "{text}");
+                    assert!(!text.contains('\u{1b}'), "{text:?}");
+                    assert_eq!(
+                        output.origin.session_id,
+                        session.state.lock().unwrap().session_id.unwrap()
+                    );
+                    break;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "command output did not resolve"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(session.state.lock().unwrap().connected);
+        assert!(!session.state.lock().unwrap().detached);
     }
 }
