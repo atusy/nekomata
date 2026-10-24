@@ -102,6 +102,22 @@ pub struct State {
 }
 
 impl State {
+    pub fn scroll_action(&self, step: felis_client_core::ScrollStep) -> Option<InputMsg> {
+        use felis_client_core::ScrollStep;
+        let half_page = i32::from(self.screen.screen().rows() / 2).max(1);
+        match step {
+            ScrollStep::End => Some(InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None,
+            }),
+            ScrollStep::Home => self.scroll_request(i32::MAX),
+            ScrollStep::LineUp => self.scroll_request(1),
+            ScrollStep::LineDown => self.scroll_request(-1),
+            ScrollStep::HalfPageUp => self.scroll_request(half_page),
+            ScrollStep::HalfPageDown => self.scroll_request(-half_page),
+        }
+    }
+
     pub fn scroll_request(&self, rows: i32) -> Option<InputMsg> {
         if !self.connected || self.screen.alt_screen() {
             return None;
@@ -616,6 +632,31 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_scrolls_use_shared_steps_and_live_reset_has_no_history_anchor() {
+        use felis_client_core::ScrollStep;
+        let state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        assert_eq!(
+            state.scroll_action(ScrollStep::HalfPageUp),
+            Some(InputMsg::ViewportStep { rows: 12 })
+        );
+        assert_eq!(
+            state.scroll_action(ScrollStep::HalfPageDown),
+            Some(InputMsg::ViewportStep { rows: -12 })
+        );
+        assert_eq!(
+            state.scroll_action(ScrollStep::Home),
+            Some(InputMsg::ViewportStep { rows: i32::MAX })
+        );
+        assert_eq!(
+            state.scroll_action(ScrollStep::End),
+            Some(InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None
+            })
+        );
+    }
+
+    #[test]
     fn disconnected_panes_do_not_enqueue_scroll_steps() {
         let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
         state.connected = false;
@@ -1098,6 +1139,75 @@ mod tests {
                 .collect();
             text.contains(needle)
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_prompt_navigation_and_keyboard_scroll_use_daemon_history() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
+            ops.spawn_session(SpawnArgs {
+                command: "bash".into(),
+                args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
+                    r#"read -r line; for prompt in FIRST SECOND THIRD; do printf '\033]133;A\007%s_PROMPT\033]133;B\007\033]133;C\007\n' "$prompt"; for row in {1..35}; do printf 'OUTPUT_%s_%s\n' "$prompt" "$row"; done; printf '\033]133;D;0\007'; done; printf '\033]133;A\007NAVIGATION_READY'; read -r line"#.into()],
+                dims: Some(RequestedDims { rows: 24, cols: 80, pixel_w: 800, pixel_h: 480 }),
+                env_base: felis_client_core::env_base::capture(), ..Default::default()
+            }).await.unwrap().id
+        });
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "NAVIGATION_READY")
+        });
+        session.send(InputMsg::JumpPrompt {
+            direction: felis_protocol::messages::PromptJump::Previous,
+        });
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() > 0
+        });
+        let previous = session.state.lock().unwrap().screen.viewport();
+        session.send(InputMsg::JumpPrompt {
+            direction: felis_protocol::messages::PromptJump::Next,
+        });
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() < previous
+        });
+        let request = session
+            .state
+            .lock()
+            .unwrap()
+            .scroll_action(felis_client_core::ScrollStep::End)
+            .unwrap();
+        session.send(request);
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() == 0
+        });
+        let request = session
+            .state
+            .lock()
+            .unwrap()
+            .scroll_action(felis_client_core::ScrollStep::HalfPageUp)
+            .unwrap();
+        session.send(request);
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() == 12
+        });
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
     }
 
     #[test]
