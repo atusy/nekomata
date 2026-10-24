@@ -420,12 +420,8 @@ struct Ops {
     _relay: Option<tokio::process::Child>,
 }
 async fn attached_ops(target: &Target, id: u128) -> Result<Ops> {
-    let mut ops = if let Target::Ssh {
-        host,
-        socket: Some(socket),
-    } = target
-    {
-        let (conn, relay) = crate::ssh::connect(host, socket, Offer::ops()).await?;
+    let mut ops = if let Target::Ssh { host, socket } = target {
+        let (conn, relay) = crate::ssh::connect(host, socket.as_deref(), Offer::ops()).await?;
         Ops {
             conn,
             _relay: Some(relay),

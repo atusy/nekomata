@@ -333,24 +333,22 @@ async fn run(
             // Preserve local daemon auto-start for new shells only.
             drop(connect_or_spawn_daemon(socket, Offer::window(false)).await?);
         }
-        let (mut conn, relay): (CarrierConnection, _) = if let Target::Ssh {
-            host,
-            socket: Some(socket),
-        } = &target
-        {
-            let (conn, child) = crate::ssh::connect(host, socket, Offer::window(false)).await?;
-            (conn, Some(child))
-        } else {
-            (
-                connect_carrier(
-                    carrier.clone(),
-                    Offer::window(matches!(target, Target::Local(_))),
-                    RemoteSpawn::Refuse,
+        let (mut conn, relay): (CarrierConnection, _) =
+            if let Target::Ssh { host, socket } = &target {
+                let (conn, child) =
+                    crate::ssh::connect(host, socket.as_deref(), Offer::window(false)).await?;
+                (conn, Some(child))
+            } else {
+                (
+                    connect_carrier(
+                        carrier.clone(),
+                        Offer::window(matches!(target, Target::Local(_))),
+                        RemoteSpawn::Refuse,
+                    )
+                    .await?,
+                    None,
                 )
-                .await?,
-                None,
-            )
-        };
+            };
         let info = if let Some(id) = attach {
             conn.attach_by_prefix(id, felis_client_core::AttachIntent::Deliberate)
                 .await?
@@ -468,18 +466,14 @@ async fn redial_target(
     target: &Target,
     id: u128,
 ) -> Result<(CarrierConnection, Option<tokio::process::Child>)> {
-    if let Target::Ssh {
-        host,
-        socket: Some(socket),
-    } = target
-    {
-        // Carrier::Ssh cannot represent an explicit remote socket. Reuse the
-        // shared retry ladder around the existing literal-safe relay adapter.
+    if let Target::Ssh { host, socket } = target {
+        // Retain every SSH child through retry so timed-out handshakes and
+        // replaced connections cannot leave a relay running.
         return felis_transport::retry::retry_while(
             || async {
                 let attempt = async {
                     let (mut conn, child) =
-                        crate::ssh::connect(host, socket, Offer::window(false)).await?;
+                        crate::ssh::connect(host, socket.as_deref(), Offer::window(false)).await?;
                     conn.attach_by_prefix(
                         format!("{id:032x}"),
                         felis_client_core::AttachIntent::Automatic,
