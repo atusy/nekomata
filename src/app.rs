@@ -1593,12 +1593,8 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
                         MouseAction::Press,
                     ));
                 }
-            } else {
-                let offset = (i64::from(shadow.viewport()) + i64::from(lines)).max(0) as u32;
-                pane.session.send(InputMsg::Viewport {
-                    lines_from_bottom: offset,
-                    anchor: shadow.viewport_anchor(),
-                });
+            } else if let Some(request) = state.scroll_request(lines) {
+                pane.session.send(request);
             }
         }
     }

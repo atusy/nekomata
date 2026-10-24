@@ -49,6 +49,7 @@ fn measure(host: &RenderState, panes: usize, rows: u16, cols: u16, dirty: &str) 
         .map(|_| {
             let mut state = State {
                 screen: ShadowScreen::new(rows, cols),
+                effective_minor: 0,
                 pull: PullScheduler::new(false),
                 redraw: RedrawScheduler::new(),
                 colors: Default::default(),
