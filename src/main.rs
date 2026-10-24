@@ -3,6 +3,7 @@ mod cli;
 mod colors;
 mod control;
 mod daemon;
+mod editor_output;
 mod layout;
 mod links;
 #[cfg(test)]
@@ -15,6 +16,7 @@ mod session;
 mod shortcuts;
 mod ssh;
 mod terminal_search;
+mod terminal_tools;
 #[cfg(test)]
 mod test_support;
 mod theme;
@@ -28,6 +30,14 @@ fn main() -> eframe::Result {
         std::process::exit(2);
     });
     match command {
+        cli::Command::EditOutput { file, argv } => {
+            let code =
+                editor_output::run(std::path::Path::new(&file), &argv).unwrap_or_else(|error| {
+                    eprintln!("{error:#}");
+                    1
+                });
+            std::process::exit(code);
+        }
         cli::Command::Gui => {}
         cli::Command::DaemonRun => {
             if let Err(error) = daemon::run() {

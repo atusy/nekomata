@@ -159,6 +159,9 @@ pub struct App {
     runtime: tokio::runtime::Runtime,
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
+    pending_editors:
+        Vec<tokio::sync::oneshot::Receiver<anyhow::Result<crate::editor_output::EditorSession>>>,
+    output_error: Option<String>,
     panes: BTreeMap<u64, Pane>,
     tabs: Vec<Tab>,
     active: usize,
@@ -232,6 +235,8 @@ impl App {
             runtime,
             control,
             pending_attach: BTreeMap::new(),
+            pending_editors: vec![],
+            output_error: None,
             panes: BTreeMap::new(),
             tabs: vec![],
             active: 0,
@@ -448,6 +453,10 @@ impl App {
                 self.pending_workspace.is_none() && self.pending_attach.is_empty(),
                 "another attach is in progress"
             );
+            anyhow::ensure!(
+                self.pending_editors.is_empty(),
+                "wait for the command output editor to open before switching sessions"
+            );
             anyhow::ensure!(self.workspace_id.is_some(), "nekomata session is not ready");
             anyhow::ensure!(
                 session != self.workspace_id,
@@ -467,6 +476,11 @@ impl App {
         })();
         match result {
             Ok(()) => {
+                // The outgoing snapshot is already captured. Do not let an old
+                // output reply create an editor tab in either workspace now.
+                for pane in self.panes.values() {
+                    pane.session.tools.cancel_output();
+                }
                 self.workspace_error = None;
                 self.workspaces_open = false;
                 self.picker.visible = false;
@@ -924,12 +938,85 @@ impl App {
         }
     }
 
+    fn command_output(&self, edit: bool) {
+        if let Some(pane) = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| self.panes.get(&tab.focused))
+        {
+            pane.session.tools.command_output(edit);
+        }
+    }
+
+    fn poll_command_output(&mut self, ctx: &egui::Context) {
+        for pane in self.panes.values() {
+            pane.session.tools.invalidate_changed_session();
+            let result = pane.session.tools.take_output();
+            match result {
+                Some(Ok(output)) if output.edit => {
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    self.pending_editors.push(rx);
+                    let ctx = ctx.clone();
+                    self.runtime.spawn(async move {
+                        let result = crate::editor_output::open(
+                            output.data,
+                            output.position,
+                            output.origin,
+                            output.dims,
+                            output.target,
+                        )
+                        .await;
+                        let _ = tx.send(result);
+                        ctx.request_repaint();
+                    });
+                }
+                Some(Ok(output)) => match String::from_utf8(output.data) {
+                    Ok(text) => ctx.copy_text(text),
+                    Err(_) => self.output_error = Some("Command output is not UTF-8".into()),
+                },
+                Some(Err(error)) => self.output_error = Some(error),
+                None => {}
+            }
+        }
+        let mut ready = vec![];
+        self.pending_editors.retain_mut(|rx| match rx.try_recv() {
+            Ok(result) => {
+                ready.push(result);
+                false
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
+        });
+        for result in ready {
+            match result {
+                Ok(editor) => {
+                    let id = self.add_pane(
+                        ctx,
+                        Some(format!("{:032x}", editor.id)),
+                        None,
+                        editor.target,
+                    );
+                    self.tabs.push(Tab {
+                        name: "Command output".into(),
+                        layout: Layout::Pane(id),
+                        focused: id,
+                        focus_history: vec![id],
+                    });
+                    self.active = self.tabs.len() - 1;
+                }
+                Err(error) => self.output_error = Some(format!("{error:#}")),
+            }
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         if self.pending_workspace.is_some() {
             return;
         }
         match action {
             Action::Search => self.open_search(),
+            Action::CopyCommandOutput => self.command_output(false),
+            Action::EditCommandOutput => self.command_output(true),
             Action::NewSession => self.begin_workspace(None, None),
             Action::Sessions => {
                 self.workspaces_open = true;
@@ -1027,6 +1114,20 @@ impl App {
             return;
         }
         self.control_requests(ctx);
+        self.poll_command_output(ctx);
+        if self.output_error.is_some() {
+            egui::Panel::bottom("command-output-error").show(root_ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        egui::Color32::LIGHT_RED,
+                        self.output_error.as_deref().unwrap_or_default(),
+                    );
+                    if ui.button("Dismiss").clicked() {
+                        self.output_error = None;
+                    }
+                });
+            });
+        }
         if let Some(error) = &self.workspace_error {
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
@@ -1117,6 +1218,8 @@ impl App {
                         ui.set_width(crate::theme::MENU_WIDTH);
                         for (label, command) in [
                             ("Find in scrollback", Action::Search),
+                            ("Copy last command output", Action::CopyCommandOutput),
+                            ("Edit last command output", Action::EditCommandOutput),
                             ("New session", Action::NewSession),
                             ("Switch session…", Action::Sessions),
                         ] {
@@ -1356,6 +1459,8 @@ impl App {
                     }
                     for (label, command) in [
                         ("Find in scrollback", Action::Search),
+                        ("Copy last command output", Action::CopyCommandOutput),
+                        ("Edit last command output", Action::EditCommandOutput),
                         ("New session", Action::NewSession),
                         ("Switch session", Action::Sessions),
                         ("New tab", Action::NewTab),
@@ -2381,7 +2486,20 @@ mod tests {
             pump(app, &|_| task.is_finished());
             app.runtime.block_on(task).unwrap()
         };
+        let (editor_tx, editor_rx) = tokio::sync::oneshot::channel();
+        replacement.pending_editors.push(editor_rx);
         let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("wait for the command output editor")
+        );
+        assert_eq!(replacement.snapshot(), before);
+        replacement.pending_editors.clear();
+        drop(editor_tx);
+        let outgoing = replacement.panes[&1].session.clone();
+        outgoing.tools.output.lock().unwrap().result = Some(Err("outgoing result".into()));
+        let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
+        assert!(outgoing.tools.output.lock().unwrap().result.is_none());
         assert!(output.status.success(), "{output:?}");
         let other = replacement.workspace_id.unwrap();
         assert_ne!(Some(other), session_id);
@@ -2557,6 +2675,8 @@ mod tests {
             runtime,
             control,
             pending_attach: BTreeMap::new(),
+            pending_editors: vec![],
+            output_error: None,
             panes: BTreeMap::new(),
             tabs: vec![],
             active: 0,
