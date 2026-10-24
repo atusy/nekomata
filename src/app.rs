@@ -1277,7 +1277,7 @@ impl eframe::App for App {
                                     state.corner_radius = egui::CornerRadius::same(5);
                                 }
                                 for (i, tab) in self.tabs.iter().enumerate() {
-                                    let title = self.panes[&tab.focused]
+                                    let mut title = self.panes[&tab.focused]
                                         .session
                                         .state
                                         .lock()
@@ -1286,6 +1286,10 @@ impl eframe::App for App {
                                         .title()
                                         .unwrap_or(&tab.name)
                                         .to_owned();
+                                    let attention = layout_has_attention(&tab.layout, &self.panes);
+                                    if attention {
+                                        title.insert_str(0, "● ");
+                                    }
                                     let selected = self.active == i;
                                     let text = egui::RichText::new(title).color(if selected {
                                         FG
@@ -1346,6 +1350,13 @@ impl eframe::App for App {
         let os_focused = ctx.input(|i| i.focused);
         for (&id, pane) in &mut self.panes {
             let desired = id == focused && os_focused && !modal;
+            if desired {
+                let mut state = pane.session.state.lock().unwrap();
+                if state.attention {
+                    state.attention = false;
+                    ctx.request_repaint();
+                }
+            }
             if pane.reported_focus != Some(desired) {
                 pane.session
                     .send(InputMsg::FocusChange { focused: desired });
@@ -1546,6 +1557,17 @@ fn menu_separator(ui: &mut egui::Ui) {
     ui.add_space(5.0);
 }
 
+fn layout_has_attention(layout: &Layout, panes: &BTreeMap<u64, Pane>) -> bool {
+    match layout {
+        Layout::Pane(id) => panes
+            .get(id)
+            .is_some_and(|pane| pane.session.state.lock().unwrap().attention),
+        Layout::Split { first, second, .. } => {
+            layout_has_attention(first, panes) || layout_has_attention(second, panes)
+        }
+    }
+}
+
 fn draw_layout(
     ui: &mut egui::Ui,
     layout: &mut Layout,
@@ -1724,6 +1746,9 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         pane.session.frame_submitted(&mut state);
     }
     let text_rect = renderer.content_rect(text_rect);
+    if state.attention {
+        painter.rect_stroke(rect, 0, Stroke::new(1.5, ACCENT), egui::StrokeKind::Inside);
+    }
     let shadow = &state.screen;
     let screen = shadow.screen();
     let cursor = screen.cursor();

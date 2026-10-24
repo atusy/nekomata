@@ -62,6 +62,7 @@ fn measure(host: &RenderState, panes: usize, rows: u16, cols: u16, dirty: &str) 
                 detached: false,
                 exited: false,
                 clipboard: None,
+                attention: false,
             };
             for row in 0..rows {
                 write_row(&mut state.screen, row, &line);
