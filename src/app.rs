@@ -41,6 +41,7 @@ struct Pane {
         Option<felis_protocol::messages::ViewportAnchor>,
         u16,
     )>,
+    pending_paste: Option<crate::interactions::PendingPaste>,
 }
 
 impl Pane {
@@ -63,6 +64,7 @@ impl Pane {
             search_ignore_case: true,
             search_submitted: None,
             search_paint_key: None,
+            pending_paste: None,
         }
     }
 
@@ -154,6 +156,7 @@ pub struct App {
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch>,
+    paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
     runtime: tokio::runtime::Runtime,
@@ -227,6 +230,7 @@ impl App {
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
+            paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
             runtime,
@@ -815,6 +819,7 @@ impl App {
                 let pane = self.panes.get_mut(&id).unwrap();
                 pane.session = pending.session;
                 pane.links = Default::default();
+                pane.pending_paste = None;
                 pane.dims = (0, 0);
                 pane.selection = None;
                 pane.reported_focus = None;
@@ -968,6 +973,37 @@ impl App {
         }
     }
 
+    fn paste_confirmation(&mut self, ctx: &egui::Context) {
+        let Some((&id, pane)) = self
+            .panes
+            .iter_mut()
+            .find(|(_, pane)| pane.pending_paste.is_some())
+        else {
+            return;
+        };
+        let label = pane.pending_paste.as_ref().unwrap().label();
+        let response =
+            egui::Modal::new(egui::Id::unique("paste-confirmation").with(id)).show(ctx, |ui| {
+                ui.heading("Confirm paste");
+                ui.label(label);
+                ui.horizontal(|ui| {
+                    let confirm = ui.button("Paste").clicked();
+                    let cancel = ui.button("Cancel").clicked();
+                    (confirm, cancel)
+                })
+                .inner
+            });
+        if response.inner.0 {
+            let pending = pane.pending_paste.take().unwrap();
+            let state = pane.session.state.lock().unwrap();
+            if pending.is_current(state.connected, state.reconnects) {
+                pane.session.send(InputMsg::Paste(pending.into_bytes()));
+            }
+        } else if response.inner.1 || response.should_close() {
+            pane.pending_paste = None;
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         if self.pending_workspace.is_some() {
             return;
@@ -989,7 +1025,18 @@ impl App {
             }
             Action::FontScale(scale) => self.font_size = (self.font_size * scale).clamp(6.0, 72.0),
             Action::FontReset => self.font_size = 15.0,
-            Action::Paste => ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+            Action::Paste => {
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let state = pane.session.state.lock().unwrap();
+                if state.connected && self.paste_requested.is_none() {
+                    self.paste_requested = Some((
+                        ctx.cumulative_frame_nr(),
+                        state.reconnects,
+                        pane.session.clone(),
+                    ));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                }
+            }
             Action::Copy => {
                 let pane = &self.panes[&self.tabs[self.active].focused];
                 if let Some(selection) = pane.selection {
@@ -1105,10 +1152,20 @@ impl App {
         }
         for pane in self.panes.values_mut() {
             pane.links.tick(&self.runtime, ctx);
+            let state = pane.session.state.lock().unwrap();
+            if pane
+                .pending_paste
+                .as_ref()
+                .is_some_and(|pending| !pending.is_current(state.connected, state.reconnects))
+            {
+                pane.pending_paste = None;
+            }
         }
+        let paste_pending = self.panes.values().any(|pane| pane.pending_paste.is_some());
         let mut action = None;
         // Consume application shortcuts before forwarding terminal events.
-        if !self.picker.visible
+        if !paste_pending
+            && !self.picker.visible
             && !self.help
             && !self.palette
             && !self.workspaces_open
@@ -1123,7 +1180,8 @@ impl App {
                 }
             }
         }
-        if !self.picker.visible
+        if !paste_pending
+            && !self.picker.visible
             && !self.help
             && !self.palette
             && !self.workspaces_open
@@ -1142,7 +1200,7 @@ impl App {
                     .inner_margin(egui::Margin::symmetric(8, 6)),
             )
             .show(root_ui, |ui| {
-                if self.pending_workspace.is_some() {
+                if self.pending_workspace.is_some() || paste_pending {
                     ui.disable();
                 }
                 ui.horizontal(|ui| {
@@ -1327,7 +1385,8 @@ impl App {
         if self.tabs.is_empty() {
             return;
         }
-        let modal = self.searching()
+        let modal = paste_pending
+            || self.searching()
             || self.picker.visible
             || self.help
             || self.palette
@@ -1337,7 +1396,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(root_ui, |ui| {
-                if self.pending_workspace.is_some() {
+                if self.pending_workspace.is_some() || paste_pending {
                     ui.disable();
                 }
                 ui.interact(
@@ -1369,10 +1428,46 @@ impl App {
                 pane.reported_focus = Some(desired);
             }
         }
+        // eframe delivers RequestPaste after the requesting frame. Consume its
+        // intent even for an empty clipboard, so a later native Ctrl-V stays a key.
+        let mut explicit_paste = false;
+        let mut stale_paste = false;
+        if self
+            .paste_requested
+            .as_ref()
+            .is_some_and(|(frame, _, _)| ctx.cumulative_frame_nr() > *frame)
+        {
+            let (frame, generation, origin) = self.paste_requested.take().unwrap();
+            let pane = &self.panes[&focused];
+            explicit_paste = os_focused
+                && !modal
+                && requested_paste_is_current(
+                    (frame, generation, &origin),
+                    ctx.cumulative_frame_nr(),
+                    &pane.session,
+                );
+            stale_paste = !explicit_paste;
+        }
+        if stale_paste {
+            ctx.input_mut(|input| {
+                input.events.retain(|event| {
+                    !matches!(event, egui::Event::Paste(_) | egui::Event::PasteImage(_))
+                })
+            });
+        }
         if !modal {
             let pane = self.panes.get_mut(&focused).unwrap();
-            terminal_input(ctx, &mut pane.selection, &pane.session);
+            terminal_input(
+                ctx,
+                &mut pane.selection,
+                &pane.session,
+                &mut pane.pending_paste,
+                explicit_paste,
+            );
+        } else {
+            ctx.output_mut(|output| output.ime = None);
         }
+        self.paste_confirmation(ctx);
         if let Some(id) = self.picker.show(&self.runtime, ctx) {
             self.add_tab(ctx, Some(id));
         }
@@ -1388,6 +1483,7 @@ impl App {
                 ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
                 ui.label("Hover an OSC 8 link to preview its URL; Cmd+click (macOS) or Ctrl+click (Linux) opens it.");
+                ui.label("Pastes containing control characters ask for confirmation when bracketed paste is off.");
             });
         }
         if self.palette {
@@ -1732,6 +1828,7 @@ fn draw_pane(
     if generation != pane.connection_generation {
         pane.connection_generation = generation;
         pane.links = Default::default();
+        pane.pending_paste = None;
         pane.dims = (0, 0);
         pane.reported_focus = None;
         pane.selection = None;
@@ -2118,7 +2215,26 @@ fn mouse_input(
     })
 }
 
-fn terminal_input(ctx: &egui::Context, selection: &mut Option<Selection>, session: &Session) {
+/// Native clipboard replies are valid for one frame and one connection only.
+fn requested_paste_is_current(
+    (frame, generation, origin): (u64, u64, &Arc<Session>),
+    current_frame: u64,
+    focused: &Arc<Session>,
+) -> bool {
+    let state = focused.state.lock().unwrap();
+    current_frame == frame + 1
+        && Arc::ptr_eq(origin, focused)
+        && state.connected
+        && state.reconnects == generation
+}
+
+fn terminal_input(
+    ctx: &egui::Context,
+    selection: &mut Option<Selection>,
+    session: &Session,
+    pending_paste: &mut Option<crate::interactions::PendingPaste>,
+    mut explicit_paste: bool,
+) {
     use felis_protocol::messages::{Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods};
     let events = ctx.input(|i| i.events.clone());
     let has_text = events
@@ -2140,14 +2256,32 @@ fn terminal_input(ctx: &egui::Context, selection: &mut Option<Selection>, sessio
             _ => KeyEventKind::Press,
         };
 
-        if let Some(control) = clipboard_control(&event, mods, cfg!(target_os = "macos")) {
+        let requested_paste =
+            matches!(event, egui::Event::Paste(_)) && std::mem::take(&mut explicit_paste);
+        if !requested_paste
+            && let Some(control) = clipboard_control(&event, mods, cfg!(target_os = "macos"))
+        {
             *selection = None;
             session.send(control);
             continue;
         }
         let key = match event {
             egui::Event::Paste(text) => {
-                session.send(InputMsg::Paste(text.into_bytes()));
+                let state = session.state.lock().unwrap();
+                if !state.connected {
+                    continue;
+                }
+                match crate::interactions::PendingPaste::new(
+                    text,
+                    state.screen.bracketed_paste(),
+                    state.reconnects,
+                ) {
+                    Ok(pending) => {
+                        *pending_paste = Some(pending);
+                        break;
+                    }
+                    Err(bytes) => session.send(InputMsg::Paste(bytes)),
+                }
                 continue;
             }
             egui::Event::Copy => {
@@ -2307,6 +2441,63 @@ mod tests {
         pane.search_query.clear();
         pane.navigate_search(true);
         assert!(!pane.session.search.search.lock().unwrap().active);
+    }
+
+    #[test]
+    fn unsafe_paste_stops_forwarding_the_rest_of_the_input_frame() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let ctx = egui::Context::default();
+        // This current-thread runtime is never driven: no daemon is contacted.
+        let session = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local("/unused-nekomata-test.sock".into()),
+            None,
+            None,
+            vec![],
+        );
+        let session = Arc::new(session);
+        session.state.lock().unwrap().connected = true;
+        assert!(requested_paste_is_current((4, 0, &session), 5, &session));
+        assert!(!requested_paste_is_current((4, 0, &session), 6, &session));
+        assert!(!requested_paste_is_current((4, 1, &session), 5, &session));
+        let other = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local("/unused-other.sock".into()),
+            None,
+            None,
+            vec![],
+        );
+        let other = Arc::new(other);
+        other.state.lock().unwrap().connected = true;
+        assert!(!requested_paste_is_current((4, 0, &session), 5, &other));
+        session.state.lock().unwrap().connected = false;
+        assert!(!requested_paste_is_current((4, 0, &session), 5, &session));
+        session.state.lock().unwrap().connected = true;
+        let original = Some(Selection::new(GridPos { row: 0, col: 1 }));
+        let mut selection = original;
+        let mut pending = None;
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![
+                    egui::Event::Paste("echo test\n".into()),
+                    egui::Event::Text("must not reach shell".into()),
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                ui.ctx()
+                    .input_mut(|input| input.modifiers = egui::Modifiers::CTRL);
+                terminal_input(ui.ctx(), &mut selection, &session, &mut pending, true)
+            },
+        );
+        assert_eq!(pending.unwrap().into_bytes(), b"echo test\n");
+        assert_eq!(selection, original, "a later key would clear the selection");
     }
 
     #[test]
@@ -2626,6 +2817,7 @@ mod tests {
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
+            paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
             runtime,
