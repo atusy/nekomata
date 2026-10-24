@@ -253,6 +253,14 @@ impl Tools {
         }
     }
 
+    pub fn cancel_output(&self) {
+        self.output_task.lock().unwrap().take();
+        let mut state = self.output.lock().unwrap();
+        state.generation = state.generation.wrapping_add(1);
+        state.running = false;
+        state.result = None;
+    }
+
     pub fn take_output(&self) -> Option<Result<Output, String>> {
         let live = source(&self.session);
         let mut state = self.output.lock().unwrap();
