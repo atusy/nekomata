@@ -90,6 +90,19 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 
 ![ホバー時のボタン](docs/images/terminal-tools-search-hover.png)
 
+## 環境の診断
+
+```sh
+nekomata doctor
+nekomata doctor --json
+# インストールせずに実行する場合
+nix run . -- doctor
+```
+
+GPUデバイスの作成、クリップボードのバックエンド初期化、実際に使うフォントとフォールバックの解決を確認します。`--json` は機械可読の診断結果を出力します。検査で失敗がなければ終了コード0、利用できない項目や診断の実行エラーがあると1、引数が不正な場合は2を返します。Waylandではウィンドウがないと検査できないクリップボードを「未検証」とし、それだけでは失敗にしません。JSONの `clipboard_status` は `available` / `unavailable` / `unverified` で区別します。`clipboard.available: false` も、`unverified` の場合はGUIで利用不可という意味ではありません。
+
+デーモンは起動せず、クリップボードの内容を読み書きしません。GUIウィンドウを実際に表示する検査やクリップボード転送の検査ではないため、成功しても画面表示・キー入力・IME・コピー＆ペーストの実機確認を代替しません。Linuxの表示環境がないシェルでは、GPU検査が通ってもクリップボードが利用できないことがあります。
+
 ## nekomataセッションの保存・切り替え
 
 nekomataのセッションは、タブ、ペインの分割配置、各ペインのfelis接続先、activeなタブとペイン、フォーカス履歴、文字サイズをまとめた作業環境です。felisのセッション（1つのシェル）とは別のIDを持ちます。
