@@ -60,7 +60,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 | 文字サイズを初期値に戻す | Ctrl+Shift+0 / Cmd+0（macOS） |
 | 文字サイズを1.1倍 / 1÷1.1倍にする | Ctrl+Shift+= / Ctrl+Shift+-（macOSでは Cmd+= / Cmd+- も利用可能） |
 | コマンドパレット | Alt+Shift+P |
-| スクロールバック検索 | Ctrl+Shift+F / Cmd+F（macOS） |
+| スクロールバック検索 | Ctrl+Shift+F / Cmd+F（macOS、Shiftの有無は問わない） |
 | 選択をコピー | Cmd+C（macOS） / Ctrl+Shift+C（Linux） |
 | 貼り付け | Ctrl+Shift+V / Cmd+V（macOS） |
 | 半画面分上 / 下へスクロール | Shift+PageUp / Shift+PageDown |

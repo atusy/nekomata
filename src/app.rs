@@ -951,6 +951,9 @@ impl App {
                     pane.session.send(request);
                 }
             }
+            TerminalAction::Ipc(felis_client_core::IpcAction::OpenScrollbackSearch) => {
+                self.open_search()
+            }
             TerminalAction::ScrollToPrompt(direction) => {
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
                 let state = pane.session.state.lock().unwrap();

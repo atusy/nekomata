@@ -1,6 +1,6 @@
 use eframe::egui::{Event, InputState, Key};
 use felis_client_core::{
-    Action as TerminalAction, Chord, ClipboardScope, KeyCode, Keymap,
+    Action as TerminalAction, Chord, ClipboardScope, IpcAction, KeyCode, Keymap,
     Modifiers as TerminalModifiers, NamedKey,
 };
 
@@ -54,6 +54,7 @@ fn supported_terminal_action(action: &TerminalAction) -> bool {
         } | TerminalAction::FontSize(_)
             | TerminalAction::Scroll(_)
             | TerminalAction::ScrollToPrompt(_)
+            | TerminalAction::Ipc(IpcAction::OpenScrollbackSearch)
     )
 }
 
@@ -130,10 +131,6 @@ impl Shortcuts {
                 // Preserve bare End for the terminal, including editors. Explicit
                 // Ctrl+Shift+End is always available to return to the live view.
                 None
-            } else if (*key == Key::F && mods.mac_cmd && !mods.ctrl && !mods.alt && !mods.shift)
-                || (*key == Key::F && mods.ctrl && mods.shift && !mods.alt && !mods.mac_cmd)
-            {
-                Some(Action::Search)
             } else {
                 self.terminal
                     .resolve(&terminal_chord(*key, *mods))
@@ -243,12 +240,12 @@ mod tests {
     }
 
     #[test]
-    fn search_shortcuts_capture_only_the_documented_chords() {
+    fn search_shortcuts_follow_the_shared_keymap_and_capture_only_its_chords() {
         for (modifiers, opens_search) in [
             (Modifiers::CTRL | Modifiers::SHIFT, true),
             (Modifiers::MAC_CMD, true),
             (Modifiers::CTRL, false),
-            (Modifiers::MAC_CMD | Modifiers::SHIFT, false),
+            (Modifiers::MAC_CMD | Modifiers::SHIFT, true), // felis ignores Shift on Cmd chords
             (Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT, false),
             (Modifiers::NONE, false),
         ] {
@@ -266,7 +263,9 @@ mod tests {
                         assert_eq!(
                             actions,
                             if opens_search {
-                                vec![Action::Search]
+                                vec![Action::Terminal(TerminalAction::Ipc(
+                                    felis_client_core::IpcAction::OpenScrollbackSearch,
+                                ))]
                             } else {
                                 vec![]
                             }
