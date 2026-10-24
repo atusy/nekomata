@@ -22,10 +22,6 @@ impl PendingPaste {
         connected && self.generation == generation
     }
 
-    pub fn label(&self) -> String {
-        self.question.label().trim_end_matches(" [y/N]").to_owned()
-    }
-
     pub fn into_bytes(self) -> Vec<u8> {
         match self.question {
             felis_client_core::confirm::PendingConfirm::Paste(bytes) => bytes,

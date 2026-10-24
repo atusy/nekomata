@@ -981,18 +981,57 @@ impl App {
         else {
             return;
         };
-        let label = pane.pending_paste.as_ref().unwrap().label();
+        use crate::theme;
         let response =
-            egui::Modal::new(egui::Id::unique("paste-confirmation").with(id)).show(ctx, |ui| {
-                ui.heading("Confirm paste");
-                ui.label(label);
-                ui.horizontal(|ui| {
-                    let confirm = ui.button("Paste").clicked();
-                    let cancel = ui.button("Cancel").clicked();
-                    (confirm, cancel)
-                })
-                .inner
-            });
+            egui::Modal::new(egui::Id::unique("paste-confirmation").with(id))
+                .frame(
+                    egui::Frame::new()
+                        .fill(theme::TAB_BAR_BG)
+                        .stroke(egui::Stroke::new(1.0, theme::MENU_BORDER))
+                        .corner_radius(12)
+                        .inner_margin(24),
+                )
+                .show(ctx, |ui| {
+                    ui.set_width((ctx.content_rect().width() - 64.0).clamp(180.0, 380.0));
+                    ui.spacing_mut().item_spacing.y = 12.0;
+                    ui.label(
+                        egui::RichText::new("Paste into terminal?")
+                            .size(20.0)
+                            .strong()
+                            .color(theme::FG),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "This text contains line breaks or control characters that may run commands immediately.",
+                        )
+                        .size(14.0)
+                        .color(theme::FG),
+                    );
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let confirm = ui
+                            .add_sized(
+                                [88.0, 34.0],
+                                egui::Button::new(
+                                    egui::RichText::new("Paste").color(theme::BG).strong(),
+                                )
+                                .fill(theme::ACCENT)
+                                .corner_radius(6),
+                            )
+                            .clicked();
+                        let cancel = ui
+                            .add_sized(
+                                [88.0, 34.0],
+                                egui::Button::new(egui::RichText::new("Cancel").color(theme::FG))
+                                    .fill(theme::TAB_ACTIVE_BG)
+                                    .corner_radius(6),
+                            )
+                            .clicked();
+                        (confirm, cancel)
+                    })
+                    .inner
+                });
         if response.inner.0 {
             let pending = pane.pending_paste.take().unwrap();
             let state = pane.session.state.lock().unwrap();
