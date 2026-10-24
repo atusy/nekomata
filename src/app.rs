@@ -906,7 +906,7 @@ impl App {
                     } else {
                         egui::RichText::new(format!(
                             "{}/{}{}",
-                            search.current.map_or(0, |i| i + 1),
+                            search.current_number(),
                             search.hits.len(),
                             if search.limited { "+" } else { "" }
                         ))
