@@ -7,6 +7,7 @@ description = "A tabbed and split-pane GUI for felis sessions"
 
 [dependencies]
 anyhow = "1"
+arboard = { version = "3.7", default-features = false }
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "persistence", "wgpu", "wayland", "x11"] }
 felis-client-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
 felis-grid = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }

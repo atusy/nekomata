@@ -3,6 +3,7 @@ mod cli;
 mod colors;
 mod control;
 mod daemon;
+mod doctor;
 mod layout;
 #[cfg(test)]
 #[path = "../tests/support/mesh_renderer.rs"]
@@ -27,6 +28,14 @@ fn main() -> eframe::Result {
     });
     match command {
         cli::Command::Gui => {}
+        cli::Command::Doctor { json } => match doctor::run(json) {
+            Ok(true) => return Ok(()),
+            Ok(false) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+        },
         cli::Command::DaemonRun => {
             if let Err(error) = daemon::run() {
                 eprintln!("{error:#}");
