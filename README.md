@@ -57,12 +57,15 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 | 左右に分割 | Alt+W → Alt+V |
 | ペインを閉じる（detach） | Alt+W → C |
 | 左 / 下 / 上 / 右のペインに移動 | Alt+W → H / J / K / L |
-| 文字サイズを初期値に戻す | Cmd+0 |
-| 文字サイズを1.1倍 / 1÷1.1倍にする | Cmd+= / Cmd+- |
+| 文字サイズを初期値に戻す | Ctrl+Shift+0 / Cmd+0（macOS） |
+| 文字サイズを1.1倍 / 1÷1.1倍にする | Ctrl+Shift+= / Ctrl+Shift+-（macOSでは Cmd+= / Cmd+- も利用可能） |
 | コマンドパレット | Alt+Shift+P |
 | スクロールバック検索 | Ctrl+Shift+F / Cmd+F（macOS） |
 | 選択をコピー | Cmd+C（macOS） / Ctrl+Shift+C（Linux） |
-| 貼り付け | Ctrl+Shift+V（Cmd+Vも利用可能） |
+| 貼り付け | Ctrl+Shift+V / Cmd+V（macOS） |
+| 半画面分上 / 下へスクロール | Shift+PageUp / Shift+PageDown |
+| 最古の出力 / 現在の出力へ移動 | Ctrl+Shift+Home / Ctrl+Shift+End |
+| 前 / 次のプロンプトへ移動 | Ctrl+Shift+Z / Ctrl+Shift+X |
 
 `→` はキーを順番に押す操作です。分割時はシェルがOSC 7で通知した現在のローカルディレクトリを引き継ぎます。通知がない場合はnekomataの起動ディレクトリを使います。以前のタブ・分割用ショートカットは置き換えました。設定ファイルがまだないため、kittyの `Alt+Shift+R`（設定再読み込み）は未割り当てです。
 
@@ -89,6 +92,12 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 ![詳細メニュー](docs/images/terminal-tools-search-options.png)
 
 ![ホバー時のボタン](docs/images/terminal-tools-search-hover.png)
+
+## 端末共通のキー操作
+
+端末共通のキー操作にはfelisのキーマップを使い、タブ・分割の `Alt+W` 系操作はnekomataが扱います。修飾キーなしの `End` はシェルやTUIへ送ります。履歴の先頭・末尾への移動は、コマンドパレットの `Scroll to oldest output` / `Scroll to live output` からも実行できます。
+
+`Previous prompt` / `Next prompt` はコマンドパレットからも実行できます。プロンプト移動には、**シェルがOSC 133のプロンプト境界を通知すること**が必要です。
 
 ## nekomataセッションの保存・切り替え
 

@@ -924,12 +924,54 @@ impl App {
         }
     }
 
+    fn terminal_action(&mut self, ctx: &egui::Context, action: felis_client_core::Action) {
+        use felis_client_core::{Action as TerminalAction, ClipboardScope, FontSizeStep};
+        match action {
+            TerminalAction::Copy {
+                what: ClipboardScope::System,
+            } => self.action(ctx, Action::Copy),
+            TerminalAction::Paste {
+                from: ClipboardScope::System,
+            } => self.action(ctx, Action::Paste),
+            TerminalAction::FontSize(step) => self.action(
+                ctx,
+                match step {
+                    FontSizeStep::Increase => Action::FontScale(1.1),
+                    FontSizeStep::Decrease => Action::FontScale(1.0 / 1.1),
+                    FontSizeStep::Reset => Action::FontReset,
+                },
+            ),
+            TerminalAction::Scroll(step) => {
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let state = pane.session.state.lock().unwrap();
+                if state.connected
+                    && let Some(request) = state.scroll_action(step)
+                {
+                    pane.selection = None;
+                    pane.session.send(request);
+                }
+            }
+            TerminalAction::ScrollToPrompt(direction) => {
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let state = pane.session.state.lock().unwrap();
+                if state.connected && !state.screen.alt_screen() {
+                    pane.selection = None;
+                    pane.session.send(InputMsg::JumpPrompt { direction });
+                }
+            }
+            // Only supported terminal actions are admitted by Shortcuts. Keep
+            // unsupported shared defaults available to the terminal program.
+            _ => {}
+        }
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         if self.pending_workspace.is_some() {
             return;
         }
         match action {
             Action::Search => self.open_search(),
+            Action::Terminal(action) => self.terminal_action(ctx, action),
             Action::NewSession => self.begin_workspace(None, None),
             Action::Sessions => {
                 self.workspaces_open = true;
@@ -1337,6 +1379,8 @@ impl App {
                 ui.label("Alt+W, then Alt+S / Alt+V: split top/bottom / left/right");
                 ui.label("Alt+W, then C: close pane · H/J/K/L: focus left/down/up/right");
                 ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
+                ui.label("Shift+PageUp / PageDown: scroll half a page · Ctrl+Shift+Home / End: oldest / live output");
+                ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");
                 ui.label("Alt+Shift+P: command palette");
                 ui.label("Drag a divider to resize. Shift+drag selects when mouse reporting is active.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
@@ -1366,6 +1410,30 @@ impl App {
                         ("Close pane (detach)", Action::ClosePane),
                         ("Close tab (detach)", Action::CloseTab),
                         ("Reset font size", Action::FontReset),
+                        (
+                            "Previous prompt",
+                            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
+                                felis_protocol::messages::PromptJump::Previous,
+                            )),
+                        ),
+                        (
+                            "Next prompt",
+                            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
+                                felis_protocol::messages::PromptJump::Next,
+                            )),
+                        ),
+                        (
+                            "Scroll to oldest output",
+                            Action::Terminal(felis_client_core::Action::Scroll(
+                                felis_client_core::ScrollStep::Home,
+                            )),
+                        ),
+                        (
+                            "Scroll to live output",
+                            Action::Terminal(felis_client_core::Action::Scroll(
+                                felis_client_core::ScrollStep::End,
+                            )),
+                        ),
                     ] {
                         if label
                             .to_lowercase()

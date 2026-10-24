@@ -1,9 +1,14 @@
 use eframe::egui::{Event, InputState, Key};
+use felis_client_core::{
+    Action as TerminalAction, Chord, ClipboardScope, KeyCode, Keymap,
+    Modifiers as TerminalModifiers, NamedKey,
+};
 
 use crate::layout::Axis;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    Terminal(TerminalAction),
     NewSession,
     Sessions,
     NewTab,
@@ -22,9 +27,54 @@ pub enum Action {
     Copy,
 }
 
-#[derive(Default)]
 pub struct Shortcuts {
     prefix: bool,
+    terminal: Keymap,
+}
+
+impl Default for Shortcuts {
+    fn default() -> Self {
+        Self {
+            prefix: false,
+            terminal: Keymap::default_for_platform(),
+        }
+    }
+}
+
+// Keep nekomata's workspace shortcuts separate from reusable terminal actions.
+// The default map also contains actions for features not exposed here (reload,
+// PRIMARY clipboard); those keys must continue to reach the program.
+fn supported_terminal_action(action: &TerminalAction) -> bool {
+    matches!(
+        action,
+        TerminalAction::Copy {
+            what: ClipboardScope::System
+        } | TerminalAction::Paste {
+            from: ClipboardScope::System
+        } | TerminalAction::FontSize(_)
+            | TerminalAction::Scroll(_)
+            | TerminalAction::ScrollToPrompt(_)
+    )
+}
+
+fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
+    let mut mods = TerminalModifiers::empty();
+    mods.set(TerminalModifiers::CONTROL, modifiers.ctrl);
+    mods.set(TerminalModifiers::SHIFT, modifiers.shift);
+    mods.set(TerminalModifiers::ALT, modifiers.alt);
+    // egui's `command` is also true for Ctrl on Linux; it is not SUPER.
+    mods.set(TerminalModifiers::SUPER, modifiers.mac_cmd);
+    let key = match key {
+        Key::Home => KeyCode::Named(NamedKey::Home),
+        Key::End => KeyCode::Named(NamedKey::End),
+        Key::PageUp => KeyCode::Named(NamedKey::PageUp),
+        Key::PageDown => KeyCode::Named(NamedKey::PageDown),
+        Key::Insert => KeyCode::Named(NamedKey::Insert),
+        // egui displays this key as U+2212; bindings name the ASCII key.
+        Key::Minus => KeyCode::Character("-".into()),
+        _ => KeyCode::Character(key.symbol_or_name().to_ascii_lowercase()),
+    };
+    Chord::with_mods(mods, key)
 }
 
 impl Shortcuts {
@@ -49,8 +99,8 @@ impl Shortcuts {
                 return true;
             };
             suppress_text = false;
-            let alt = mods.alt && !mods.ctrl && !mods.command;
-            let plain = !mods.alt && !mods.ctrl && !mods.command && !mods.shift;
+            let alt = mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd;
+            let plain = !mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd && !mods.shift;
             let action = if std::mem::take(&mut self.prefix) {
                 match (*key, alt && !mods.shift, plain) {
                     (Key::S, true, _) => Some(Action::Split(Axis::Vertical)),
@@ -76,23 +126,20 @@ impl Shortcuts {
                     (Key::P, true) => Some(Action::Palette),
                     _ => None,
                 }
-            } else if mods.mac_cmd && !mods.ctrl && !mods.alt {
-                match key {
-                    Key::F if !mods.shift => Some(Action::Search),
-                    Key::Num0 => Some(Action::FontReset),
-                    Key::Equals | Key::Plus => Some(Action::FontScale(1.1)),
-                    Key::Minus => Some(Action::FontScale(1.0 / 1.1)),
-                    _ => None,
-                }
-            } else if mods.ctrl && mods.shift && !mods.alt && !mods.mac_cmd {
-                match key {
-                    Key::F => Some(Action::Search),
-                    Key::V => Some(Action::Paste),
-                    Key::C => Some(Action::Copy),
-                    _ => None,
-                }
-            } else {
+            } else if plain {
+                // Preserve bare End for the terminal, including editors. Explicit
+                // Ctrl+Shift+End is always available to return to the live view.
                 None
+            } else if (*key == Key::F && mods.mac_cmd && !mods.ctrl && !mods.alt && !mods.shift)
+                || (*key == Key::F && mods.ctrl && mods.shift && !mods.alt && !mods.mac_cmd)
+            {
+                Some(Action::Search)
+            } else {
+                self.terminal
+                    .resolve(&terminal_chord(*key, *mods))
+                    .filter(|action| supported_terminal_action(action))
+                    .cloned()
+                    .map(Action::Terminal)
             };
             if let Some(action) = action {
                 actions.push(action);
@@ -119,6 +166,80 @@ mod tests {
             repeat: false,
             modifiers,
         }
+    }
+
+    fn consume_events(events: Vec<Event>) -> (Vec<Action>, Vec<Event>) {
+        let ctx = eframe::egui::Context::default();
+        let mut shortcuts = Shortcuts::default();
+        let mut result = (vec![], vec![]);
+        let _ = crate::test_support::run(
+            &ctx,
+            eframe::egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                result = ui
+                    .ctx()
+                    .input_mut(|input| (shortcuts.consume(input), input.events.clone()));
+            },
+        );
+        result
+    }
+
+    #[test]
+    fn shared_navigation_bindings_use_terminal_actions_without_leaking_text() {
+        use felis_client_core::{Action as TerminalAction, ScrollStep};
+        use felis_protocol::messages::PromptJump;
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let (actions, remaining) = consume_events(vec![
+            press(Key::PageUp, Modifiers::SHIFT),
+            press(Key::PageDown, Modifiers::SHIFT),
+            press(Key::Home, ctrl_shift),
+            press(Key::End, ctrl_shift),
+            press(Key::Z, ctrl_shift),
+            Event::Text("Z".into()),
+            press(Key::X, ctrl_shift),
+            Event::Text("X".into()),
+        ]);
+        assert_eq!(
+            actions,
+            vec![
+                Action::Terminal(TerminalAction::Scroll(ScrollStep::HalfPageUp)),
+                Action::Terminal(TerminalAction::Scroll(ScrollStep::HalfPageDown)),
+                Action::Terminal(TerminalAction::Scroll(ScrollStep::Home)),
+                Action::Terminal(TerminalAction::Scroll(ScrollStep::End)),
+                Action::Terminal(TerminalAction::ScrollToPrompt(PromptJump::Previous)),
+                Action::Terminal(TerminalAction::ScrollToPrompt(PromptJump::Next)),
+            ]
+        );
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn unsupported_shared_defaults_and_option_composition_reach_the_terminal() {
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let events = vec![
+            press(Key::R, ctrl_shift),
+            press(Key::Insert, Modifiers::SHIFT),
+            press(Key::End, Modifiers::NONE),
+            press(Key::E, Modifiers::ALT),
+            Event::Text("é".into()),
+            Event::Ime(eframe::egui::ImeEvent::Commit("猫".into())),
+        ];
+        let (actions, remaining) = consume_events(events.clone());
+        assert!(actions.is_empty());
+        assert_eq!(remaining, events);
     }
 
     #[test]
@@ -198,6 +319,16 @@ mod tests {
     fn shortcuts_preserve_unrelated_text_and_match_font_and_paste_keys() {
         let ctx = eframe::egui::Context::default();
         let mut shortcuts = Shortcuts::default();
+        for (key, step) in [
+            ("0", felis_client_core::FontSizeStep::Reset),
+            ("=", felis_client_core::FontSizeStep::Increase),
+            ("-", felis_client_core::FontSizeStep::Decrease),
+        ] {
+            shortcuts.terminal.insert(
+                Chord::with_mods(TerminalModifiers::SUPER, KeyCode::Character(key.into())),
+                TerminalAction::FontSize(step),
+            );
+        }
         let events = vec![
             press(Key::C, Modifiers::ALT),
             Event::Text("ç".into()),
@@ -239,11 +370,21 @@ mod tests {
                         shortcuts.consume(input),
                         vec![
                             Action::NewTab,
-                            Action::FontReset,
-                            Action::FontScale(1.1),
-                            Action::FontScale(1.0 / 1.1),
-                            Action::Copy,
-                            Action::Paste
+                            Action::Terminal(TerminalAction::FontSize(
+                                felis_client_core::FontSizeStep::Reset
+                            )),
+                            Action::Terminal(TerminalAction::FontSize(
+                                felis_client_core::FontSizeStep::Increase
+                            )),
+                            Action::Terminal(TerminalAction::FontSize(
+                                felis_client_core::FontSizeStep::Decrease
+                            )),
+                            Action::Terminal(TerminalAction::Copy {
+                                what: ClipboardScope::System
+                            }),
+                            Action::Terminal(TerminalAction::Paste {
+                                from: ClipboardScope::System
+                            })
                         ]
                     );
                     assert_eq!(
