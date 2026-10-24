@@ -612,6 +612,7 @@ mod tests {
             session_id: None,
             error: None,
             connected: true,
+            attention: false,
             reconnects: 0,
             reconnecting: false,
             detached: false,

@@ -1315,7 +1315,8 @@ impl eframe::App for App {
             return;
         }
         self.search_bar(root_ui);
-        let modal = self.searching() || paste_pending
+        let modal = self.searching()
+            || paste_pending
             || self.picker.visible
             || self.help
             || self.palette
