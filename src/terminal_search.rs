@@ -113,6 +113,11 @@ impl SearchState {
         true
     }
 
+    pub fn current_number(&self) -> usize {
+        // Felis streams hits newest-first; label them in top-to-bottom order.
+        self.current.map_or(0, |index| self.hits.len() - index)
+    }
+
     pub fn advance(&mut self, older: bool) {
         if self.hits.is_empty() {
             return;
@@ -499,6 +504,34 @@ mod tests {
         assert!(state.push(current, hit("new".into())));
         assert_eq!(state.hits.len(), 1);
     }
+    #[test]
+    fn search_numbers_increase_from_top_to_bottom() {
+        let mut state = SearchState::default();
+        let generation = state.begin(None);
+        assert_eq!(state.current_number(), 0);
+        for line in [2, 1, 0] {
+            let mut message = hit("~".into());
+            let SearchToClientMsg::Match { line_index, .. } = &mut message;
+            *line_index = line;
+            assert!(state.push(generation, message));
+        }
+
+        state.advance(true);
+        assert_eq!(state.current_number(), 3);
+        for (older, line, number) in [
+            (true, 1, 2),
+            (true, 0, 1),
+            (true, 2, 3),
+            (false, 0, 1),
+            (false, 1, 2),
+            (false, 2, 3),
+        ] {
+            state.advance(older);
+            assert_eq!(state.hits[state.current.unwrap()].line, line);
+            assert_eq!(state.current_number(), number);
+        }
+    }
+
     #[test]
     fn search_limits_aggregate_bytes_and_wraps_navigation() {
         let mut state = SearchState::default();
