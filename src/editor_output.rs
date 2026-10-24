@@ -76,7 +76,12 @@ pub async fn open(
         "--".into(),
     ];
     wrapper.extend(argv);
-    let prepared = felis_client_core::pipe::prepare_spawn(None, &wrapper, dims, position, &origin)?;
+    let mut prepared =
+        felis_client_core::pipe::prepare_spawn(None, &wrapper, dims, position, &origin)?;
+    // Editors always run locally, including output fetched over SSH. Resolve
+    // their executable and staging root in this GUI's environment, not the
+    // possibly older environment of the persistent daemon.
+    prepared.args.env_base = felis_client_core::env_base::capture();
     // Hand ownership to the persistent helper before Create. A lost Create
     // reply is ambiguous: deleting the file could break a helper already
     // running. Such a failure can leave this one private directory behind.
