@@ -41,7 +41,7 @@ struct Pane {
         Option<felis_protocol::messages::ViewportAnchor>,
         u16,
     )>,
-    pending_paste: Option<crate::interactions::PendingPaste>,
+    pending_paste: Option<crate::paste::PendingPaste>,
 }
 
 impl Pane {
@@ -2232,7 +2232,7 @@ fn terminal_input(
     ctx: &egui::Context,
     selection: &mut Option<Selection>,
     session: &Session,
-    pending_paste: &mut Option<crate::interactions::PendingPaste>,
+    pending_paste: &mut Option<crate::paste::PendingPaste>,
     mut explicit_paste: bool,
 ) {
     use felis_protocol::messages::{Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods};
@@ -2271,7 +2271,7 @@ fn terminal_input(
                 if !state.connected {
                     continue;
                 }
-                match crate::interactions::PendingPaste::new(
+                match crate::paste::PendingPaste::new(
                     text,
                     state.screen.bracketed_paste(),
                     state.reconnects,
