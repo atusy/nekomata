@@ -1,6 +1,10 @@
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Gui,
+    EditOutput {
+        file: String,
+        argv: Vec<String>,
+    },
     DaemonRun,
     DaemonStop,
     SessionsList,
@@ -44,6 +48,10 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         .as_slice()
     {
         [] => Ok(Command::Gui),
+        ["__edit-output", file, "--", argv @ ..] if !argv.is_empty() => Ok(Command::EditOutput {
+            file: (*file).into(),
+            argv: argv.iter().map(|s| (*s).into()).collect(),
+        }),
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
         ["sessions", "list"] => Ok(Command::SessionsList),

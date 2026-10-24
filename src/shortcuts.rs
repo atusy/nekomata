@@ -4,6 +4,9 @@ use crate::layout::Axis;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
+    CopyCommandOutput,
+    EditCommandOutput,
+    EditScrollback,
     NewSession,
     Sessions,
     NewTab,
