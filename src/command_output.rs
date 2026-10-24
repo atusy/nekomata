@@ -351,10 +351,10 @@ mod tests {
             }
         };
         wait(&|| session.state.lock().unwrap().connected);
-        let quoted_socket = std::path::Path::new(&socket)
-            .parent()
-            .unwrap()
-            .join("ops 'socket' $(printf unused).sock");
+        // Search and output relay tests run in parallel against one daemon.
+        let fixture =
+            tempfile::tempdir_in(std::path::Path::new(&socket).parent().unwrap()).unwrap();
+        let quoted_socket = fixture.path().join("ops 'socket' $(printf unused).sock");
         std::os::unix::fs::symlink(&socket, &quoted_socket).unwrap();
         let tools = Tools::new(
             &runtime,
