@@ -5,6 +5,36 @@ Rust / egui でウィンドウを描画し、felis の公開クライアント�
 
 felisの現行リポジトリは [felis-terminal/felis](https://git.natsukium.com/felis-terminal/felis) です。旧 [natsukium/felis](https://git.natsukium.com/natsukium/felis) はアーカイブされています。Cargo・Nixの依存定義とロックファイルは、いずれも移転先を参照しています。
 
+## 端末設定
+
+起動時に felis の `config.toml` を `felis-client-core` で読み込み、共通設定に
+`[client.nekomata]` を重ねます。macOS は
+`~/Library/Application Support/felis/config.toml`、Linux は
+`$XDG_CONFIG_HOME/felis/config.toml`（未指定なら `~/.config/felis/config.toml`）です。
+macOS では `~/.config/felis/config.toml` は読みません。
+
+nekomata 独自の端末既定値や初期設定ファイルは提供しません。設定のない項目は felis の既定値を使います。
+例えば nekomata だけ文字サイズを変える場合は、ユーザーの設定ファイルへ次を追加します。
+
+```toml
+[client.nekomata.font]
+size_px = 16
+```
+
+フォント（サイズ・ファミリー・スタイル・フォールバック・OpenType features）、端末配色
+（拡張パレット・minimum contrast を含む）、カーソル色・点滅設定を適用します。
+`keymap` はコピー・貼り付け（system clipboard）、文字サイズ、スクロール、プロンプト移動、検索の操作と `unbind` に対応します。
+アプリケーションのショートカットが先に処理され、残りを端末キーマップへ渡します。
+未対応の操作へ割り当てたキーは端末プログラムへ渡します。
+`window`、`shader`、`mouse`、`clipboard` の設定および設定のライブリロードは未対応です。
+フォントは OS にインストールしたものを名前で選びます。
+保存済み nekomata セッションのズーム値は復元し、新規セッションとサイズのリセットには設定値を使います。
+設定変更は GUI の再起動で反映します。既定パスにファイルがなければ起動でき、構文・型の誤りや読み込み失敗は起動エラーになります。
+
+この設定は [二層設定 ADR](docs/ADR/20261024-220000-split-configuration-into-two-layers.md) の terminal layer です。
+タブ・分割・メニューなどの application layer の設定文書はまだ実装していません。
+`[client.nekomata]` に nekomata 独自の設定キーを追加することはできません。
+
 ## 起動
 
 Nix と flakes を有効にした環境で実行します。
@@ -211,7 +241,7 @@ nix fmt -- flake.nix
 
 ## 初版の対応範囲
 
-テキスト、256色 / RGB、CJK文字、選択・コピー・貼り付け、スクロールバック、名前付きキー、マウス入力、IME確定文字の送信、OSC 52によるシステムクリップボードへの書き込みに対応しています。NeovimのOSC 52プロバイダーからの `"+yy` も利用できます。Braille文字（U+2800–U+28FF）はフォントに依存せずセル内に直接描画するため、Codexのロゴなどの点字アートも表示できます。NixではUDEV Gothic NFを優先して読み込みます。`NEKOMATA_FONT` が未指定なら felis のシステムフォント探索を使います。別のフォントを使う場合は `NEKOMATA_FONT=/path/to/font.ttf` を指定できます。
+テキスト、256色 / RGB、CJK文字、選択・コピー・貼り付け、スクロールバック、名前付きキー、マウス入力、IME確定文字の送信、OSC 52によるシステムクリップボードへの書き込みに対応しています。NeovimのOSC 52プロバイダーからの `"+yy` も利用できます。Braille文字（U+2800–U+28FF）はフォントに依存せずセル内に直接描画するため、Codexのロゴなどの点字アートも表示できます。端末フォントは felis の設定から選び、未指定なら felis のシステムフォント探索を使います。`NEKOMATA_FONT` による実行時の上書きは行いません。
 
 端末描画には `felis-render-wgpu` を使い、egui と同じ GPU device/queue 上のテクスチャを合成します。felis のシェーピング、行・グリフ・画像キャッシュ、装飾、Kitty 画像、動的パレット変更を利用し、通常描画で CPU への画像読み戻しは行いません。ローカル接続は表示中のペインだけが次の画面を要求し、非表示ペインの更新要求を停止します。SSH 接続は往復遅延を増やさない push 方式です。デーモン接続が切れた場合は同じセッションへの再接続を試み、配送が不確かな入力は再送しません。[描画性能と検証範囲](docs/rendering-performance.md)、[Vitro での検証](docs/vitro-rendering-validation.md)、[上流実装の流用監査](docs/felis-rendering-reuse-audit.md)、[macOS実機での累積改善](docs/native-rendering-validation.md)を参照してください。
 
@@ -222,3 +252,6 @@ nix fmt -- flake.nix
 ## ライセンス
 
 Apache-2.0。端末エンジンには [felis](https://git.natsukium.com/felis-terminal/felis)（Apache-2.0）を利用しています。上流を変更せず、固定したGit依存として参照しています。
+
+[macOS で個人用の `[client.nekomata]` 設定を読み込んだ表示](docs/images/felis-config-macos.png)。
+配色・UDEV Gothic NF・15 px はこの検証時のユーザー設定で、アプリケーションに同梱する既定値ではありません。

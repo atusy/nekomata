@@ -4,11 +4,18 @@ use felis_render_core::palette::Theme;
 
 #[derive(Default)]
 pub struct Colors {
+    base: Theme,
     runtime_theme: [Option<[u8; 3]>; 3],
     runtime_palette: std::collections::BTreeMap<u8, [u8; 3]>,
     revision: u64,
 }
 impl Colors {
+    pub fn new(base: Theme) -> Self {
+        Self {
+            base,
+            ..Default::default()
+        }
+    }
     pub fn apply_grid(&mut self, msg: &GridMsg) {
         use felis_client_core::renderer_effect::{RendererEffect, renderer_effect};
         match renderer_effect(msg) {
@@ -41,11 +48,7 @@ impl Colors {
         for (&index, &rgb) in &self.runtime_palette {
             palette[usize::from(index)] = Some(rgb);
         }
-        felis_render_core::palette::effective_theme(
-            &crate::theme::terminal_theme(),
-            &self.runtime_theme,
-            &palette,
-        )
+        felis_render_core::palette::effective_theme(&self.base, &self.runtime_theme, &palette)
     }
 }
 
@@ -56,8 +59,16 @@ mod tests {
     use felis_render_core::palette::linear_rgba_to_srgb8;
 
     #[test]
+    fn an_unconfigured_terminal_uses_the_upstream_theme() {
+        assert_eq!(Colors::default().theme().fg, Theme::default().fg);
+        assert_eq!(Colors::default().theme().palette, Theme::default().palette);
+    }
+
+    #[test]
     fn runtime_palette_changes_override_the_configured_palette_until_reset() {
-        let mut colors = Colors::default();
+        let mut base = Theme::default();
+        base.palette[4] = Some([80, 90, 100]);
+        let mut colors = Colors::new(base);
         colors.apply_grid(&GridMsg::PaletteColor {
             index: 4,
             action: PaletteAction::Set { rgb: (12, 34, 56) },
@@ -67,10 +78,7 @@ mod tests {
             index: 4,
             action: PaletteAction::Reset,
         });
-        assert_eq!(
-            colors.theme().palette[4],
-            Some(crate::theme::ANSI_PALETTE[4])
-        );
+        assert_eq!(colors.theme().palette[4], Some([80, 90, 100]));
     }
     #[test]
     fn rehydration_drops_colors_from_the_previous_session() {
@@ -83,7 +91,7 @@ mod tests {
         colors.apply_grid(&GridMsg::RehydrateBegin);
         assert_eq!(
             linear_rgba_to_srgb8(colors.theme().fg),
-            crate::theme::FG.to_array()
+            linear_rgba_to_srgb8(Theme::default().fg)
         );
     }
 }

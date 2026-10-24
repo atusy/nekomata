@@ -36,7 +36,11 @@ impl Default for Shortcuts {
     fn default() -> Self {
         Self {
             prefix: false,
-            terminal: Keymap::default_for_platform(),
+            // Preserve bare End for terminal editors unless explicitly bound.
+            terminal: Keymap::default_for_platform().with_overrides([(
+                Chord::bare(KeyCode::Named(NamedKey::End)),
+                felis_client_core::BindingValue::Unbind,
+            )]),
         }
     }
 }
@@ -66,6 +70,10 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
     // egui's `command` is also true for Ctrl on Linux; it is not SUPER.
     mods.set(TerminalModifiers::SUPER, modifiers.mac_cmd);
     let key = match key {
+        Key::ArrowUp => KeyCode::Named(NamedKey::ArrowUp),
+        Key::ArrowDown => KeyCode::Named(NamedKey::ArrowDown),
+        Key::ArrowLeft => KeyCode::Named(NamedKey::ArrowLeft),
+        Key::ArrowRight => KeyCode::Named(NamedKey::ArrowRight),
         Key::Home => KeyCode::Named(NamedKey::Home),
         Key::End => KeyCode::Named(NamedKey::End),
         Key::PageUp => KeyCode::Named(NamedKey::PageUp),
@@ -73,12 +81,25 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
         Key::Insert => KeyCode::Named(NamedKey::Insert),
         // egui displays this key as U+2212; bindings name the ASCII key.
         Key::Minus => KeyCode::Character("-".into()),
-        _ => KeyCode::Character(key.symbol_or_name().to_ascii_lowercase()),
+        _ => {
+            let name = key.symbol_or_name().to_ascii_lowercase();
+            name.parse::<Chord>()
+                .map(|chord| chord.key)
+                .unwrap_or(KeyCode::Character(name))
+        }
     };
     Chord::with_mods(mods, key)
 }
 
 impl Shortcuts {
+    pub fn from_config(config: &felis_client_core::config::EffectiveConfig) -> Self {
+        let mut shortcuts = Self::default();
+        shortcuts
+            .terminal
+            .apply_overrides(config.keymap.compile(None));
+        shortcuts
+    }
+
     pub fn consume(&mut self, input: &mut InputState) -> Vec<Action> {
         let mut actions = Vec::new();
         let mut suppress_text = false;
@@ -102,7 +123,8 @@ impl Shortcuts {
             suppress_text = false;
             let alt = mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd;
             let plain = !mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd && !mods.shift;
-            let action = if std::mem::take(&mut self.prefix) {
+            let prefix = std::mem::take(&mut self.prefix);
+            let action = if prefix {
                 match (*key, alt && !mods.shift, plain) {
                     (Key::S, true, _) => Some(Action::Split(Axis::Vertical)),
                     (Key::V, true, _) => Some(Action::Split(Axis::Horizontal)),
@@ -127,17 +149,19 @@ impl Shortcuts {
                     (Key::P, true) => Some(Action::Palette),
                     _ => None,
                 }
-            } else if plain {
-                // Preserve bare End for the terminal, including editors. Explicit
-                // Ctrl+Shift+End is always available to return to the live view.
-                None
             } else {
+                None
+            };
+            let action = action.or_else(|| {
+                if prefix {
+                    return None;
+                }
                 self.terminal
                     .resolve(&terminal_chord(*key, *mods))
                     .filter(|action| supported_terminal_action(action))
                     .cloned()
                     .map(Action::Terminal)
-            };
+            });
             if let Some(action) = action {
                 actions.push(action);
                 suppress_text = true;
@@ -154,6 +178,71 @@ impl Shortcuts {
 mod tests {
     use super::*;
     use eframe::egui::Modifiers;
+
+    #[test]
+    fn configured_binding_can_replace_a_shared_action() {
+        let document = felis_client_core::config::ConfigDocument::parse(
+            "[client.nekomata.keymap]\n\"ctrl+shift+f\" = { kind = \"copy\", what = \"system\" }",
+            None,
+        )
+        .unwrap();
+        let (config, diagnostics) = document.resolve("nekomata");
+        assert!(!diagnostics.has_errors());
+        let mut shortcuts = Shortcuts::from_config(&config);
+        let ctx = eframe::egui::Context::default();
+        let _ = crate::test_support::run(
+            &ctx,
+            eframe::egui::RawInput {
+                events: vec![press(Key::F, Modifiers::CTRL | Modifiers::SHIFT)],
+                ..Default::default()
+            },
+            |ui| {
+                assert_eq!(
+                    ui.ctx().input_mut(|input| shortcuts.consume(input)),
+                    vec![Action::Terminal(TerminalAction::Copy {
+                        what: ClipboardScope::System
+                    })]
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn configured_plain_alt_and_function_keys_reach_terminal_bindings() {
+        for (chord, key, modifiers) in [
+            ("end", Key::End, Modifiers::NONE),
+            ("alt+s", Key::S, Modifiers::ALT),
+            ("f9", Key::F9, Modifiers::NONE),
+            ("ctrl+up", Key::ArrowUp, Modifiers::CTRL),
+        ] {
+            let document = felis_client_core::config::ConfigDocument::parse(
+                &format!("[keymap]\n\"{chord}\" = {{ kind = \"copy\", what = \"system\" }}"),
+                None,
+            )
+            .unwrap();
+            let (config, diagnostics) = document.resolve("nekomata");
+            assert!(!diagnostics.has_errors());
+            assert_eq!(config.keymap.compile(None).len(), 1);
+            let mut shortcuts = Shortcuts::from_config(&config);
+            let ctx = eframe::egui::Context::default();
+            let _ = crate::test_support::run(
+                &ctx,
+                eframe::egui::RawInput {
+                    events: vec![press(key, modifiers)],
+                    ..Default::default()
+                },
+                |ui| {
+                    assert_eq!(
+                        ui.ctx().input_mut(|input| shortcuts.consume(input)),
+                        vec![Action::Terminal(TerminalAction::Copy {
+                            what: ClipboardScope::System
+                        })],
+                        "{chord}"
+                    )
+                },
+            );
+        }
+    }
 
     fn press(key: Key, modifiers: Modifiers) -> Event {
         Event::Key {
