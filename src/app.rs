@@ -27,6 +27,17 @@ struct Pane {
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
     renderer: Option<crate::render::Renderer>,
     connection_generation: u64,
+    search_open: bool,
+    search_focus: bool,
+    search_query: String,
+    search_regex: bool,
+    search_ignore_case: bool,
+    search_paint_key: Option<(
+        u64,
+        u32,
+        Option<felis_protocol::messages::ViewportAnchor>,
+        u16,
+    )>,
 }
 
 impl Pane {
@@ -40,6 +51,12 @@ impl Pane {
             mouse_capture: None,
             renderer: None,
             connection_generation: 0,
+            search_open: false,
+            search_focus: false,
+            search_query: String::new(),
+            search_regex: false,
+            search_ignore_case: true,
+            search_paint_key: None,
         }
     }
 
@@ -801,6 +818,94 @@ impl App {
         }
     }
 
+    fn searching(&self) -> bool {
+        self.tabs
+            .get(self.active)
+            .and_then(|tab| self.panes.get(&tab.focused))
+            .is_some_and(|pane| pane.search_open)
+    }
+
+    fn open_search(&mut self) {
+        if let Some(pane) = self
+            .tabs
+            .get(self.active)
+            .and_then(|tab| self.panes.get_mut(&tab.focused))
+        {
+            pane.search_open = true;
+            pane.search_focus = true;
+        }
+    }
+
+    fn search_bar(&mut self, root_ui: &mut egui::Ui) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let pane = self.panes.get_mut(&tab.focused).unwrap();
+        if !pane.search_open {
+            return;
+        }
+        egui::Panel::top("terminal-search").show(root_ui, |ui| {
+            let mut run = false;
+            let mut close =
+                ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Find in scrollback");
+                let entry = ui.add(
+                    egui::TextEdit::singleline(&mut pane.search_query)
+                        .char_limit(1024)
+                        .desired_width(220.0),
+                );
+                if std::mem::take(&mut pane.search_focus) {
+                    entry.request_focus();
+                }
+                run |= entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                run |= ui.button("Find").clicked();
+                ui.checkbox(&mut pane.search_ignore_case, "Ignore case");
+                ui.checkbox(&mut pane.search_regex, "Regex");
+                let mut search = pane.session.tools.search.lock().unwrap();
+                if ui
+                    .add_enabled(!search.hits.is_empty(), egui::Button::new("Previous"))
+                    .clicked()
+                {
+                    search.advance(false);
+                }
+                if ui
+                    .add_enabled(!search.hits.is_empty(), egui::Button::new("Next"))
+                    .clicked()
+                {
+                    search.advance(true);
+                }
+                ui.label(format!(
+                    "{} / {}{}",
+                    search.current.map_or(0, |i| i + 1),
+                    search.hits.len(),
+                    if search.limited { "+" } else { "" }
+                ));
+                if search.running {
+                    ui.spinner();
+                }
+                if let Some(error) = &search.error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
+                close |= ui.button("Close").clicked();
+            });
+            if run && !pane.search_query.is_empty() {
+                pane.session.tools.search(
+                    pane.search_query.clone(),
+                    felis_protocol::messages::SearchOptions {
+                        regex: pane.search_regex,
+                        case_insensitive: pane.search_ignore_case,
+                    },
+                );
+                pane.search_focus = true;
+            }
+            if close {
+                pane.search_open = false;
+                pane.session.tools.cancel_search();
+            }
+        });
+    }
+
     fn action(&mut self, ctx: &egui::Context, action: Action) {
         if self.pending_workspace.is_some() {
             return;
@@ -910,6 +1015,7 @@ impl eframe::App for App {
             });
         }
         for pane in self.panes.values() {
+            pane.session.tools.invalidate_changed_session();
             if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
                 ctx.copy_text(text);
             }
@@ -940,6 +1046,7 @@ impl eframe::App for App {
             && !self.help
             && !self.palette
             && !self.workspaces_open
+            && !self.searching()
             && self.pending_workspace.is_none()
         {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
@@ -954,6 +1061,7 @@ impl eframe::App for App {
             && !self.help
             && !self.palette
             && !self.workspaces_open
+            && !self.searching()
             && self.pending_workspace.is_none()
             && !egui::Popup::is_any_open(ctx)
         {
@@ -1013,6 +1121,10 @@ impl eframe::App for App {
                         }
                         if menu_item(ui, "Attach terminal…", "").clicked() {
                             self.picker.open(&self.runtime, ctx);
+                            ui.close();
+                        }
+                        if menu_item(ui, "Find in scrollback…", "").clicked() {
+                            self.open_search();
                             ui.close();
                         }
                         menu_separator(ui);
@@ -1134,7 +1246,9 @@ impl eframe::App for App {
         if self.tabs.is_empty() {
             return;
         }
-        let modal = self.picker.visible
+        self.search_bar(root_ui);
+        let modal = self.searching()
+            || self.picker.visible
             || self.help
             || self.palette
             || self.workspaces_open
@@ -1480,6 +1594,22 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let mut state = pane.session.state.lock().unwrap();
     let connected = state.connected;
     let painter = painter.with_clip_rect(text_rect);
+    {
+        let mut search = pane.session.tools.search.lock().unwrap();
+        if let Some(jump) = search.take_jump(&state.screen) {
+            pane.session.send(jump);
+        }
+        let key = (
+            search.revision,
+            state.screen.viewport(),
+            state.screen.viewport_anchor(),
+            state.screen.screen().rows(),
+        );
+        if pane.search_paint_key != Some(key) {
+            renderer.set_search_overlay(search.overlay(&state.screen));
+            pane.search_paint_key = Some(key);
+        }
+    }
     if let Err(error) = renderer.paint(
         &painter,
         &mut state,

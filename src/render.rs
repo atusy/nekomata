@@ -104,6 +104,14 @@ impl Renderer {
         })
     }
 
+    pub fn set_search_overlay(
+        &mut self,
+        overlay: Option<felis_render_core::overlay::SearchOverlay>,
+    ) {
+        self.gpu.set_search_overlay(overlay);
+        self.rendered = false;
+    }
+
     pub fn set_font(&mut self, font_size: f32, ppp: f32) {
         if self.font_size != font_size || self.ppp != ppp {
             self.gpu.reload_font_size(font_size * ppp);

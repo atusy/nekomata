@@ -63,7 +63,7 @@ impl Target {
         ))
     }
 
-    fn carrier(&self) -> Carrier {
+    pub(crate) fn carrier(&self) -> Carrier {
         match self {
             Self::Local(path) => Carrier::Local(path.clone().into()),
             Self::Ssh { host, .. } => Carrier::Ssh {
@@ -196,6 +196,7 @@ pub struct Session {
     pub input_failed: Arc<AtomicBool>,
     pub target: Target,
     pub attachment: Option<String>,
+    pub tools: crate::terminal_tools::Tools,
     tx: Arc<InputQueue>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -242,6 +243,8 @@ impl Session {
             exited: false,
             clipboard: None,
         }));
+        let tools =
+            crate::terminal_tools::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
         let tx = Arc::new(InputQueue::default());
         let rx = tx.clone();
         let input_failed = Arc::new(AtomicBool::new(false));
@@ -284,6 +287,7 @@ impl Session {
             input_failed,
             target,
             attachment,
+            tools,
         }
     }
 
