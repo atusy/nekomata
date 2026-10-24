@@ -1900,7 +1900,7 @@ fn draw_pane(
             let origin = ui
                 .input(|input| input.pointer.press_origin())
                 .unwrap_or(pos);
-            pane.selection = Some(crate::interactions::start_selection(
+            pane.selection = Some(crate::rectangle::start_selection(
                 cell_at(origin),
                 ui.input(|input| input.modifiers),
             ));

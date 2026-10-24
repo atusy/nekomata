@@ -3,7 +3,6 @@ mod cli;
 mod colors;
 mod control;
 mod daemon;
-mod interactions;
 mod layout;
 mod links;
 #[cfg(test)]
@@ -11,6 +10,7 @@ mod links;
 mod mesh_baseline;
 mod picker;
 mod presentation;
+mod rectangle;
 mod render;
 mod session;
 mod shortcuts;
