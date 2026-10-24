@@ -72,14 +72,6 @@ Negative:
 - End-to-end input behavior requires coordination across component interfaces.
 - A frontend cannot independently guarantee behavior beyond its own boundary.
 
-### Confirmation
-
-Architecture reviews should verify that input policy depends on the context
-owned by its layer, that common client policy remains reusable, and that
-propagation across each boundary is governed by the component responsible for
-that boundary. The daemon should not acquire dependencies on frontend-specific
-interaction state.
-
 ## Pros and Cons of the Options
 
 ### Layer-owned interpretation and forwarding
