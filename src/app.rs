@@ -20,6 +20,7 @@ use crate::{
 
 struct Pane {
     session: Arc<Session>,
+    return_to: Option<Box<Pane>>,
     dims: (u16, u16),
     selection: Option<Selection>,
     reported_focus: Option<bool>,
@@ -48,6 +49,7 @@ impl Pane {
     fn from_session(session: Arc<Session>) -> Self {
         Self {
             session,
+            return_to: None,
             dims: (0, 0),
             selection: None,
             reported_focus: None,
@@ -71,6 +73,44 @@ impl Pane {
     fn close_search(&mut self) {
         self.search_open = false;
         self.session.search.cancel_search();
+    }
+
+    fn persisted_session(&self) -> &Arc<Session> {
+        &self.return_to.as_deref().unwrap_or(self).session
+    }
+
+    fn show_editor(&mut self, session: Arc<Session>) {
+        debug_assert!(self.return_to.is_none());
+        let mut original = std::mem::replace(self, Self::from_session(session));
+        // A copy requested during editor creation must not arrive on restoration.
+        original.session.output.cancel_output();
+        // Neither may a paste confirmation hidden behind the editor.
+        original.pending_paste = None;
+        original
+            .session
+            .send(InputMsg::FocusChange { focused: false });
+        original.reported_focus = Some(false);
+        original.mouse_capture = None;
+        original.link_capture = Default::default();
+        self.return_to = Some(Box::new(original));
+    }
+
+    fn restore_after_editor(&mut self) -> Option<String> {
+        self.return_to.as_ref()?;
+        let state = self.session.state.lock().unwrap();
+        let failed = !state.connected && !state.reconnecting && state.error.is_some();
+        if !state.exited && !state.detached && !failed {
+            return None;
+        }
+        let error = failed.then(|| state.error.clone()).flatten();
+        drop(state);
+        let mut original = *self.return_to.take().unwrap();
+        original.reported_focus = None;
+        original.renderer = None;
+        original.search_paint_key = None;
+        original.search_focus = original.search_open;
+        *self = original;
+        error
     }
 
     fn navigate_search(&mut self, older: bool) {
@@ -149,6 +189,13 @@ struct PendingAttach {
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
+struct PendingEditor {
+    pane: u64,
+    origin: Arc<Session>,
+    generation: u64,
+    result: tokio::sync::oneshot::Receiver<anyhow::Result<crate::editor_output::EditorSession>>,
+}
+
 struct WorkspaceSwitch {
     id: Option<u64>,
     snapshot: Option<Snapshot>,
@@ -172,8 +219,7 @@ pub struct App {
     runtime: tokio::runtime::Runtime,
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
-    pending_editors:
-        Vec<tokio::sync::oneshot::Receiver<anyhow::Result<crate::editor_output::EditorSession>>>,
+    pending_editors: Vec<PendingEditor>,
     output_error: Option<String>,
     panes: BTreeMap<u64, Pane>,
     tabs: Vec<Tab>,
@@ -261,15 +307,16 @@ impl App {
                 .panes
                 .iter()
                 .map(|(&id, pane)| {
-                    let state = pane.session.state.lock().unwrap();
+                    let session = pane.persisted_session();
+                    let state = session.state.lock().unwrap();
                     (
                         id,
                         PaneSpec {
-                            target: pane.session.target.clone(),
+                            target: session.target.clone(),
                             session: state
                                 .session_id
                                 .map(|id| format!("{id:032x}"))
-                                .or_else(|| pane.session.attachment.clone()),
+                                .or_else(|| session.attachment.clone()),
                         },
                     )
                 })
@@ -857,6 +904,7 @@ impl App {
             if result.is_ok() {
                 let pane = self.panes.get_mut(&id).unwrap();
                 pane.session = pending.session;
+                pane.return_to = None;
                 pane.links = Default::default();
                 pane.pending_paste = None;
                 pane.dims = (0, 0);
@@ -1092,24 +1140,55 @@ impl App {
         }
     }
 
-    fn command_output(&self, edit: bool) {
-        if let Some(pane) = self
-            .tabs
-            .get(self.active)
-            .and_then(|tab| self.panes.get(&tab.focused))
+    fn command_output(&mut self, edit: bool) {
+        let Some(id) = self.tabs.get(self.active).map(|tab| tab.focused) else {
+            return;
+        };
+        let Some(pane) = self.panes.get(&id) else {
+            return;
+        };
+        if edit
+            && (pane.return_to.is_some()
+                || self
+                    .pending_editors
+                    .iter()
+                    .any(|pending| pending.pane == id))
         {
-            pane.session.output.command_output(edit);
+            self.output_error =
+                Some("Finish the current output editor before opening another".into());
+            return;
         }
+        pane.session.output.command_output(edit);
     }
 
     fn poll_command_output(&mut self, ctx: &egui::Context) {
-        for pane in self.panes.values() {
+        for pane in self.panes.values_mut() {
+            if let Some(error) = pane.restore_after_editor() {
+                self.output_error = Some(error);
+            }
+        }
+        for (&id, pane) in &self.panes {
             pane.session.output.invalidate_changed_session();
             let result = pane.session.output.take_output();
             match result {
                 Some(Ok(output)) if output.edit => {
+                    if pane.return_to.is_some()
+                        || self
+                            .pending_editors
+                            .iter()
+                            .any(|pending| pending.pane == id)
+                    {
+                        self.output_error =
+                            Some("Finish the current output editor before opening another".into());
+                        continue;
+                    }
                     let (tx, rx) = tokio::sync::oneshot::channel();
-                    self.pending_editors.push(rx);
+                    self.pending_editors.push(PendingEditor {
+                        pane: id,
+                        origin: pane.session.clone(),
+                        generation: pane.session.state.lock().unwrap().reconnects,
+                        result: rx,
+                    });
                     let ctx = ctx.clone();
                     self.runtime.spawn(async move {
                         let result = crate::editor_output::open(
@@ -1133,30 +1212,61 @@ impl App {
             }
         }
         let mut ready = vec![];
-        self.pending_editors.retain_mut(|rx| match rx.try_recv() {
-            Ok(result) => {
-                ready.push(result);
-                false
-            }
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
-        });
-        for result in ready {
+        self.pending_editors
+            .retain_mut(|pending| match pending.result.try_recv() {
+                Ok(result) => {
+                    ready.push((
+                        pending.pane,
+                        pending.origin.clone(),
+                        pending.generation,
+                        result,
+                    ));
+                    false
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => false,
+            });
+        for (id, origin, generation, result) in ready {
             match result {
                 Ok(editor) => {
-                    let id = self.add_pane(
-                        ctx,
+                    let current = self.pending_workspace.is_none()
+                        && !self.pending_attach.contains_key(&id)
+                        && self.panes.get(&id).is_some_and(|pane| {
+                            let state = pane.session.state.lock().unwrap();
+                            Arc::ptr_eq(&pane.session, &origin)
+                                && state.connected
+                                && !state.exited
+                                && !state.detached
+                                && state.reconnects == generation
+                                && pane.return_to.is_none()
+                        });
+                    if !current {
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        self.pending_editors.push(PendingEditor {
+                            pane: id,
+                            origin,
+                            generation,
+                            result: rx,
+                        });
+                        let ctx = ctx.clone();
+                        self.runtime.spawn(async move {
+                            let result = editor.discard().await.and_then(|()| {
+                                anyhow::bail!("Editor cancelled because its source pane changed")
+                            });
+                            let _ = tx.send(result);
+                            ctx.request_repaint();
+                        });
+                        continue;
+                    }
+                    let session = Arc::new(Session::start(
+                        &self.runtime,
+                        ctx.clone(),
+                        editor.target,
                         Some(format!("{:032x}", editor.id)),
                         None,
-                        editor.target,
-                    );
-                    self.tabs.push(Tab {
-                        name: "Command output".into(),
-                        layout: Layout::Pane(id),
-                        focused: id,
-                        focus_history: vec![id],
-                    });
-                    self.active = self.tabs.len() - 1;
+                        vec![],
+                    ));
+                    self.panes.get_mut(&id).unwrap().show_editor(session);
                 }
                 Err(error) => self.output_error = Some(format!("{error:#}")),
             }
@@ -1299,6 +1409,20 @@ impl App {
             return;
         }
         self.control_requests(ctx);
+        for pane in self.panes.values() {
+            // A temporarily hidden shell is still attached, just like an inactive pane.
+            for session in pane
+                .return_to
+                .iter()
+                .map(|original| &original.session)
+                .chain(std::iter::once(&pane.session))
+            {
+                session.search.invalidate_changed_session();
+                if let Some(text) = session.state.lock().unwrap().clipboard.take() {
+                    ctx.copy_text(text);
+                }
+            }
+        }
         self.poll_command_output(ctx);
         if self.output_error.is_some() {
             egui::Panel::bottom("command-output-error").show(root_ui, |ui| {
@@ -1317,12 +1441,6 @@ impl App {
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
             });
-        }
-        for pane in self.panes.values() {
-            pane.session.search.invalidate_changed_session();
-            if let Some(text) = pane.session.state.lock().unwrap().clipboard.take() {
-                ctx.copy_text(text);
-            }
         }
         let closed: Vec<_> = self
             .panes
@@ -2847,7 +2965,17 @@ mod tests {
             app.runtime.block_on(task).unwrap()
         };
         let (editor_tx, editor_rx) = tokio::sync::oneshot::channel();
-        replacement.pending_editors.push(editor_rx);
+        replacement.pending_editors.push(PendingEditor {
+            pane: 1,
+            origin: replacement.panes[&1].session.clone(),
+            generation: replacement.panes[&1]
+                .session
+                .state
+                .lock()
+                .unwrap()
+                .reconnects,
+            result: editor_rx,
+        });
         let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(!output.status.success());
         assert!(
@@ -3403,3 +3531,7 @@ mod tests {
         assert_eq!(other.focus_history, vec![1, 2]);
     }
 }
+
+#[cfg(test)]
+#[path = "editor_view_tests.rs"]
+mod editor_view_tests;
