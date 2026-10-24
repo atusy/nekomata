@@ -72,18 +72,24 @@ fn main() -> eframe::Result {
             run_felis(&["sessions", "list"], &options);
         }
     }
-    let options = eframe::NativeOptions {
+    eframe::run_native(
+        APP_ID,
+        native_options(),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
+    )
+}
+
+/// Name passed to eframe; it also keys eframe's on-disk storage.
+const APP_ID: &str = "nekomata";
+
+fn native_options() -> eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("nekomata")
             .with_inner_size([1100.0, 740.0])
             .with_min_inner_size([480.0, 320.0]),
         ..Default::default()
-    };
-    eframe::run_native(
-        "nekomata",
-        options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
-    )
+    }
 }
 
 fn run_felis(command: &[&str], args: &[String]) -> ! {
@@ -97,5 +103,29 @@ fn run_felis(command: &[&str], args: &[String]) -> ! {
             eprintln!("Could not run felis: {err}. Use nix run or nix develop.");
             std::process::exit(2);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_geometry_persists_under_the_nekomata_app_id() {
+        let options = native_options();
+
+        assert!(options.persist_window);
+        assert!(options.persistence_path.is_none());
+        assert!(options.viewport.app_id.is_none());
+        let dir = eframe::storage_dir(APP_ID).expect("eframe persistence storage directory");
+        assert_eq!(dir.file_name(), Some(std::ffi::OsStr::new("nekomata")));
+    }
+
+    #[test]
+    fn first_launch_uses_the_default_window_size() {
+        let viewport = native_options().viewport;
+
+        assert_eq!(viewport.inner_size, Some([1100.0, 740.0].into()));
+        assert_eq!(viewport.min_inner_size, Some([480.0, 320.0].into()));
     }
 }
