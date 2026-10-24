@@ -1,5 +1,6 @@
 mod app;
 mod app_config;
+mod attention;
 mod cli;
 mod colors;
 mod command_palette;
