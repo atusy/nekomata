@@ -33,6 +33,7 @@ struct Pane {
     search_query: String,
     search_regex: bool,
     search_ignore_case: bool,
+    search_submitted: Option<(String, bool, bool)>,
     search_paint_key: Option<(
         u64,
         u32,
@@ -60,10 +61,52 @@ impl Pane {
             search_query: String::new(),
             search_regex: false,
             search_ignore_case: true,
+            search_submitted: None,
             search_paint_key: None,
             pending_paste: None,
             links: Default::default(),
         }
+    }
+
+    fn navigate_search(&mut self, older: bool) {
+        if self.search_query.is_empty() {
+            self.session.tools.cancel_search();
+            self.search_submitted = None;
+            return;
+        }
+        let mut search = self.session.tools.search.lock().unwrap();
+        let unchanged =
+            self.search_submitted
+                .as_ref()
+                .is_some_and(|(query, regex, ignore_case)| {
+                    query == &self.search_query
+                        && *regex == self.search_regex
+                        && *ignore_case == self.search_ignore_case
+                });
+        if unchanged
+            && search.active
+            && search.error.is_none()
+            && (search.running || !search.hits.is_empty())
+        {
+            if !search.running {
+                search.advance(older);
+            }
+        } else {
+            drop(search);
+            self.session.tools.search(
+                self.search_query.clone(),
+                felis_protocol::messages::SearchOptions {
+                    regex: self.search_regex,
+                    case_insensitive: self.search_ignore_case,
+                },
+            );
+            self.search_submitted = Some((
+                self.search_query.clone(),
+                self.search_regex,
+                self.search_ignore_case,
+            ));
+        }
+        self.search_focus = true;
     }
 
     fn connect(
@@ -890,7 +933,7 @@ impl App {
         }
     }
 
-    fn search_bar(&mut self, root_ui: &mut egui::Ui) {
+    fn search_bar(&mut self, ui: &mut egui::Ui) {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
@@ -898,66 +941,87 @@ impl App {
         if !pane.search_open {
             return;
         }
-        egui::Panel::top("terminal-search").show(root_ui, |ui| {
-            let mut run = false;
-            let mut close =
-                ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Find in scrollback");
-                let entry = ui.add(
-                    egui::TextEdit::singleline(&mut pane.search_query)
-                        .char_limit(1024)
-                        .desired_width(220.0),
+        let mut navigate = None;
+        let mut close = !egui::Popup::is_any_open(ui.ctx())
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
+            let entry = ui.add_sized(
+                [(ui.available_width() - 156.0).max(48.0), 30.0],
+                egui::TextEdit::singleline(&mut pane.search_query)
+                    .id_salt(("scrollback-query", tab.focused))
+                    .hint_text("Search scrollback")
+                    .desired_width((ui.available_width() - 156.0).max(48.0))
+                    .char_limit(1024),
+            );
+            if std::mem::take(&mut pane.search_focus) {
+                entry.request_focus();
+            }
+            if entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                navigate = Some(!ui.input(|input| input.modifiers.shift));
+            }
+            {
+                let search = pane.session.tools.search.lock().unwrap();
+                let response = ui.add_sized(
+                    [40.0, 30.0],
+                    egui::Label::new(if search.error.is_some() {
+                        egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
+                    } else if search.running {
+                        egui::RichText::new("…")
+                    } else {
+                        egui::RichText::new(format!(
+                            "{}/{}{}",
+                            search.current.map_or(0, |i| i + 1),
+                            search.hits.len(),
+                            if search.limited { "+" } else { "" }
+                        ))
+                    })
+                    .truncate(),
                 );
-                if std::mem::take(&mut pane.search_focus) {
-                    entry.request_focus();
+                if let Some(error) = &search.error {
+                    response.on_hover_text(error);
+                } else if search.running {
+                    response.on_hover_text("Searching…");
                 }
-                run |= entry.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                run |= ui.button("Find").clicked();
+            }
+            if ui
+                .add_enabled(
+                    !pane.search_query.is_empty(),
+                    egui::Button::new("⌃").min_size(Vec2::splat(24.0)),
+                )
+                .on_hover_text("Previous result · Shift+Enter")
+                .clicked()
+            {
+                navigate = Some(false);
+            }
+            if ui
+                .add_enabled(
+                    !pane.search_query.is_empty(),
+                    egui::Button::new("⌄").min_size(Vec2::splat(24.0)),
+                )
+                .on_hover_text("Search / next result · Enter")
+                .clicked()
+            {
+                navigate = Some(true);
+            }
+            ui.menu_button("⋯", |ui| {
                 ui.checkbox(&mut pane.search_ignore_case, "Ignore case");
                 ui.checkbox(&mut pane.search_regex, "Regex");
-                let mut search = pane.session.tools.search.lock().unwrap();
-                if ui
-                    .add_enabled(!search.hits.is_empty(), egui::Button::new("Previous"))
-                    .clicked()
-                {
-                    search.advance(false);
-                }
-                if ui
-                    .add_enabled(!search.hits.is_empty(), egui::Button::new("Next"))
-                    .clicked()
-                {
-                    search.advance(true);
-                }
-                ui.label(format!(
-                    "{} / {}{}",
-                    search.current.map_or(0, |i| i + 1),
-                    search.hits.len(),
-                    if search.limited { "+" } else { "" }
-                ));
-                if search.running {
-                    ui.spinner();
-                }
-                if let Some(error) = &search.error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
-                }
-                close |= ui.button("Close").clicked();
-            });
-            if run && !pane.search_query.is_empty() {
-                pane.session.tools.search(
-                    pane.search_query.clone(),
-                    felis_protocol::messages::SearchOptions {
-                        regex: pane.search_regex,
-                        case_insensitive: pane.search_ignore_case,
-                    },
-                );
-                pane.search_focus = true;
-            }
-            if close {
-                pane.search_open = false;
-                pane.session.tools.cancel_search();
-            }
+            })
+            .response
+            .on_hover_text("Search options");
+            close |= ui
+                .button("×")
+                .on_hover_text("Close search · Escape")
+                .clicked();
         });
+        if close {
+            pane.search_open = false;
+            pane.session.tools.cancel_search();
+        } else if let Some(older) = navigate {
+            pane.navigate_search(older);
+        }
     }
 
     fn paste_confirmation(&mut self, ctx: &egui::Context) {
@@ -1377,7 +1441,18 @@ impl App {
                         }
                     });
                     menu_open = menu.is_some();
+                    let search_width = if self.searching() {
+                        ui.available_width().min(360.0)
+                    } else {
+                        0.0
+                    };
                     egui::ScrollArea::horizontal()
+                        .max_width(
+                            (ui.available_width() - search_width - ui.spacing().item_spacing.x)
+                                .max(0.0),
+                        )
+                        .min_scrolled_width(0.0)
+                        .auto_shrink([false, true])
                         .id_salt("tab-scroll")
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -1427,6 +1502,13 @@ impl App {
                                 }
                             });
                         });
+                    if self.searching() {
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(search_width, 30.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| self.search_bar(ui),
+                        );
+                    }
                 });
             });
         if let Some(action) = action {
@@ -1435,7 +1517,6 @@ impl App {
         if self.tabs.is_empty() {
             return;
         }
-        self.search_bar(root_ui);
         let modal = self.searching()
             || paste_pending
             || self.picker.visible
@@ -2381,6 +2462,69 @@ fn key_character(key: egui::Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_navigation_reuses_results_until_query_or_options_change() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: requests stay queued without contacting a daemon.
+        let session = Arc::new(Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-search-test.sock".into()),
+            None,
+            None,
+            vec![],
+        ));
+        {
+            let mut state = session.state.lock().unwrap();
+            state.connected = true;
+            state.session_id = Some(1);
+        }
+        let mut pane = Pane::from_session(session);
+        pane.search_query = "needle".into();
+        pane.search_submitted = Some(("needle".into(), false, true));
+        {
+            let mut search = pane.session.tools.search.lock().unwrap();
+            search.active = true;
+            search.current = Some(0);
+            search.hits = (0..3)
+                .map(|line| crate::terminal_tools::Hit {
+                    line,
+                    spans: vec![],
+                    anchor: None,
+                })
+                .collect();
+        }
+        pane.navigate_search(true);
+        assert_eq!(pane.session.tools.search.lock().unwrap().current, Some(1));
+        pane.navigate_search(false);
+        assert_eq!(pane.session.tools.search.lock().unwrap().current, Some(0));
+        pane.search_regex = true;
+        pane.navigate_search(true);
+        let revision = {
+            let search = pane.session.tools.search.lock().unwrap();
+            assert!(search.running);
+            assert!(search.hits.is_empty());
+            search.revision
+        };
+        pane.navigate_search(true);
+        assert_eq!(pane.session.tools.search.lock().unwrap().revision, revision);
+        pane.session.tools.search.lock().unwrap().running = false;
+        pane.navigate_search(true);
+        assert!(
+            pane.session.tools.search.lock().unwrap().revision > revision,
+            "an empty completed search can be retried"
+        );
+        pane.search_query = "changed".into();
+        pane.navigate_search(true);
+        assert!(pane.session.tools.search.lock().unwrap().revision > revision);
+        pane.search_query.clear();
+        pane.navigate_search(true);
+        assert!(!pane.session.tools.search.lock().unwrap().active);
+    }
 
     #[test]
     fn unsafe_paste_stops_forwarding_the_rest_of_the_input_frame() {
