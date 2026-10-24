@@ -5,17 +5,54 @@ use felis_client_core::doctor::{ClipboardProbe, FontsProbe, GpuProbe, PROBE_VERS
 use serde::Serialize;
 use std::{fmt::Write as _, io::Write as _, time::Duration};
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ClipboardStatus {
+    Available,
+    Unavailable,
+    Unverified,
+}
+
+fn clipboard_probe(result: Result<(), String>, wayland: bool) -> (ClipboardProbe, ClipboardStatus) {
+    match result {
+        Ok(()) => (
+            ClipboardProbe {
+                available: true,
+                detail: None,
+            },
+            ClipboardStatus::Available,
+        ),
+        Err(error) if wayland => (
+            ClipboardProbe {
+                available: false,
+                detail: Some(format!(
+                    "Unverified: the native Wayland clipboard requires a window; the standalone backend probe failed: {error}"
+                )),
+            },
+            ClipboardStatus::Unverified,
+        ),
+        Err(error) => (
+            ClipboardProbe {
+                available: false,
+                detail: Some(error),
+            },
+            ClipboardStatus::Unavailable,
+        ),
+    }
+}
+
 #[derive(Serialize)]
 struct Report {
     #[serde(flatten)]
     probe: ProbeReport,
     issues: Vec<String>,
+    clipboard_status: ClipboardStatus,
 }
 
 impl Report {
     fn healthy(&self) -> bool {
         self.probe.gpu.available
-            && self.probe.clipboard.available
+            && self.clipboard_status != ClipboardStatus::Unavailable
             && matches!(self.probe.fonts, Some(FontsProbe::Resolved { .. }))
     }
 
@@ -38,10 +75,11 @@ impl Report {
         let _ = writeln!(
             text,
             "Clipboard: {}",
-            if probe.clipboard.available {
-                "backend initialized (contents not accessed)"
-            } else {
-                "unavailable"
+            match self.clipboard_status {
+                ClipboardStatus::Available => "backend initialized (contents not accessed)",
+                ClipboardStatus::Unavailable => "unavailable",
+                ClipboardStatus::Unverified =>
+                    "unverified (native Wayland clipboard requires a window)",
             }
         );
         match &probe.fonts {
@@ -93,20 +131,20 @@ pub fn run(json: bool) -> Result<bool> {
             GpuProbe::unavailable()
         }
     };
-    let clipboard = match arboard::Clipboard::new() {
-        Ok(_) => ClipboardProbe {
-            available: true,
-            detail: None,
-        },
-        Err(error) => {
-            let detail = error.to_string();
-            issues.push(format!("Clipboard: {detail}"));
-            ClipboardProbe {
-                available: false,
-                detail: Some(detail),
-            }
-        }
-    };
+    // egui-winit can use Smithay's ordinary Wayland clipboard with a window,
+    // even when arboard's data-control protocol and X11 fallback are absent.
+    let (clipboard, clipboard_status) = clipboard_probe(
+        arboard::Clipboard::new()
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some(),
+    );
+    if clipboard_status == ClipboardStatus::Unavailable {
+        issues.push(format!(
+            "Clipboard: {}",
+            clipboard.detail.as_deref().unwrap_or_default()
+        ));
+    }
     let fonts = match crate::render::load_fonts(&eframe::egui::Context::default()) {
         Ok(stack) => {
             let description = stack.describe();
@@ -133,6 +171,7 @@ pub fn run(json: bool) -> Result<bool> {
             fonts: Some(fonts),
         },
         issues,
+        clipboard_status,
     };
     let text = if json {
         serde_json::to_string_pretty(&report)? + "\n"
@@ -187,6 +226,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn missing_data_control_does_not_diagnose_the_wayland_gui_as_broken() {
+        let (probe, status) = clipboard_probe(Err("no data-control protocol".into()), true);
+        assert_eq!(status, ClipboardStatus::Unverified);
+        assert!(!probe.available);
+        assert!(probe.detail.as_ref().unwrap().contains("requires a window"));
+        assert_eq!(serde_json::to_value(status).unwrap(), "unverified");
+        let report = Report {
+            probe: ProbeReport {
+                v: PROBE_VERSION,
+                client_version: "test".into(),
+                gpu: GpuProbe {
+                    available: true,
+                    ..GpuProbe::unavailable()
+                },
+                clipboard: probe,
+                fonts: Some(FontsProbe::Resolved {
+                    regular: "font".into(),
+                    bold: "font".into(),
+                    italic: "font".into(),
+                    bold_italic: "font".into(),
+                    fallbacks: vec![],
+                    system_fallback: None,
+                }),
+            },
+            issues: vec![],
+            clipboard_status: status,
+        };
+        assert!(report.healthy(), "unverified must not fail the diagnosis");
+        assert!(report.human().contains("Clipboard: unverified"));
+        assert_eq!(
+            clipboard_probe(Err("no display".into()), false).1,
+            ClipboardStatus::Unavailable
+        );
+        assert_eq!(clipboard_probe(Ok(()), true).1, ClipboardStatus::Available);
+    }
+
+    #[test]
     fn unavailable_components_remain_visible_in_human_and_shared_json_reports() {
         let report = Report {
             probe: ProbeReport {
@@ -202,6 +278,7 @@ mod tests {
                 }),
             },
             issues: vec!["Clipboard: no display".into()],
+            clipboard_status: ClipboardStatus::Unavailable,
         };
         assert!(!report.healthy());
         let human = report.human();

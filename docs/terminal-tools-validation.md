@@ -22,7 +22,11 @@ is pending. These are protocol/UI-state tests, not native visual assertions.
 `nekomata doctor --json` resolved the GPU device, clipboard backend and packaged
 font on both Apple M4/Metal and the Linux guest. An invalid `NEKOMATA_FONT`
 produced a failed font probe and exit status 1. Doctor does not test native
-surface presentation or read/write clipboard contents. Native macOS keyboard,
+surface presentation or read/write clipboard contents. A standalone Wayland
+clipboard probe failure is reported as `clipboard_status: "unverified"`,
+without failing the command solely for that result; its GUI backend needs a
+window. This classification has a unit regression, not a native Wayland check.
+Native macOS keyboard,
 mouse, link-launch and editor-tab operations were not exercised in this pass.
 
 ## Search
