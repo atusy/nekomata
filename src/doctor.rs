@@ -13,6 +13,16 @@ enum ClipboardStatus {
     Unverified,
 }
 
+fn wayland_session(
+    display: Option<std::ffi::OsString>,
+    socket: Option<std::ffi::OsString>,
+) -> bool {
+    display
+        .into_iter()
+        .chain(socket)
+        .any(|value| !value.is_empty())
+}
+
 fn clipboard_probe(result: Result<(), String>, wayland: bool) -> (ClipboardProbe, ClipboardStatus) {
     match result {
         Ok(()) => (
@@ -137,7 +147,11 @@ pub fn run(json: bool) -> Result<bool> {
         arboard::Clipboard::new()
             .map(|_| ())
             .map_err(|error| error.to_string()),
-        cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        cfg!(target_os = "linux")
+            && wayland_session(
+                std::env::var_os("WAYLAND_DISPLAY"),
+                std::env::var_os("WAYLAND_SOCKET"),
+            ),
     );
     if clipboard_status == ClipboardStatus::Unavailable {
         issues.push(format!(
@@ -224,6 +238,14 @@ async fn probe_gpu() -> Result<GpuProbe> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wayland_detection_accepts_inherited_sockets_and_ignores_empty_values() {
+        assert!(wayland_session(None, Some("3".into())));
+        assert!(wayland_session(Some("wayland-0".into()), None));
+        assert!(!wayland_session(Some("".into()), Some("".into())));
+        assert!(!wayland_session(None, None));
+    }
 
     #[test]
     fn missing_data_control_does_not_diagnose_the_wayland_gui_as_broken() {
