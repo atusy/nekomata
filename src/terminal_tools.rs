@@ -775,4 +775,69 @@ mod tests {
         assert!(session.state.lock().unwrap().connected);
         assert!(!session.state.lock().unwrap().detached);
     }
+    #[test]
+    #[ignore = "requires private fake SSH relay; run scripts/test-live.sh"]
+    fn live_ssh_carrier_tools_preserve_explicit_socket_and_origin() {
+        assert_eq!(std::env::var("NEKOMATA_TEST_SSH").as_deref(), Ok("1"));
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("private socket required");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let session = crate::session::Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local(socket.clone().into()),
+            None,
+            None,
+            vec![],
+        );
+        let wait = |predicate: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !predicate() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "SSH operation timed out"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&|| session.state.lock().unwrap().connected);
+        let quoted_socket = std::path::Path::new(&socket)
+            .parent()
+            .unwrap()
+            .join("ops 'socket' $(printf unused).sock");
+        std::os::unix::fs::symlink(&socket, &quoted_socket).unwrap();
+        let tools = Tools::new(
+            &runtime,
+            ctx,
+            Target::Ssh {
+                host: "nekomata-test-host".into(),
+                socket: Some(quoted_socket.to_str().unwrap().into()),
+            },
+            session.state.clone(),
+        );
+        session.send(InputMsg::KeyBytes(b"printf '\\033]133;A\\007prompt> \\033]133;B\\007fake-command\\n\\033]133;C\\007SSH_OUTPUT_ONLY\\n\\033]133;D;0\\007'\r".to_vec()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            tools.command_output(false);
+            wait(&|| !tools.output.lock().unwrap().running);
+            if let Some(Ok(output)) = tools.take_output() {
+                assert_eq!(output.origin.host.as_deref(), Some("nekomata-test-host"));
+                if String::from_utf8(output.data)
+                    .unwrap()
+                    .contains("SSH_OUTPUT_ONLY")
+                {
+                    break;
+                }
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        tools.search("SSH_OUTPUT_ONLY".into(), SearchOptions::default());
+        wait(&|| !tools.search.lock().unwrap().running);
+        assert!(tools.search.lock().unwrap().error.is_none());
+        assert!(!tools.search.lock().unwrap().hits.is_empty());
+        assert!(session.state.lock().unwrap().connected);
+        assert!(!session.state.lock().unwrap().detached);
+        std::fs::remove_file(quoted_socket).unwrap();
+    }
 }
