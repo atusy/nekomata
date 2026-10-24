@@ -1149,6 +1149,75 @@ mod tests {
 
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_prompt_navigation_and_keyboard_scroll_use_daemon_history() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
+            ops.spawn_session(SpawnArgs {
+                command: "bash".into(),
+                args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
+                    r#"read -r line; for prompt in FIRST SECOND THIRD; do printf '\033]133;A\007%s_PROMPT\033]133;B\007\033]133;C\007\n' "$prompt"; for row in {1..35}; do printf 'OUTPUT_%s_%s\n' "$prompt" "$row"; done; printf '\033]133;D;0\007'; done; printf '\033]133;A\007NAVIGATION_READY'; read -r line"#.into()],
+                dims: Some(RequestedDims { rows: 24, cols: 80, pixel_w: 800, pixel_h: 480 }),
+                env_base: felis_client_core::env_base::capture(), ..Default::default()
+            }).await.unwrap().id
+        });
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
+        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "NAVIGATION_READY")
+        });
+        session.send(InputMsg::JumpPrompt {
+            direction: felis_protocol::messages::PromptJump::Previous,
+        });
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() > 0
+        });
+        let previous = session.state.lock().unwrap().screen.viewport();
+        session.send(InputMsg::JumpPrompt {
+            direction: felis_protocol::messages::PromptJump::Next,
+        });
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() < previous
+        });
+        let request = session
+            .state
+            .lock()
+            .unwrap()
+            .scroll_action(felis_client_core::ScrollStep::End)
+            .unwrap();
+        session.send(request);
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() == 0
+        });
+        let request = session
+            .state
+            .lock()
+            .unwrap()
+            .scroll_action(felis_client_core::ScrollStep::HalfPageUp)
+            .unwrap();
+        session.send(request);
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.screen.viewport() == 12
+        });
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_osc52_reaches_the_frontend_clipboard() {
         let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
         assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
