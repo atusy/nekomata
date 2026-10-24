@@ -4,7 +4,7 @@ use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use felis_client_core::{GridPos, Selection};
 #[cfg(test)]
 use felis_grid::Grapheme;
-use felis_protocol::messages::{InputMsg, RequestedDims};
+use felis_protocol::messages::{InputMsg, RegionSource, RequestedDims};
 
 use crate::{
     control::{self, Reply, Request},
@@ -1140,7 +1140,7 @@ impl App {
         }
     }
 
-    fn command_output(&mut self, edit: bool) {
+    fn request_output(&mut self, region: RegionSource, edit: bool) {
         let Some(id) = self.tabs.get(self.active).map(|tab| tab.focused) else {
             return;
         };
@@ -1158,7 +1158,7 @@ impl App {
                 Some("Finish the current output editor before opening another".into());
             return;
         }
-        pane.session.output.command_output(edit);
+        pane.session.output.request(region, edit);
     }
 
     fn poll_command_output(&mut self, ctx: &egui::Context) {
@@ -1280,8 +1280,9 @@ impl App {
         match action {
             Action::Search => self.open_search(),
             Action::Terminal(action) => self.terminal_action(ctx, action),
-            Action::CopyCommandOutput => self.command_output(false),
-            Action::EditCommandOutput => self.command_output(true),
+            Action::CopyCommandOutput => self.request_output(RegionSource::CommandOutput, false),
+            Action::EditCommandOutput => self.request_output(RegionSource::CommandOutput, true),
+            Action::EditScrollback => self.request_output(RegionSource::Scrollback, true),
             Action::NewWorkspace => self.begin_workspace(None, None),
             Action::OpenWorkspaces => {
                 self.workspaces_open = true;

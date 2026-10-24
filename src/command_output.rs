@@ -105,7 +105,7 @@ impl Tools {
         })
     }
 
-    pub fn command_output(&self, edit: bool) {
+    pub fn request(&self, region: RegionSource, edit: bool) {
         self.output_task.lock().unwrap().take();
         let from = source(&self.session);
         let generation = {
@@ -147,7 +147,7 @@ impl Tools {
         let session = self.session.clone();
         let ctx = self.ctx.clone();
         self.runtime.spawn(async move {
-            let result = region_request(&target, from.id, &mut cancelled)
+            let result = region_request(&target, from.id, region, &mut cancelled)
                 .await
                 .map(|(data, position)| Output {
                     data,
@@ -217,6 +217,7 @@ const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 async fn region_request(
     target: &Target,
     id: u128,
+    region: RegionSource,
     cancelled: &mut watch::Receiver<bool>,
 ) -> Result<(Vec<u8>, Option<RegionPosition>)> {
     let mut ops = tokio::select! {
@@ -228,7 +229,7 @@ async fn region_request(
         Duration::from_secs(5),
         ops.conn.writer.send_correlated(
             &RegionToDaemonMsg::Request {
-                source: RegionSource::CommandOutput,
+                source: region,
                 ansi: false,
             },
             felis_protocol::messages::Correlation::request(request),
@@ -252,10 +253,13 @@ async fn region_request(
                         bail!("Unexpected streamed output response");
                     };
                     if data.is_empty() {
-                        bail!("No command output is available (shell integration required)");
+                        if region == RegionSource::CommandOutput {
+                            bail!("No command output is available (shell integration required)");
+                        }
+                        bail!("No scrollback is available");
                     }
                     if data.len() > MAX_OUTPUT_BYTES {
-                        bail!("Command output exceeds the 8 MiB limit");
+                        bail!("Terminal output exceeds the 8 MiB limit");
                     }
                     return Ok((data, position));
                 }
@@ -276,6 +280,89 @@ async fn region_request(
 mod tests {
     use super::*;
     use felis_protocol::messages::InputMsg;
+    #[test]
+    #[ignore = "requires private felis daemon; run scripts/test-live.sh"]
+    fn live_scrollback_export_without_shell_integration() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("private test socket required");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = felis_client_core::connect_or_spawn_daemon(
+                std::path::Path::new(&socket), Offer::ops(),
+            ).await.unwrap();
+            ops.spawn_session(felis_protocol::messages::SpawnArgs {
+                command: "/bin/sh".into(),
+                args: vec!["-c".into(), r#"printf 'SCROLLBACK_HEAD\n'; i=0; while [ "$i" -lt 80 ]; do printf 'history %s\n' "$i"; i=$((i+1)); done; printf '\033[?1049hALT_LIVE_SCREEN\n'; read -r line; printf 'STILL_RUNNING\n'; read -r line"#.into()],
+                env_base: felis_client_core::env_base::capture(),
+                ..Default::default()
+            }).await.unwrap().id
+        });
+        let session = crate::session::Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local(socket.clone().into()),
+            Some(format!("{id:032x}")),
+            None,
+            vec![],
+        );
+        let wait = |predicate: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !predicate() {
+                assert!(std::time::Instant::now() < deadline, "operation timed out");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait(&|| session.state.lock().unwrap().connected);
+        let capture = |marker: &str| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                session.output.request(RegionSource::Scrollback, true);
+                wait(&|| !session.output.output.lock().unwrap().running);
+                let result = session.output.take_output();
+                let detail = match result {
+                    Some(Ok(output)) => {
+                        if String::from_utf8_lossy(&output.data).contains(marker) {
+                            break output;
+                        }
+                        "Expected live-screen marker is not captured yet".into()
+                    }
+                    Some(Err(error)) => error,
+                    None => "No export result".into(),
+                };
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "scrollback export failed: {detail}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let output = capture("ALT_LIVE_SCREEN");
+        let text = String::from_utf8(output.data).unwrap();
+        assert!(
+            text.contains("SCROLLBACK_HEAD"),
+            "retained history missing: {text}"
+        );
+        assert!(!text.contains('\u{1b}'));
+        assert!(output.edit);
+        assert!(output.position.is_some());
+        assert_eq!(output.origin.session_id, id);
+        // No OSC 133 boundaries were sent and the program is still waiting for input.
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        assert!(
+            String::from_utf8(capture("STILL_RUNNING").data)
+                .unwrap()
+                .contains("STILL_RUNNING")
+        );
+        assert!(session.state.lock().unwrap().connected);
+        assert!(!session.state.lock().unwrap().detached);
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
+    }
+
     #[test]
     #[ignore = "requires private felis daemon; run scripts/test-live.sh"]
     fn live_command_output_preserves_the_window_attachment() {
@@ -301,7 +388,7 @@ mod tests {
         session.send(InputMsg::KeyBytes(b"printf '\\033]133;A\\007prompt> \\033]133;B\\007fake-command\\n\\033]133;C\\007OUTPUT_ONLY\\n\\033]133;D;0\\007'\r".to_vec()));
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            session.output.command_output(false);
+            session.output.request(RegionSource::CommandOutput, false);
             wait(&|| !session.output.output.lock().unwrap().running);
             let result = session.output.take_output();
             if let Some(Ok(output)) = result {
@@ -368,7 +455,7 @@ mod tests {
         session.send(InputMsg::KeyBytes(b"printf '\\033]133;A\\007prompt> \\033]133;B\\007fake-command\\n\\033]133;C\\007SSH_OUTPUT_ONLY\\n\\033]133;D;0\\007'\r".to_vec()));
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            tools.command_output(false);
+            tools.request(RegionSource::CommandOutput, false);
             wait(&|| !tools.output.lock().unwrap().running);
             if let Some(Ok(output)) = tools.take_output() {
                 assert_eq!(output.origin.host.as_deref(), Some("nekomata-test-host"));

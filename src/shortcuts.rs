@@ -15,6 +15,7 @@ pub enum Action {
     OpenWorkspaces,
     CopyCommandOutput,
     EditCommandOutput,
+    EditScrollback,
     NewTab,
     Split(Axis),
     ClosePane,
