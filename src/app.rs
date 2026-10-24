@@ -1312,18 +1312,6 @@ impl eframe::App for App {
                             self.picker.open(&self.runtime, ctx);
                             ui.close();
                         }
-                        if menu_item(ui, "Copy last command output", "").clicked() {
-                            self.command_output(false);
-                            ui.close();
-                        }
-                        if menu_item(ui, "Edit last command output", "").clicked() {
-                            self.command_output(true);
-                            ui.close();
-                        }
-                        if menu_item(ui, "Find in scrollback…", "").clicked() {
-                            self.open_search();
-                            ui.close();
-                        }
                         menu_separator(ui);
                         for (label, shortcut, command) in [
                             ("Close pane", "Alt+W  C", Action::ClosePane),

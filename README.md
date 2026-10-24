@@ -83,7 +83,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 
 ### スクロールバック検索
 
-`≡` → `Find in scrollback…`、コマンドパレットの `Find in scrollback`、または検索ショートカットで検索バーを開きます。文字列を入力して `Find` または Enter で検索し、`Previous` / `Next` で結果を循環します。`Ignore case` は初期状態でオン、`Regex` はオフです。検索結果へ移動すると該当部分を強調表示します。
+`≡` → `Find in scrollback`、コマンドパレットの `Find in scrollback`、または検索ショートカットで検索バーを開きます。文字列を入力して `Find` または Enter で検索し、`Previous` / `Next` で結果を循環します。`Ignore case` は初期状態でオン、`Regex` はオフです。検索結果へ移動すると該当部分を強調表示します。
 
 検索結果は最大1,000件、応答の合計は1MiBまでです。件数の末尾の `+` は結果が制限されたことを示します。検索エラーはバーに表示します。検索中は入力を端末へ送らず、Escape または `Close` で検索バーと強調表示を閉じます。
 
