@@ -102,6 +102,22 @@ pub struct State {
 }
 
 impl State {
+    pub fn scroll_action(&self, step: felis_client_core::ScrollStep) -> Option<InputMsg> {
+        use felis_client_core::ScrollStep;
+        let half_page = i32::from(self.screen.screen().rows() / 2).max(1);
+        match step {
+            ScrollStep::End => Some(InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None,
+            }),
+            ScrollStep::Home => self.scroll_request(i32::MAX),
+            ScrollStep::LineUp => self.scroll_request(1),
+            ScrollStep::LineDown => self.scroll_request(-1),
+            ScrollStep::HalfPageUp => self.scroll_request(half_page),
+            ScrollStep::HalfPageDown => self.scroll_request(-half_page),
+        }
+    }
+
     pub fn scroll_request(&self, rows: i32) -> Option<InputMsg> {
         if !self.connected || self.screen.alt_screen() {
             return None;
@@ -615,6 +631,31 @@ mod tests {
             );
         }
         assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn keyboard_scrolls_use_shared_steps_and_live_reset_has_no_history_anchor() {
+        use felis_client_core::ScrollStep;
+        let state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        assert_eq!(
+            state.scroll_action(ScrollStep::HalfPageUp),
+            Some(InputMsg::ViewportStep { rows: 12 })
+        );
+        assert_eq!(
+            state.scroll_action(ScrollStep::HalfPageDown),
+            Some(InputMsg::ViewportStep { rows: -12 })
+        );
+        assert_eq!(
+            state.scroll_action(ScrollStep::Home),
+            Some(InputMsg::ViewportStep { rows: i32::MAX })
+        );
+        assert_eq!(
+            state.scroll_action(ScrollStep::End),
+            Some(InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None
+            })
+        );
     }
 
     #[test]
