@@ -1130,8 +1130,8 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl App {
+    fn show(&mut self, root_ui: &mut egui::Ui) {
         let context = root_ui.ctx().clone();
         let ctx = &context;
         self.workspace_events(ctx);
@@ -1463,6 +1463,7 @@ impl eframe::App for App {
                     &mut self.panes,
                     &mut tab.focused,
                     self.font_size,
+                    !modal,
                 );
                 if tab.focused != previous {
                     tab.focus(tab.focused);
@@ -1521,8 +1522,6 @@ impl eframe::App for App {
                 &mut pane.pending_paste,
                 explicit_paste,
             );
-        } else {
-            ctx.output_mut(|output| output.ime = None);
         }
         self.paste_confirmation(ctx);
         if let Some(id) = self.picker.show(&self.runtime, ctx) {
@@ -1635,6 +1634,13 @@ impl eframe::App for App {
         self.save_workspace();
         ctx.request_repaint_after(Duration::from_millis(250));
     }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(root_ui);
+    }
+
     // Not egui memory: felis and the workspace daemon own session state,
     // every window process shares one eframe store while pane ids repeat
     // across sessions, and `App::new` sets the style and theme anyway.
@@ -1711,11 +1717,19 @@ fn draw_layout(
     panes: &mut BTreeMap<u64, Pane>,
     focused: &mut u64,
     font_size: f32,
+    terminal_input_enabled: bool,
 ) -> Option<Rect> {
     let rect = ui.max_rect();
     match layout {
         Layout::Pane(id) => {
-            draw_pane(ui, *id, panes.get_mut(id).unwrap(), focused, font_size);
+            draw_pane(
+                ui,
+                *id,
+                panes.get_mut(id).unwrap(),
+                focused,
+                font_size,
+                terminal_input_enabled,
+            );
             (*focused == *id).then_some(rect)
         }
         Layout::Split {
@@ -1763,12 +1777,19 @@ fn draw_layout(
             }
             let first_focus = ui
                 .scope_builder(egui::UiBuilder::new().id_salt("first").max_rect(a), |ui| {
-                    draw_layout(ui, first, panes, focused, font_size)
+                    draw_layout(ui, first, panes, focused, font_size, terminal_input_enabled)
                 })
                 .inner;
             let second_focus = ui
                 .scope_builder(egui::UiBuilder::new().id_salt("second").max_rect(b), |ui| {
-                    draw_layout(ui, second, panes, focused, font_size)
+                    draw_layout(
+                        ui,
+                        second,
+                        panes,
+                        focused,
+                        font_size,
+                        terminal_input_enabled,
+                    )
                 })
                 .inner;
             let painter = ui.painter();
@@ -1797,7 +1818,14 @@ fn draw_layout(
     }
 }
 
-fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, font_size: f32) {
+fn draw_pane(
+    ui: &mut egui::Ui,
+    id: u64,
+    pane: &mut Pane,
+    focused: &mut u64,
+    font_size: f32,
+    terminal_input_enabled: bool,
+) {
     let generation = pane.session.state.lock().unwrap().reconnects;
     if generation != pane.connection_generation {
         pane.connection_generation = generation;
@@ -1876,7 +1904,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
         &painter,
         &mut state,
         text_rect,
-        *focused == id && connected && ui.input(|input| input.focused),
+        terminal_input_enabled && *focused == id && connected && ui.input(|input| input.focused),
         pane.selection,
     ) {
         state.error = Some(format!("Terminal renderer: {error:#}"));
@@ -1892,7 +1920,7 @@ fn draw_pane(ui: &mut egui::Ui, id: u64, pane: &mut Pane, focused: &mut u64, fon
     let cursor = screen.cursor();
     // Enabling XIM before the native window receives focus can consume its
     // pending input/focus events. Only the active native window owns the IME.
-    if *focused == id && ui.input(|input| input.focused) {
+    if terminal_input_enabled && *focused == id && ui.input(|input| input.focused) {
         let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
@@ -2787,6 +2815,38 @@ mod tests {
             ctx.egui_wants_keyboard_input(),
             "search field must own typing"
         );
+        app.open_search();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.show(ui));
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.show(ui));
+        assert!(
+            frame.platform_output.ime.is_some(),
+            "search IME must survive the complete UI frame"
+        );
+        assert_ne!(
+            frame.platform_output.ime.as_ref().unwrap().purpose,
+            egui::IMEPurpose::Terminal
+        );
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "にほん".into(),
+                    active_range_chars: None,
+                })],
+                ..Default::default()
+            },
+            |ui| app.show(ui),
+        );
+        let frame = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Ime(egui::ImeEvent::Commit("日本".into()))],
+                ..Default::default()
+            },
+            |ui| app.show(ui),
+        );
+        assert_eq!(app.panes[&1].search_query, "日本");
+        assert!(frame.platform_output.ime.is_some());
         let _ = crate::test_support::run(
             &ctx,
             egui::RawInput {
