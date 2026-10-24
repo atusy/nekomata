@@ -952,6 +952,7 @@ impl App {
                 egui::TextEdit::singleline(&mut pane.search_query)
                     .id_salt(("scrollback-query", tab.focused))
                     .hint_text("Search scrollback")
+                    .align(egui::Align2::LEFT_CENTER)
                     .desired_width((ui.available_width() - 132.0).max(48.0))
                     .char_limit(1024),
             );
