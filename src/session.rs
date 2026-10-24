@@ -86,6 +86,7 @@ impl Target {
 
 pub struct State {
     pub screen: ShadowScreen,
+    pub effective_minor: u16,
     pub pull: felis_client_core::pull::PullScheduler,
     pub redraw: felis_client_core::redraw::RedrawScheduler,
     pub colors: crate::colors::Colors,
@@ -101,6 +102,21 @@ pub struct State {
 }
 
 impl State {
+    pub fn scroll_request(&self, rows: i32) -> Option<InputMsg> {
+        if !self.connected || self.screen.alt_screen() {
+            return None;
+        }
+        felis_client_core::viewport::step_request(
+            rows,
+            self.effective_minor,
+            self.screen.viewport(),
+            self.screen.viewport_anchor(),
+            self.screen
+                .viewport_max()
+                .saturating_sub(u32::from(self.screen.screen().rows())),
+        )
+    }
+
     pub fn render_ready(&self) -> bool {
         self.connected && !self.screen.is_rehydrating() && !self.pull.cycle_open()
     }
@@ -196,6 +212,7 @@ impl Session {
     ) -> Self {
         let state = Arc::new(Mutex::new(State {
             screen: ShadowScreen::new(24, 80),
+            effective_minor: 0,
             pull: felis_client_core::pull::PullScheduler::new(matches!(target, Target::Local(_))),
             redraw: felis_client_core::redraw::RedrawScheduler::new(),
             colors: crate::colors::Colors::default(),
@@ -345,6 +362,7 @@ async fn run(
     {
         let mut state = shared.lock().unwrap();
         state.screen = ShadowScreen::new(info.dims.rows, info.dims.cols);
+        state.effective_minor = conn.effective_minor;
         state.session_id = Some(info.id);
         state.connected = true;
     }
@@ -385,6 +403,7 @@ async fn run(
             state.connected = true;
             state.reconnecting = false;
             state.reconnects = state.reconnects.wrapping_add(1);
+            state.effective_minor = conn.effective_minor;
         }
         rx.reopen();
         ctx.request_repaint();
@@ -547,6 +566,83 @@ mod tests {
         sync::mpsc as sync_mpsc,
         time::{Duration, Instant},
     };
+
+    fn viewport_state(effective_minor: u16) -> State {
+        let mut screen = ShadowScreen::new(24, 80);
+        screen
+            .apply(&GridMsg::ViewportState {
+                lines_from_bottom: 10,
+                max: 124,
+                anchor: Some(felis_protocol::messages::ViewportAnchor {
+                    pushed: 42,
+                    generation: 1,
+                }),
+            })
+            .unwrap();
+        State {
+            screen,
+            effective_minor,
+            pull: felis_client_core::pull::PullScheduler::new(false),
+            redraw: felis_client_core::redraw::RedrawScheduler::new(),
+            colors: Default::default(),
+            images: felis_client_core::ImageShadow::new(),
+            session_id: None,
+            error: None,
+            connected: true,
+            reconnects: 0,
+            reconnecting: false,
+            detached: false,
+            exited: false,
+            clipboard: None,
+        }
+    }
+
+    #[test]
+    fn rapid_scroll_steps_remain_ordered_before_the_screen_reply() {
+        let state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        let queue = InputQueue::default();
+        for _ in 0..2 {
+            let request = state.scroll_request(1).unwrap();
+            assert_eq!(request, InputMsg::ViewportStep { rows: 1 });
+            queue.push(&request).unwrap();
+        }
+        let expected = OutgoingFrame::input(&InputMsg::ViewportStep { rows: 1 }).unwrap();
+        let mut frames = queue.frames.lock().unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                frames.pop().unwrap().frame().body(),
+                expected.frame().body()
+            );
+        }
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn disconnected_panes_do_not_enqueue_scroll_steps() {
+        let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        state.connected = false;
+        assert!(state.scroll_request(1).is_none());
+    }
+
+    #[test]
+    fn old_daemon_scroll_requests_clamp_and_preserve_history_anchors() {
+        let state = viewport_state(1);
+        assert_eq!(
+            state.scroll_request(i32::MAX),
+            Some(InputMsg::Viewport {
+                lines_from_bottom: 100,
+                anchor: state.screen.viewport_anchor(),
+            })
+        );
+        assert_eq!(
+            state.scroll_request(-100),
+            Some(InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None,
+            })
+        );
+        assert!(state.scroll_request(0).is_none());
+    }
 
     #[test]
     fn resize_storms_keep_only_the_latest_unsent_size() {
