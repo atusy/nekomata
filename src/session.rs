@@ -99,6 +99,7 @@ pub struct State {
     pub detached: bool,
     pub exited: bool,
     pub clipboard: Option<String>,
+    pub attention: bool,
 }
 
 impl State {
@@ -226,6 +227,7 @@ impl Session {
             detached: false,
             exited: false,
             clipboard: None,
+            attention: false,
         }));
         let search =
             crate::terminal_search::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
@@ -507,6 +509,7 @@ async fn pump(
                                 let mut state = shared.lock().unwrap();
                                 state.pull.on_frame(&delivery.msg);
                                 state.screen.apply(&delivery.msg)?;
+                                state.attention = crate::attention::attention_after(state.attention, &delivery.msg, state.screen.is_rehydrating());
                                 state.redraw.request();
                                 state.colors.apply_grid(&delivery.msg);
                                 if matches!(delivery.msg, GridMsg::RehydrateBegin) {
@@ -587,6 +590,7 @@ mod tests {
             session_id: None,
             error: None,
             connected: true,
+            attention: false,
             reconnects: 0,
             reconnecting: false,
             detached: false,
@@ -757,6 +761,68 @@ mod tests {
                 .collect();
             text.contains("NEKOMATA_READY")
         })
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_bell_marks_attention_without_replaying_it_on_reattach() {
+        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let id = runtime.block_on(async {
+            let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.spawn_session(SpawnArgs {
+                command: "bash".into(),
+                args: vec![
+                    "--noprofile".into(),
+                    "--norc".into(),
+                    "-c".into(),
+                    r#"read -r line; printf '\a'; read -r line"#.into(),
+                ],
+                env_base: felis_client_core::env_base::capture(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id
+        });
+        let ctx = egui::Context::default();
+        let (tx, repaints) = sync_mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
+        wait_for(&session, &ctx, &repaints, |state| state.render_ready());
+        assert!(!session.state.lock().unwrap().attention);
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
+        // Hidden panes do not submit frames or replenish grid pulls. Attention
+        // still arrives through the independent facet stream.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pulls = session.state.lock().unwrap().pull.sent();
+        loop {
+            let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
+            if session.state.lock().unwrap().attention {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "hidden pane did not receive attention"
+            );
+            let _ = repaints.recv_timeout(Duration::from_millis(50));
+        }
+        assert_eq!(session.state.lock().unwrap().pull.sent(), pulls);
+        drop(session);
+        let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
+        wait_for(&session, &ctx, &repaints, |state| state.render_ready());
+        assert!(!session.state.lock().unwrap().attention);
+        drop(session);
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
+                .await
+                .unwrap();
+            ops.destroy_session(format!("{id:032x}")).await.unwrap();
+        });
     }
 
     #[test]
