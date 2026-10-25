@@ -84,7 +84,29 @@ pub fn parse_sequence(spelling: &str) -> Result<Vec<Chord>, String> {
     {
         return Err("Escape cancels a pending sequence, so it can only start one".into());
     }
+    if keys.iter().any(is_clipboard_chord) {
+        return Err(
+            "the window turns this chord into a clipboard event, so it never arrives as a key"
+                .into(),
+        );
+    }
     Ok(keys)
+}
+
+/// Mirrors egui-winit's clipboard shortcuts (`is_cut_command` and siblings):
+/// with Alt and Shift up, Command (Cmd on macOS, Ctrl elsewhere) plus X, C
+/// or V becomes `Event::Cut`/`Copy`/`Paste` instead of `Event::Key`.
+fn is_clipboard_chord(chord: &Chord) -> bool {
+    let command = if cfg!(target_os = "macos") {
+        TerminalModifiers::SUPER
+    } else {
+        TerminalModifiers::CONTROL
+    };
+    chord.mods.contains(command)
+        && !chord
+            .mods
+            .intersects(TerminalModifiers::ALT | TerminalModifiers::SHIFT)
+        && matches!(&chord.key, KeyCode::Character(c) if matches!(c.as_str(), "x" | "c" | "v"))
 }
 
 impl AppKeymap {
