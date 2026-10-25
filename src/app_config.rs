@@ -655,6 +655,33 @@ mod tests {
     }
 
     #[test]
+    fn escape_cannot_continue_a_sequence() {
+        let (config, warnings) = parse(
+            r#"[keymap]
+            "ctrl+a escape" = { kind = "close_tab" }
+            "ctrl+a shift+escape" = { kind = "close_tab" }
+            "escape" = { kind = "new_tab" }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(warnings.len(), 2, "{warnings:#?}");
+        assert!(
+            warnings.iter().all(|warning| warning.contains("Escape")),
+            "{warnings:#?}"
+        );
+        let mut expected = AppKeymap::default();
+        expected.apply(
+            vec![(
+                "escape".into(),
+                crate::shortcuts::parse_sequence("escape").unwrap(),
+                Some(Action::NewTab),
+            )],
+            &mut vec![],
+        );
+        assert_eq!(config.keymap, expected);
+    }
+
+    #[test]
     fn a_sequence_behind_a_bound_chord_is_dropped_with_a_warning() {
         let (config, warnings) = parse(
             r#"[keymap]

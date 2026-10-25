@@ -76,6 +76,14 @@ pub fn parse_sequence(spelling: &str) -> Result<Vec<Chord>, String> {
     if keys.is_empty() {
         return Err("empty key sequence".into());
     }
+    // `Shortcuts::consume` cancels a pending sequence on any Escape, so a
+    // later Escape chord could never be reached.
+    if keys[1..]
+        .iter()
+        .any(|chord| chord.key == KeyCode::Named(NamedKey::Escape))
+    {
+        return Err("Escape cancels a pending sequence, so it can only start one".into());
+    }
     Ok(keys)
 }
 
