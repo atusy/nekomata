@@ -49,21 +49,25 @@ one pane.
 
 1. The daemon must first accept the current workspace's snapshot.
 2. The destination is reserved while the source lease is still held.
-3. The GUI connects every pane of the destination.
+3. The GUI connects every pane of the destination. A pane already open in
+   this window with the same target and session is reused.
 4. Only then does the switch commit and the source lease end.
 
-If any step fails, the reservation is cancelled and the window keeps its
-current workspace.
+If any step fails — including a destination session that errors, ends or
+detaches, or the requesting CLI disconnecting — the reservation is cancelled
+and the window keeps its current workspace.
 
 ## Closing panes and tabs
 
 Closing a pane or tab removes it from the layout and detaches its felis
-sessions. The shells keep running in felis. Only the shell's own exit ends it.
+sessions. Closing the last one closes the window. nekomata never ends a
+shell: it keeps running in felis until it exits or its felis daemon stops.
 
-## Reconnection
+## Losing the nekomata daemon
 
-Startup attachment and reconnection after a nekomata daemon communication
-failure are different operations; the latter is not supported.
+If the window cannot attach a workspace at startup, it shows the error and a
+button to retry. Once attached, a window does not reconnect after losing its
+connection to the nekomata daemon.
 
 ## CLI
 
