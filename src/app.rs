@@ -277,11 +277,9 @@ impl App {
         self.tabs = snapshot.tabs;
         self.active = snapshot.active;
         self.next_id = snapshot.next_id;
-        self.font_size = if self.tabs.is_empty() {
-            crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
-        } else {
-            snapshot.font_size
-        };
+        // Startup restores layout and shells, but terminal config owns the
+        // initial font size. A saved absolute zoom must not hide config edits.
+        self.font_size = crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
@@ -2653,14 +2651,21 @@ mod tests {
             *ratio = 0.3;
         }
         app.font_size = 18.0;
-        let before = app.snapshot();
+        let mut before = app.snapshot();
         let session_id = app.workspace_id;
         app.save_workspace();
         eframe::App::on_exit(&mut app);
         drop(app);
 
+        // A restarted GUI must use the newly loaded terminal configuration,
+        // even though the retained workspace was saved at another zoom.
+        let mut config = felis_client_core::config::EffectiveConfig::default();
+        config.font.size_px = Some(30.0);
+        crate::terminal_config::install(&ctx, config);
         let mut replacement = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
         pump(&mut replacement, &connected);
+        assert_eq!(replacement.font_size, 30.0);
+        before.font_size = 30.0;
         assert_eq!(replacement.workspace_id, session_id);
         assert_eq!(replacement.snapshot(), before);
         assert_eq!(replacement.tabs.len(), 2);
