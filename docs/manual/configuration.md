@@ -44,7 +44,7 @@ Switching to an existing workspace restores the size it was saved with.
 ```toml
 [appearance.base.font]
 # Tabs, menus, the search field, the command palette. Terminal text uses felis's [font].
-family = "UDEV Gothic NF"   # default: Hiragino (macOS) or Noto Sans CJK (Linux, when installed)
+family = "UDEV Gothic NF"   # default: Hiragino (macOS), Noto Sans CJK at its Debian/Ubuntu path (Linux), else egui's font
 size_px = 15                # default: 14, felis's default terminal size
 
 [keymap]
