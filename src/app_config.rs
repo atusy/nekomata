@@ -59,10 +59,12 @@ fn read(path: &Path, warnings: &mut Warnings) -> anyhow::Result<AppConfig> {
 
 /// Escapes control characters, which TOML strings and quoted keys can
 /// carry, so a config file cannot drive the terminal showing stderr.
+/// Line breaks and tabs stay: they cannot, and toml's parse errors lay
+/// out a source excerpt with them.
 fn printable(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        if c.is_control() {
+        if c.is_control() && !matches!(c, '\n' | '\t') {
             out.extend(c.escape_default());
         } else {
             out.push(c);
@@ -535,6 +537,17 @@ mod tests {
         assert!(!shown.chars().any(char::is_control), "{shown}");
         assert!(shown.contains("\\u{1b}]0;x\\u{7}"), "{shown}");
         assert_eq!(printable("keymap.\"alt+x\" ✓"), "keymap.\"alt+x\" ✓");
+    }
+
+    #[test]
+    fn a_parse_error_keeps_its_line_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[appearance").unwrap();
+        let error = read(&path, &mut Warnings::new()).unwrap_err().to_string();
+        // toml points at the error on the line below the excerpt.
+        assert!(error.contains("\n1 | [appearance\n"), "{error}");
+        assert_eq!(printable("a\nb\tc\u{1b}"), "a\nb\tc\\u{1b}");
     }
 
     #[test]
