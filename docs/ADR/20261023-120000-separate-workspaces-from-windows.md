@@ -24,7 +24,7 @@ presents — is retained by a dedicated nekomata daemon, not by a GUI window.
   felis daemon directly, local or over SSH. The nekomata daemon stores only
   references to felis sessions.
 - **felis owns shells.** Closing a window, tab or pane detaches from a shell
-  but never ends it; only the shell's own exit does.
+  but never ends it; nekomata never ends shells.
 
 ## Invariants
 
