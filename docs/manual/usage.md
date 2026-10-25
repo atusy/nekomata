@@ -70,8 +70,9 @@ command palette.
 
 ## Paste confirmation
 
-Pasting text with newlines or other control characters into a terminal that
-has not enabled bracketed paste asks for confirmation first.
+Pasting text that contains a newline or another control character (tabs
+excepted) into a terminal that has not enabled bracketed paste asks for
+confirmation first.
 
 ![Paste confirmation](../images/terminal-tools-paste.png)
 
