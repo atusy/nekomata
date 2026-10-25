@@ -255,3 +255,5 @@ Apache-2.0。端末エンジンには [felis](https://git.natsukium.com/felis-te
 
 [macOS で個人用の `[client.nekomata]` 設定を読み込んだ表示](docs/images/felis-config-macos.png)。
 配色・UDEV Gothic NF・15 px はこの検証時のユーザー設定で、アプリケーションに同梱する既定値ではありません。
+
+[タブの日本語・英字・点字スピナーの表示](docs/images/felis-config-tab-title-macos.png)も macOS で確認しています。タブのフォントは application layer が扱い、端末のフォント設定とは独立しています。
