@@ -41,6 +41,51 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
+pub fn tab_button(
+    ui: &mut eframe::egui::Ui,
+    title: &str,
+    selected: bool,
+) -> eframe::egui::Response {
+    use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
+    let color = if selected { FG } else { TAB_INACTIVE_FG };
+    let galley = ui.painter().layout_no_wrap(
+        title.to_owned(),
+        TextStyle::Button.resolve(ui.style()),
+        color,
+    );
+    let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response
+        .widget_info(|| WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, title));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        ui.painter().rect_filled(
+            rect,
+            visuals.corner_radius,
+            if selected {
+                TAB_ACTIVE_BG
+            } else {
+                visuals.weak_bg_fill
+            },
+        );
+        if galley.mesh_bounds.is_finite() {
+            // Font line boxes include asymmetric ascent/descent whitespace.
+            // Keep the button size, but center the visible glyphs vertically.
+            let pos = egui::pos2(
+                rect.center().x - galley.size().x / 2.0,
+                rect.center().y - galley.mesh_bounds.center().y,
+            );
+            ui.painter().galley(pos, galley, color);
+        }
+    }
+    if response.hovered()
+        && let Some(cursor) = ui.visuals().interact_cursor
+    {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    response
+}
+
 /// Application fonts are independent of terminal configuration.
 pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
     use eframe::egui::{FontData, FontDefinitions, FontFamily};
@@ -94,6 +139,44 @@ pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tab_title_ink_is_vertically_centered() {
+        use eframe::egui::{self, epaint::Shape};
+        for density in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(density);
+            ctx.set_fonts(super::chrome_fonts());
+            for title in [
+                "確認する felis設定の読み込み | nekomata",
+                "⠇ 確認する",
+                "English gy",
+            ] {
+                for selected in [false, true] {
+                    let mut rect = egui::Rect::NOTHING;
+                    let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                        ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
+                        rect = super::tab_button(ui, title, selected).rect;
+                    });
+                    let ink = frame
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == title => {
+                                Some(text.visual_bounding_rect())
+                            }
+                            _ => None,
+                        })
+                        .expect("tab title is painted");
+                    let difference = ink.center().y - rect.center().y;
+                    assert!(
+                        difference.abs() <= 0.5 / density,
+                        "title={title:?}, density={density}, offset={difference}, ink={ink:?}, button={rect:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     #[cfg(target_os = "macos")]
     fn tab_titles_cover_braille_spinners_and_japanese() {

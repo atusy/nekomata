@@ -13,7 +13,7 @@ use crate::{
     picker::SessionPicker,
     session::{Session, Target},
     shortcuts::{Action, Shortcuts},
-    theme::{ACCENT, BG, FG, TAB_ACTIVE_BG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
+    theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
     workspace::{PaneSpec, Snapshot, Tab},
     workspace_client::{Client as WorkspaceClient, Operation},
 };
@@ -1384,16 +1384,7 @@ impl App {
                                         .unwrap_or(&tab.name)
                                         .to_owned();
                                     let selected = self.active == i;
-                                    let text = egui::RichText::new(title).color(if selected {
-                                        FG
-                                    } else {
-                                        TAB_INACTIVE_FG
-                                    });
-                                    let mut button = egui::Button::new(text).stroke(Stroke::NONE);
-                                    if selected {
-                                        button = button.fill(TAB_ACTIVE_BG);
-                                    }
-                                    if ui.add(button).clicked() {
+                                    if crate::theme::tab_button(ui, &title, selected).clicked() {
                                         self.active = i;
                                     }
                                 }
