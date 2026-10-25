@@ -4,7 +4,7 @@ use felis_client_core::{
     Modifiers as TerminalModifiers, NamedKey,
 };
 
-use crate::layout::Axis;
+use crate::layout::{Axis, Direction};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -18,7 +18,7 @@ pub enum Action {
     NextPane,
     NextTab,
     PreviousTab,
-    Focus(Key),
+    Focus(Direction),
     FontScale(f32),
     FontReset,
     Palette,
@@ -129,7 +129,10 @@ impl Shortcuts {
                     (Key::S, true, _) => Some(Action::Split(Axis::Vertical)),
                     (Key::V, true, _) => Some(Action::Split(Axis::Horizontal)),
                     (Key::C, _, true) => Some(Action::ClosePane),
-                    (Key::H | Key::J | Key::K | Key::L, _, true) => Some(Action::Focus(*key)),
+                    (Key::H, _, true) => Some(Action::Focus(Direction::Left)),
+                    (Key::J, _, true) => Some(Action::Focus(Direction::Down)),
+                    (Key::K, _, true) => Some(Action::Focus(Direction::Up)),
+                    (Key::L, _, true) => Some(Action::Focus(Direction::Right)),
                     (Key::Escape, _, _) => {
                         suppress_text = true;
                         return false;
