@@ -177,6 +177,20 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
         crate::terminal_config::load(&cc.egui_ctx)?;
+        let config = crate::app_config::load()?;
+        let ui_size = config
+            .font
+            .size_px
+            .unwrap_or_else(crate::ui_font::default_size_px);
+        let ui_face = config.font.family.as_deref().and_then(|family| {
+            let face = crate::ui_font::find(family);
+            if face.is_none() {
+                eprintln!(
+                    "nekomata: font family `{family}` is not installed; using the system font"
+                );
+            }
+            face
+        });
 
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
@@ -186,15 +200,15 @@ impl App {
         style.spacing.button_padding = Vec2::new(12.0, 7.0);
         style
             .text_styles
-            .insert(egui::TextStyle::Body, FontId::proportional(14.0));
+            .insert(egui::TextStyle::Body, FontId::proportional(ui_size));
         style
             .text_styles
-            .insert(egui::TextStyle::Button, FontId::proportional(14.0));
+            .insert(egui::TextStyle::Button, FontId::proportional(ui_size));
         style.visuals.window_fill = TAB_BAR_BG;
         style.visuals.window_stroke = Stroke::new(1.0_f32, crate::theme::MENU_BORDER);
         style.visuals.window_corner_radius = egui::CornerRadius::same(8);
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
-        cc.egui_ctx.set_fonts(crate::theme::chrome_fonts());
+        cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
         Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
     }
@@ -988,7 +1002,7 @@ impl App {
                         egui::RichText::new(
                             "This text contains line breaks or control characters that may run commands immediately.",
                         )
-                        .size(14.0)
+                        .size(theme::ui_size(ui.style(), 14.0))
                         .color(theme::FG),
                     );
                     ui.add_space(8.0);
@@ -1352,7 +1366,7 @@ impl App {
                 ui.label(
                     egui::RichText::new("Text size")
                         .color(TAB_INACTIVE_FG)
-                        .size(12.0),
+                        .size(crate::theme::ui_size(ui.style(), 12.0)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -1696,7 +1710,7 @@ fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
         [ui.available_width(), crate::theme::MENU_ROW_HEIGHT],
         egui::Button::new(label).shortcut_text(
             egui::RichText::new(shortcut)
-                .size(11.0)
+                .size(crate::theme::ui_size(ui.style(), 11.0))
                 .color(TAB_INACTIVE_FG),
         ),
     )
@@ -1938,7 +1952,7 @@ fn draw_pane(
             text_rect.min,
             egui::Align2::LEFT_TOP,
             "Input could not be delivered. Reattach this session before continuing.",
-            FontId::proportional(14.0),
+            FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             Color32::LIGHT_RED,
         );
     } else if let Some(error) = &state.error {
@@ -1946,7 +1960,7 @@ fn draw_pane(
             text_rect.min,
             egui::Align2::LEFT_TOP,
             error,
-            FontId::proportional(14.0),
+            FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             Color32::LIGHT_RED,
         );
     } else if !state.connected {
@@ -1972,7 +1986,7 @@ fn draw_pane(
             overlay.left_center(),
             egui::Align2::LEFT_CENTER,
             error,
-            FontId::proportional(12.0),
+            FontId::proportional(crate::theme::ui_size(ui.style(), 12.0)),
             Color32::LIGHT_RED,
         );
     }

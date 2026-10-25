@@ -31,7 +31,7 @@ pub fn ui_size(style: &eframe::egui::Style, nominal: f32) -> f32 {
 pub fn menu_style(style: &mut eframe::egui::Style) {
     use eframe::egui::{self, Stroke, Vec2};
     egui::containers::menu::menu_style(style);
-    style.override_font_id = Some(egui::FontId::proportional(14.0));
+    style.override_font_id = Some(egui::FontId::proportional(ui_size(style, 14.0)));
     style.spacing.button_padding = Vec2::new(10.0, 5.0);
     style.spacing.item_spacing = Vec2::new(4.0, 2.0);
     style.spacing.interact_size.y = MENU_ROW_HEIGHT;
@@ -162,8 +162,10 @@ pub fn tab_button(
     response
 }
 
-/// Application fonts are independent of terminal configuration.
-pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
+/// Application fonts are independent of terminal configuration. A
+/// configured `primary` leads proportional text; the system faces stay as
+/// its fallbacks.
+pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::FontDefinitions {
     use eframe::egui::{FontData, FontDefinitions, FontFamily};
     let mut fonts = FontDefinitions::default();
     for path in [
@@ -210,11 +212,55 @@ pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
             break;
         }
     }
+    if let Some(face) = primary {
+        let mut data = FontData::from_owned(face.bytes);
+        data.index = face.index;
+        fonts.font_data.insert("configured".into(), data.into());
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .insert(0, "configured".into());
+    }
     fonts
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chrome_text_sizes_follow_the_configured_body() {
+        use eframe::egui::{FontId, Style, TextStyle};
+        let mut style = Style::default();
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::proportional(21.0));
+        assert_eq!(super::ui_size(&style, 14.0), 21.0);
+        assert_eq!(super::ui_size(&style, 12.0), 18.0);
+        super::menu_style(&mut style);
+        assert_eq!(style.override_font_id.unwrap().size, 21.0);
+    }
+
+    #[test]
+    fn a_configured_face_leads_proportional_text_before_system_fallbacks() {
+        use eframe::egui::FontFamily;
+        let default = super::chrome_fonts(None);
+        let fonts = super::chrome_fonts(Some(crate::ui_font::Face {
+            bytes: vec![],
+            index: 2,
+        }));
+        let proportional = &fonts.families[&FontFamily::Proportional];
+        assert_eq!(proportional[0], "configured");
+        assert_eq!(
+            proportional[1..],
+            default.families[&FontFamily::Proportional]
+        );
+        assert_eq!(fonts.font_data["configured"].index, 2);
+        assert_eq!(
+            fonts.families[&FontFamily::Monospace],
+            default.families[&FontFamily::Monospace]
+        );
+    }
+
     #[test]
     fn menu_trigger_matches_tab_ink_and_shows_its_open_state() {
         use eframe::egui::{self, epaint::Shape};
@@ -222,7 +268,7 @@ mod tests {
             for density in [1.0, 1.1, 1.25, 1.5, 2.0] {
                 let ctx = egui::Context::default();
                 ctx.set_pixels_per_point(density);
-                ctx.set_fonts(super::chrome_fonts());
+                ctx.set_fonts(super::chrome_fonts(None));
                 ctx.set_theme(egui::Theme::Dark);
                 ctx.style_mut_of(egui::Theme::Dark, |style| {
                     for text_style in [egui::TextStyle::Body, egui::TextStyle::Button] {
@@ -301,7 +347,7 @@ mod tests {
         for density in [1.0, 2.0] {
             let ctx = egui::Context::default();
             ctx.set_pixels_per_point(density);
-            ctx.set_fonts(super::chrome_fonts());
+            ctx.set_fonts(super::chrome_fonts(None));
             for title in [
                 "確認する felis設定の読み込み | nekomata",
                 "⠇ 確認する",
@@ -338,7 +384,7 @@ mod tests {
     fn tab_titles_cover_braille_spinners_and_japanese() {
         use eframe::egui;
         let ctx = egui::Context::default();
-        ctx.set_fonts(super::chrome_fonts());
+        ctx.set_fonts(super::chrome_fonts(None));
         let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
             assert!(ui.fonts_mut(|fonts| fonts.has_glyphs(
                 &egui::FontId::proportional(14.0),
@@ -351,7 +397,7 @@ mod tests {
     fn tab_titles_share_a_baseline_across_japanese_and_latin() {
         use eframe::egui;
         let ctx = egui::Context::default();
-        ctx.set_fonts(super::chrome_fonts());
+        ctx.set_fonts(super::chrome_fonts(None));
         let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
             let galley = ui.painter().layout_no_wrap(
                 "H確f認".into(),
