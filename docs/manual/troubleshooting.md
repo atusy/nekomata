@@ -38,8 +38,9 @@ on your `PATH`.
 
 ## macOS asks for permissions in another app's name
 
-nekomata shares a running felis daemon. If kitty or another app started that
-daemon, macOS attributes permission requests to that app. To change this, end
+nekomata shares a running felis daemon. If that daemon was started from
+another app — for example by a felis command run in kitty — macOS attributes
+permission requests to that app. To change this, end
 your existing sessions, stop the felis daemon, then launch nekomata from the
 Dock so that nekomata starts the daemon.
 
