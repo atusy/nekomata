@@ -27,7 +27,7 @@ felis-render-wgpu = { path = "vendor/felis-render-wgpu" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFDictionary", "CFString", "CFURL"] }
-objc2-core-text = { version = "0.3", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
+objc2-core-text = { version = "0.3", default-features = false, features = ["std", "CTFontDescriptor"] }
 
 # dlopen: as in felis-shaping, a missing libfontconfig leaves the UI on
 # its default font instead of failing to start.

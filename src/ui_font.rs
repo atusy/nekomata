@@ -8,8 +8,16 @@ use std::path::{Path, PathBuf};
 
 use swash::{FontRef, StringId, Style};
 
-/// Applied when the platform reports no UI text size.
-const FALLBACK_SIZE_PX: f32 = 15.0;
+/// kitty's default `font_size`.
+const DEFAULT_SIZE_PT: f32 = 11.0;
+/// kitty's logical DPI for converting points (`dpi_from_scale` in
+/// kitty/glfw.c): 72 on macOS, where a point is a logical pixel, and 96
+/// elsewhere.
+const LOGICAL_DPI: f32 = if cfg!(target_os = "macos") {
+    72.0
+} else {
+    96.0
+};
 const REGULAR_WEIGHT: u16 = 400;
 
 /// A face file's bytes and the face's index within a collection.
@@ -18,24 +26,10 @@ pub struct Face {
     pub index: u32,
 }
 
-/// The platform's UI text size, or 15 px where the platform reports none.
+/// kitty's default font size in logical pixels: 11 pt, which is 11 px on
+/// macOS and about 14.67 px elsewhere.
 pub fn default_size_px() -> f32 {
-    system_size_px().unwrap_or(FALLBACK_SIZE_PX)
-}
-
-#[cfg(target_os = "macos")]
-fn system_size_px() -> Option<f32> {
-    use objc2_core_text::{CTFont, CTFontUIFontType};
-    // SAFETY: `None` asks for the user's own language.
-    let font = unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) }?;
-    // SAFETY: `font` is a live CTFont.
-    let size = unsafe { font.size() } as f32;
-    (size > 0.0).then_some(size)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn system_size_px() -> Option<f32> {
-    None
+    DEFAULT_SIZE_PT * LOGICAL_DPI / 72.0
 }
 
 /// The face of `family` closest to regular upright text, as the platform
@@ -44,8 +38,8 @@ fn system_size_px() -> Option<f32> {
 /// Runs once at startup on the GUI thread. Only the matched family's
 /// files are opened, so it takes about 2 ms. CoreText's per-process setup
 /// costs a few hundred milliseconds on its first query, but by the time
-/// the app is created opening the window has already paid it, so neither
-/// this nor `default_size_px` waits on it there.
+/// the app is created opening the window has already paid it, so this
+/// does not wait on it there.
 pub fn find(family: &str) -> Option<Face> {
     let (path, index) = select(&platform::candidates(family), family)?;
     Some(Face {
@@ -460,20 +454,13 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn the_default_size_is_the_macos_system_ui_size() {
-        use objc2_core_text::{CTFont, CTFontUIFontType};
-        // SAFETY: `None` asks for the user's own language.
-        let font = unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) }
-            .unwrap();
-        // SAFETY: `font` is a live CTFont.
-        assert_eq!(default_size_px(), unsafe { font.size() } as f32);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn the_default_size_falls_back_without_a_platform_size() {
-        assert_eq!(default_size_px(), FALLBACK_SIZE_PX);
+    fn the_default_size_is_kittys_11_points_in_logical_pixels() {
+        let expected = if cfg!(target_os = "macos") {
+            11.0
+        } else {
+            11.0 * 96.0 / 72.0
+        };
+        assert_eq!(default_size_px(), expected);
     }
 }

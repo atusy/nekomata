@@ -45,7 +45,7 @@ nekomata 独自の設定は、felis の文書とは別の `config.toml` に書�
 [appearance.base.font]
 # タブ・メニュー・検索欄・コマンドパレットなど UI の文字。端末の文字は felis の [font] で設定します。
 family = "UDEV Gothic NF" # 省略時は nekomata の既定 UI フォント
-size_px = 15              # 省略時は macOS のシステム UI サイズ、ほかの OS は 15
+size_px = 15              # 省略時は kitty の既定 11 pt（macOS は 11、ほかの OS は約 14.67）
 
 [keymap]
 "alt+n"       = { kind = "new_tab" }
