@@ -446,8 +446,33 @@ mod tests {
         assert!(platform::candidates("No Such Family").is_empty());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn the_default_size_is_positive() {
-        assert!(default_size_px() > 0.0);
+    fn coretext_matches_a_localized_family_name() {
+        // Hiragino ships with macOS; its Japanese name is a localized one.
+        let english = find("Hiragino Kaku Gothic ProN");
+        let japanese = find("ヒラギノ角ゴ ProN");
+        assert!(english.is_some());
+        assert_eq!(
+            japanese.map(|face| face.index),
+            english.map(|face| face.index)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_default_size_is_the_macos_system_ui_size() {
+        use objc2_core_text::{CTFont, CTFontUIFontType};
+        // SAFETY: `None` asks for the user's own language.
+        let font = unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) }
+            .unwrap();
+        // SAFETY: `font` is a live CTFont.
+        assert_eq!(default_size_px(), unsafe { font.size() } as f32);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_default_size_falls_back_without_a_platform_size() {
+        assert_eq!(default_size_px(), FALLBACK_SIZE_PX);
     }
 }
