@@ -21,6 +21,18 @@
         "aarch64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      # Lets tests dlopen fontconfig as the app does at runtime.
+      fontconfigLibraryPath =
+        pkgs:
+        let
+          variable =
+            if pkgs.stdenv.hostPlatform.isDarwin then "DYLD_FALLBACK_LIBRARY_PATH" else "LD_LIBRARY_PATH";
+        in
+        ''
+          export ${variable}="${
+            pkgs.lib.makeLibraryPath [ pkgs.fontconfig ]
+          }''${${variable}:+:''$${variable}}"
+        '';
     in
     {
       packages = forAllSystems (
@@ -59,6 +71,7 @@
             buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux runtimeLibs;
           };
           cargoArtifacts = craneLib.buildDepsOnly common;
+          fontconfigPath = fontconfigLibraryPath pkgs;
         in
         {
           default = craneLib.buildPackage (
@@ -67,6 +80,9 @@
               inherit cargoArtifacts;
               # Legacy rendering fixtures use an explicit font independent of user config.
               NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
+              # Font lookup tests load fontconfig at runtime; fail rather than skip.
+              NEKOMATA_REQUIRE_FONTCONFIG = "1";
+              preCheck = fontconfigPath;
               postInstall = ''
                 install -Dm644 ${./share/icons/nekomata.png} \
                   $out/share/icons/hicolor/256x256/apps/nekomata.png
@@ -148,9 +164,11 @@
               ];
             NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
             nativeBuildInputs = [ pkgs.pkg-config ];
+            NEKOMATA_REQUIRE_FONTCONFIG = "1";
             shellHook = ''
               export XDG_DATA_DIRS="${./share}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-            '';
+            ''
+            + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin (fontconfigLibraryPath pkgs);
             buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
               with pkgs;
               [
