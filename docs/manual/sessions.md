@@ -49,11 +49,12 @@ workspace, which still points at the workspace it was started in.
 
 ## Preparing an SSH host
 
-- The host needs a compatible `felis-daemon` on its `PATH`.
+- The host needs a compatible `felis-daemon` on its `PATH`, and the daemon
+  must already be running there; nekomata never starts it.
 - Use a `~/.ssh/config` host name or `user@host`.
 - nekomata cannot answer password or first-time host-key prompts. Make sure
   plain `ssh` connects with public keys or an SSH agent first.
-- Shells created on the host do not inherit your local shell path, working
-  directory or environment.
+- Shells created on the host run the remote daemon's default shell. Your local
+  `$SHELL`, working directory and environment are not forwarded.
 
 See the [pane specification](../spec/panes.md) for the exact rules.
