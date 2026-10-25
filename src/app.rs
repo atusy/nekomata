@@ -856,16 +856,16 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
+            // Leave room for the icons and the result count after the entry.
+            let entry_width =
+                (ui.available_width() - crate::theme::ui_extent(ui.style(), 132.0)).max(48.0);
             let entry = ui.add_sized(
-                [
-                    (ui.available_width() - 132.0).max(48.0),
-                    crate::theme::ui_extent(ui.style(), 30.0),
-                ],
+                [entry_width, crate::theme::ui_extent(ui.style(), 30.0)],
                 egui::TextEdit::singleline(&mut pane.search_query)
                     .id_salt(("scrollback-query", tab.focused))
                     .hint_text("Search scrollback")
                     .align(egui::Align2::LEFT_CENTER)
-                    .desired_width((ui.available_width() - 132.0).max(48.0))
+                    .desired_width(entry_width)
                     .char_limit(1024),
             );
             if std::mem::take(&mut pane.search_focus) {
@@ -894,7 +894,10 @@ impl App {
             {
                 let search = pane.session.search.search.lock().unwrap();
                 let response = ui.add_sized(
-                    [40.0, crate::theme::ui_extent(ui.style(), 30.0)],
+                    [
+                        crate::theme::ui_extent(ui.style(), 40.0),
+                        crate::theme::ui_extent(ui.style(), 30.0),
+                    ],
                     egui::Label::new(if search.error.is_some() {
                         egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
                     } else if search.running {
@@ -1255,7 +1258,8 @@ impl App {
                     let menu_open = egui::Popup::is_id_open(ui.ctx(), main_menu_id());
                     let menu_button = crate::theme::menu_button(ui, menu_open);
                     let search_width = if self.searching() {
-                        ui.available_width().min(360.0)
+                        ui.available_width()
+                            .min(crate::theme::ui_extent(ui.style(), 360.0))
                     } else {
                         0.0
                     };
@@ -1347,7 +1351,10 @@ impl App {
             });
         let hints = self.shortcuts.hints();
         let menu_open = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
-            ui.set_width(crate::theme::MENU_WIDTH);
+            ui.set_width(crate::theme::ui_extent(
+                ui.style(),
+                crate::theme::MENU_WIDTH,
+            ));
             for (label, command) in [
                 ("Find in scrollback", Action::Search),
                 ("New workspace", Action::NewWorkspace),
@@ -1397,8 +1404,10 @@ impl App {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let row = crate::theme::ui_extent(ui.style(), 28.0);
+                    let narrow = crate::theme::ui_extent(ui.style(), 30.0);
+                    let wide = crate::theme::ui_extent(ui.style(), 52.0);
                     if ui
-                        .add_sized([30.0, row], egui::Button::new("+").fill(TAB_HOVER_BG))
+                        .add_sized([narrow, row], egui::Button::new("+").fill(TAB_HOVER_BG))
                         .on_hover_text("Larger text")
                         .clicked()
                     {
@@ -1409,7 +1418,7 @@ impl App {
                     }
                     if ui
                         .add_sized(
-                            [52.0, row],
+                            [wide, row],
                             egui::Button::new(format!("{:.0} pt", self.font_size))
                                 .fill(TAB_HOVER_BG),
                         )
@@ -1420,7 +1429,7 @@ impl App {
                             crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
                     }
                     if ui
-                        .add_sized([30.0, row], egui::Button::new("−").fill(TAB_HOVER_BG))
+                        .add_sized([narrow, row], egui::Button::new("−").fill(TAB_HOVER_BG))
                         .on_hover_text("Smaller text")
                         .clicked()
                     {
