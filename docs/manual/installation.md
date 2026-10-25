@@ -59,7 +59,7 @@ The installer signs the app so macOS privacy permissions survive updates.
 - On first run it creates a local-only certificate named
   `nekomata Local Code Signing` and reuses it afterwards.
 - The private key is stored non-exportable in your default keychain, and only
-  `codesign` may use it.
+  `codesign` may use it without asking you.
 - The certificate is trusted for your code signing only. TLS trust settings
   and the system keychain are left alone.
 - The public certificate is saved at
