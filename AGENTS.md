@@ -23,7 +23,7 @@ Write all documentation in English. Each kind of document has one home:
 - `docs/manual/`: how to use nekomata, organized by user task. Summarize behavior and link to the spec for exact rules.
 - `docs/spec/`: normative observable behavior. Update it in the same commit as the behavior it describes.
 - `docs/ADR/`: architecture decisions only — ownership, boundaries, and their invariants — following `docs/ADR/template.md`. An ADR is a decision, not a description: record divergence from the code in its "Decision–Implementation Gap" section instead of rewriting the decision. Keep no status tables, validation logs, or change history; `git log` holds them. Delete a superseded ADR rather than renaming it with a `_` prefix.
-- Other `docs/*.md` files are dated rendering and validation reports; they describe the code at the time they were written: [rendering performance](docs/rendering-performance.md), [felis rendering reuse audit](docs/felis-rendering-reuse-audit.md), [Vitro validation](docs/vitro-rendering-validation.md), [native macOS validation](docs/native-rendering-validation.md) and [glyph placement](docs/glyph-placement-validation.md).
+- Other `docs/*.md` files are rendering and validation reports; they describe the code at the time they were written, not its current state: [rendering performance](docs/rendering-performance.md), [felis rendering reuse audit](docs/felis-rendering-reuse-audit.md), [Vitro validation](docs/vitro-rendering-validation.md), [native macOS validation](docs/native-rendering-validation.md) and [glyph placement](docs/glyph-placement-validation.md).
 
 ## Build, Test, and Development Commands
 
