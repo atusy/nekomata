@@ -79,7 +79,7 @@ xterm defaults.
 Automated regressions separately check row reuse, row damage, cursor/focus and
 selection invalidation, pane movement, right-edge backgrounds and color-glyph
 opacity, wide/combining text, atlas recycling and display density. The ignored live suite tests private local and SSH relay attachments,
-resizing, restart/session restoration, shell exit and clipboard forwarding.
+resizing, restart/workspace restoration, shell exit and clipboard forwarding.
 
 ## Final validation
 
