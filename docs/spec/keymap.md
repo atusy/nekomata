@@ -35,8 +35,9 @@ Application keymap:
 | `alt+w h` / `j` / `k` / `l` | `focus_pane` left / down / up / right |
 | `alt+shift+p` | `command_palette` |
 
-Terminal keymap defaults are felis's. Unmodified `End` is sent to the terminal
-program.
+Terminal keymap defaults are felis's, except that nekomata unbinds unmodified
+`End` so that shells and editors receive it; binding it in felis's keymap
+restores a binding.
 
 ## Application keymap entries
 
@@ -66,8 +67,11 @@ means Alt+W followed by C.
   example, binding `alt+w` removes every default `alt+w …` sequence, and a
   user entry `alt+t x` is dropped unless `alt+t` is unbound.
 - `unbind` removes the sequence and every sequence that starts with it.
-- Entries are applied in byte order of their key strings. An `unbind` can
-  therefore remove a user entry spelled so that it sorts earlier (for example
+- One sequence can be spelled several ways: modifier names ignore case and
+  order, and an uppercase letter implies Shift (`alt+T` is `alt+shift+t`).
+  Entries are applied in byte order of their spelling, so of two spellings of
+  one sequence the later-sorting one wins, and an `unbind` can remove a user
+  entry spelled so that it sorts earlier (for example
   `"alt+w" = { kind = "unbind" }` removes `"Alt+w v"`); this is reported as a
   warning.
 - Escape cancels a pending sequence, so it may appear only as the first
