@@ -60,11 +60,6 @@ adds only its application layer.
 - Shared code reduces duplication but does not guarantee faster rendering on
   every GPU adapter.
 
-## Decision–Implementation Gap
-
-The renderer is vendored with a local embedding patch in
-`vendor/felis-render-wgpu`; upstream does not yet expose the seam.
-
 ## Related Decisions
 
 - [Keep workspaces in a daemon independent of GUI windows](20261023-120000-separate-workspaces-from-windows.md)
