@@ -101,7 +101,17 @@ impl AppKeymap {
             match action {
                 None => {
                     self.bindings.retain(|bound, _| !bound.starts_with(&keys));
-                    configured.retain(|bound: &Vec<Chord>, _| !bound.starts_with(&keys));
+                    // Entries apply in spelling order, so an unbind can undo
+                    // a binding the user wrote under another spelling.
+                    configured.retain(|bound: &Vec<Chord>, removed: &mut String| {
+                        let keep = !bound.starts_with(&keys);
+                        if !keep {
+                            warnings.push(format!(
+                                "`keymap.\"{removed}\"` is removed by the unbind `keymap.\"{spelling}\"`"
+                            ));
+                        }
+                        keep
+                    });
                 }
                 Some(action) => {
                     self.bindings.insert(keys.clone(), action);
