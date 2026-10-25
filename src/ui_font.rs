@@ -8,16 +8,6 @@ use std::path::{Path, PathBuf};
 
 use swash::{FontRef, StringId, Style};
 
-/// kitty's default `font_size`.
-const DEFAULT_SIZE_PT: f32 = 11.0;
-/// kitty's logical DPI for converting points (`dpi_from_scale` in
-/// kitty/glfw.c): 72 on macOS, where a point is a logical pixel, and 96
-/// elsewhere.
-const LOGICAL_DPI: f32 = if cfg!(target_os = "macos") {
-    72.0
-} else {
-    96.0
-};
 const REGULAR_WEIGHT: u16 = 400;
 
 /// A face file's bytes and the face's index within a collection.
@@ -26,10 +16,10 @@ pub struct Face {
     pub index: u32,
 }
 
-/// kitty's default font size in logical pixels: 11 pt, which is 11 px on
-/// macOS and about 14.67 px elsewhere.
+/// felis's default font size, so the UI and an unconfigured terminal
+/// start at the same size.
 pub fn default_size_px() -> f32 {
-    DEFAULT_SIZE_PT * LOGICAL_DPI / 72.0
+    felis_render_wgpu::DEFAULT_FONT_SIZE_LOGICAL_PX
 }
 
 /// The face of `family` closest to regular upright text, as the platform
@@ -455,12 +445,10 @@ mod tests {
     }
 
     #[test]
-    fn the_default_size_is_kittys_11_points_in_logical_pixels() {
-        let expected = if cfg!(target_os = "macos") {
-            11.0
-        } else {
-            11.0 * 96.0 / 72.0
-        };
-        assert_eq!(default_size_px(), expected);
+    fn the_default_size_is_felis_default_font_size() {
+        assert_eq!(
+            default_size_px(),
+            felis_render_wgpu::DEFAULT_FONT_SIZE_LOGICAL_PX
+        );
     }
 }
