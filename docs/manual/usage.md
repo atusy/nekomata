@@ -20,7 +20,7 @@ Default keys are below. `→` means "then press".
 | Close pane | Alt+W → C |
 | Focus left / down / up / right pane | Alt+W → H / J / K / L |
 | Command palette | Alt+Shift+P |
-| Search scrollback | Ctrl+Shift+F, or Cmd+F on macOS |
+| Search scrollback | Ctrl+Shift+F, or Cmd+F (with or without Shift) on macOS |
 | Copy selection | Cmd+C on macOS, Ctrl+Shift+C on Linux |
 | Paste | Ctrl+Shift+V, or Cmd+V on macOS |
 | Larger / smaller text | Ctrl+Shift+= / Ctrl+Shift+- (also Cmd+= / Cmd+- on macOS) |
@@ -33,7 +33,10 @@ Tab, pane and palette keys are set in nekomata's configuration; copy, paste
 and the other terminal keys are set in felis's (see
 [Configuration](configuration.md)).
 
-Prompt navigation needs a shell that reports prompt boundaries with OSC 133.
+Each text size step scales by 1.1. Prompt navigation needs a shell that
+reports prompt boundaries with OSC 133. `Scroll to oldest output`,
+`Scroll to live output`, `Previous prompt` and `Next prompt` are also in the
+command palette.
 
 ## Tabs and panes
 
@@ -47,13 +50,14 @@ Prompt navigation needs a shell that reports prompt boundaries with OSC 133.
 
 ## Mouse
 
-- Drag to select text; Alt+drag selects a rectangle. Inside a TUI that uses
-  the mouse, use Shift+drag and Shift+Alt+drag.
+- Drag to select text; Alt+drag selects a rectangle. Double-click selects a
+  word and triple-click a line. Inside a TUI that uses the mouse, use
+  Shift+drag and Shift+Alt+drag.
 
   ![Rectangular selection](../images/terminal-tools-rectangle.png)
 
 - The wheel or trackpad scrolls the scrollback. A TUI that requests mouse
-  input receives wheel events instead.
+  input receives wheel events instead; hold Shift to scroll anyway.
 
 - Hovering a link embedded with OSC 8 shows its URL. Cmd+click (macOS) or
   Ctrl+click (Linux) opens it in the default application. Plain URL text is
@@ -73,8 +77,8 @@ has not enabled bracketed paste asks for confirmation first.
 Open the search field at the right of the tab bar with the search keys,
 `≡` → `Find in scrollback`, or the command palette.
 
-- Type a query and press Enter or `⌄`; press again for the next result.
-  `⌃` or Shift+Enter goes back.
+- Type a query and press Enter or the down-arrow button (`⌄`); press again for
+  the next result. The up-arrow button (`⌃`) or Shift+Enter goes back.
 - The funnel icon toggles `Ignore case` (on by default) and `Regex` (off by
   default).
 - A `+` after the count means the result limit was reached. Hover `!` to see
