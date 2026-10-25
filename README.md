@@ -32,7 +32,7 @@ GUI 起動時は保存済みズームより設定の文字サイズを優先し�
 設定変更は GUI の再起動で反映します。既定パスにファイルがなければ起動でき、構文・型の誤りや読み込み失敗は起動エラーになります。
 
 この設定は [二層設定 ADR](docs/ADR/20261024-220000-split-configuration-into-two-layers.md) の terminal layer です。
-`[client.nekomata]` に nekomata 独自の設定キーを追加することはできません。タブ・分割・メニューなどは次の application layer で設定します。
+`[client.nekomata]` に nekomata 独自の設定キーを追加することはできません。UI フォントとタブ・分割などのキーは、次のアプリケーション設定（application layer）で設定します。
 
 ## アプリケーション設定
 
