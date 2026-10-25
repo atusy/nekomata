@@ -350,6 +350,16 @@ mod tests {
     }
 
     #[test]
+    fn sizes_at_the_range_edges_apply_without_warnings() {
+        for size in [MIN_FONT_SIZE_LOGICAL_PX, MAX_FONT_SIZE_LOGICAL_PX] {
+            let (config, warnings) =
+                parse(&format!("[appearance.base.font]\nsize_px = {size}")).unwrap();
+            assert_eq!(config.font.size_px, Some(size));
+            assert!(warnings.is_empty(), "{size}: {warnings:?}");
+        }
+    }
+
+    #[test]
     fn syntax_and_shape_errors_fail_the_document() {
         for text in [
             "[appearance",
