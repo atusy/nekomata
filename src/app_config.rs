@@ -593,6 +593,27 @@ mod tests {
     }
 
     #[test]
+    fn a_three_chord_sequence_fires_only_when_complete() {
+        use eframe::egui::{Key, Modifiers};
+        let text = "[keymap]\n\"ctrl+a b c\" = { kind = \"close_tab\" }";
+        let none = Modifiers::NONE;
+        assert_eq!(
+            press(
+                text,
+                &[
+                    (Key::A, Modifiers::CTRL),
+                    (Key::B, none),
+                    (Key::C, none),
+                    (Key::A, Modifiers::CTRL),
+                    (Key::B, none),
+                    (Key::D, none),
+                ]
+            ),
+            [Action::CloseTab]
+        );
+    }
+
+    #[test]
     fn malformed_bindings_are_dropped_and_the_rest_apply() {
         let (config, warnings) = parse(
             r#"[keymap]
