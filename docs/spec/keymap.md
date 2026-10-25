@@ -12,10 +12,11 @@ A layer that does not consume the key forwards it to the next. A terminal
 keymap entry bound to an action nekomata does not implement is forwarded to
 the terminal program.
 
-Neither keymap is consulted, and no input reaches the terminal, while the
-search field, the command palette, the workspace list, the session picker,
-help or a paste confirmation is open, or while a workspace switch is in
-progress. Losing window focus cancels a pending sequence.
+Neither keymap is consulted, and no keyboard input reaches the terminal,
+while the search field, the command palette, the workspace list, the session
+picker, help or a paste confirmation is open, or while a workspace switch is in
+progress. These conditions do not suspend mouse input. Losing window focus
+cancels a pending sequence.
 
 A key that ends a pending application sequence without completing it skips
 the terminal keymap: the keys already pressed are discarded, and this key goes
