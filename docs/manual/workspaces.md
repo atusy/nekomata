@@ -31,9 +31,9 @@ nekomata workspaces new                   # switch this window to a new workspac
 nekomata workspaces attach WORKSPACE_ID   # switch to an ID from the WORKSPACE column
 ```
 
-Run from a nekomata shell, these act on the window showing that shell's
-workspace. Add `--window WINDOW_ID` to pick another, or for a shell you moved
-into another workspace.
+Run from a nekomata shell, `new` and `attach` act on the window showing that
+shell's workspace. Add `--window WINDOW_ID` to them to pick another, or for a
+shell you moved into another workspace.
 
 ## What survives what
 
