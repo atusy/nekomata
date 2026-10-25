@@ -325,6 +325,8 @@ impl App {
                         continue;
                     }
                     if snapshot.tabs.is_empty() {
+                        snapshot.font_size =
+                            crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
                         let pane = snapshot.next_id;
                         snapshot.next_id += 1;
                         snapshot.tabs.push(Tab {
@@ -2719,6 +2721,10 @@ mod tests {
         };
         let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            replacement.font_size, 30.0,
+            "new sessions use terminal config"
+        );
         let other = replacement.workspace_id.unwrap();
         assert_ne!(Some(other), session_id);
         assert_eq!(replacement.panes.len(), 1);
