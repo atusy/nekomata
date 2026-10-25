@@ -41,8 +41,9 @@ Prompt navigation needs a shell that reports prompt boundaries with OSC 133.
 - A split opens a new shell on the same felis daemon as the pane it splits, in
   the directory the shell last reported with OSC 7.
 - Closing a window, tab or pane does not end its shell: the shell and its
-  running command stay in the felis daemon until you `exit`, and you can
-  [attach to it again](sessions.md).
+  running command stay in the felis daemon until the shell exits or the felis
+  daemon stops, and you can [attach to it again](sessions.md). Closing the
+  last pane closes the window.
 
 ## Mouse
 
