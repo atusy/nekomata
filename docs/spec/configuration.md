@@ -19,8 +19,9 @@ restarts; there is no live reload.
 
 felis-client-core resolves the shared document for client `nekomata`:
 `[client.nekomata]` is overlaid on the common sections. nekomata ships no
-terminal defaults or initial file of its own; unset settings use felis's
-defaults.
+initial file and no terminal defaults of its own, except that it unbinds
+unmodified `End` (see [keymap](keymap.md#default-bindings)); unset settings
+use felis's defaults.
 
 nekomata applies:
 
