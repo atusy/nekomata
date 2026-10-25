@@ -188,18 +188,18 @@ pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
         let window = if let Some(id) = workspace {
             let mut stream = UnixStream::connect(crate::daemon::socket()?)
                 .await
-                .context("connect to the shell's nekomata session daemon")?;
+                .context("connect to the shell's nekomata workspace daemon")?;
             let crate::daemon::Payload::Workspaces(workspaces) =
                 crate::daemon::exchange(&mut stream, crate::daemon::Request::List).await?
             else {
-                bail!("unexpected session list response");
+                bail!("unexpected workspace list response");
             };
             Some(
                 workspaces
                     .into_iter()
                     .find(|workspace| workspace.id == id)
                     .and_then(|workspace| workspace.window)
-                    .context("the shell's nekomata session is not attached to a window")?,
+                    .context("the shell's workspace is not attached to a window")?,
             )
         } else {
             window

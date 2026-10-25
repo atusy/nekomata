@@ -105,13 +105,10 @@ impl Registry {
                 .map(|(&id, _)| id),
             Selection::New => None,
             Selection::Id(id) => {
-                let record = self
-                    .workspaces
-                    .get(&id)
-                    .context("nekomata session not found")?;
+                let record = self.workspaces.get(&id).context("workspace not found")?;
                 ensure!(
                     record.owner.is_none(),
-                    "session is already attached to a window"
+                    "workspace is already attached to a window"
                 );
                 Some(id)
             }
@@ -353,7 +350,7 @@ fn handle(
 ) -> Result<Payload> {
     match request {
         Request::Open { window: id } => {
-            ensure!(current.is_none(), "window already has a session");
+            ensure!(current.is_none(), "window already has a workspace");
             ensure!(id != 0, "invalid window ID");
             let workspace = registry.claim(owner, id, Selection::Latest)?;
             registry.touch(workspace);
@@ -363,22 +360,23 @@ fn handle(
         }
         Request::List => Ok(Payload::Workspaces(registry.list())),
         Request::Save(snapshot) => {
-            let id = current.context("window has no session")?;
+            let id = current.context("window has no workspace")?;
             snapshot.validate()?;
             registry.workspaces.get_mut(&id).unwrap().snapshot = snapshot;
             Ok(Payload::Done)
         }
         Request::Prepare(selection) => {
-            ensure!(pending.is_none(), "session switch already in progress");
-            let id = registry.claim(owner, window.context("window has no session")?, selection)?;
+            ensure!(pending.is_none(), "workspace switch already in progress");
+            let id =
+                registry.claim(owner, window.context("window has no workspace")?, selection)?;
             *pending = Some(id);
             Ok(registry.snapshot(id))
         }
         Request::Finish { snapshot } => {
-            let id = pending.context("no session switch in progress")?;
+            let id = pending.context("no workspace switch in progress")?;
             if let Some(snapshot) = snapshot {
                 snapshot.validate()?;
-                let source = current.context("window has no session")?;
+                let source = current.context("window has no workspace")?;
                 registry.workspaces.get_mut(&source).unwrap().owner = None;
                 registry.touch(source);
                 registry.workspaces.get_mut(&id).unwrap().snapshot = snapshot;
@@ -421,7 +419,7 @@ pub fn command(stop: bool) -> Result<String> {
         {
             Payload::Done => Ok("Stopped nekomata daemon".into()),
             Payload::Workspaces(workspaces) => {
-                let mut output = String::from("SESSION\tWINDOW\tTABS\tPANES\n");
+                let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
                 for workspace in workspaces {
                     output.push_str(&format!(
                         "{}\t{}\t{}\t{}\n",

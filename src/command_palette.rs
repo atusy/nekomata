@@ -10,8 +10,8 @@ pub struct CommandPalette {
 fn commands() -> Vec<(&'static str, Action)> {
     vec![
         ("Find in scrollback", Action::Search),
-        ("New session", Action::NewWorkspace),
-        ("Switch session", Action::OpenWorkspaces),
+        ("New workspace", Action::NewWorkspace),
+        ("Switch workspace", Action::OpenWorkspaces),
         ("New tab", Action::NewTab),
         ("Split left / right", Action::Split(Axis::Horizontal)),
         ("Split top / bottom", Action::Split(Axis::Vertical)),

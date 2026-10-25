@@ -387,7 +387,7 @@ impl App {
                             self.workspace_error = None;
                             if let Some(reply) = pending.reply {
                                 let _ = reply.send(Ok(format!(
-                                    "Attached nekomata session {}",
+                                    "Attached workspace {}",
                                     pending.id.unwrap()
                                 )));
                             }
@@ -434,10 +434,10 @@ impl App {
                 self.pending_workspace.is_none() && self.pending_attach.is_empty(),
                 "another attach is in progress"
             );
-            anyhow::ensure!(self.workspace_id.is_some(), "nekomata session is not ready");
+            anyhow::ensure!(self.workspace_id.is_some(), "workspace is not ready");
             anyhow::ensure!(
                 workspace != self.workspace_id,
-                "session is already attached to this window"
+                "workspace is already attached to this window"
             );
             let client = self
                 .workspace
@@ -527,7 +527,7 @@ impl App {
             .as_ref()
             .is_some_and(|reply| reply.is_closed())
         {
-            error = Some("session switch cancelled".into());
+            error = Some("workspace switch cancelled".into());
         }
         if let Some(error) = error {
             self.cancel_workspace(error);
@@ -566,11 +566,11 @@ impl App {
         let mut open = true;
         let mut selected = None;
         let mut refresh = false;
-        egui::Window::new("nekomata sessions")
+        egui::Window::new("Workspaces")
             .open(&mut open)
             .collapsible(false)
             .show(ctx, |ui| {
-                if ui.button("New session").clicked() {
+                if ui.button("New workspace").clicked() {
                     selected = Some(None);
                 }
                 refresh = ui.button("Refresh").clicked();
@@ -583,7 +583,7 @@ impl App {
                             .map(|window| format!(" · window {window}"))
                             .unwrap_or_default();
                         let label = format!(
-                            "Session {} · {} tabs · {} panes{owner}",
+                            "Workspace {} · {} tabs · {} panes{owner}",
                             workspace.id, workspace.tabs, workspace.panes
                         );
                         if ui
@@ -597,7 +597,7 @@ impl App {
                         }
                     }
                 } else {
-                    ui.label("Loading sessions…");
+                    ui.label("Loading workspaces…");
                 }
             });
         self.workspaces_open = open;
@@ -728,7 +728,7 @@ impl App {
                     if self.pending_workspace.is_some() {
                         let _ = message
                             .reply
-                            .send(Err("session switch is in progress".into()));
+                            .send(Err("workspace switch is in progress".into()));
                         continue;
                     }
                     if self.pending_attach.contains_key(&id) {
@@ -1144,7 +1144,7 @@ impl App {
                         self.workspace_error = None;
                     }
                 } else {
-                    ui.label("Connecting to nekomata session…");
+                    ui.label("Connecting to workspace…");
                 }
             });
             return;
@@ -1305,8 +1305,8 @@ impl App {
             ui.set_width(crate::theme::MENU_WIDTH);
             for (label, command) in [
                 ("Find in scrollback", Action::Search),
-                ("New session", Action::NewWorkspace),
-                ("Switch session…", Action::OpenWorkspaces),
+                ("New workspace", Action::NewWorkspace),
+                ("Switch workspace…", Action::OpenWorkspaces),
             ] {
                 if menu_item(ui, label, "").clicked() {
                     action = Some(command);
@@ -1522,7 +1522,7 @@ impl App {
         }
         self.workspace_picker(ctx);
         if self.pending_workspace.is_some() {
-            egui::Window::new("Switching session")
+            egui::Window::new("Switching workspace")
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.spinner();
@@ -1555,7 +1555,7 @@ impl eframe::App for App {
                 .filter(|_| self.pending_workspace.is_none())
                 .map(|_| self.snapshot());
             if let Err(error) = client.close(&self.runtime, snapshot) {
-                eprintln!("Could not save nekomata session: {error:#}");
+                eprintln!("Could not save workspace: {error:#}");
             }
         }
     }
@@ -2566,7 +2566,7 @@ mod tests {
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "GUI session test timed out: {:?}",
+                    "GUI workspace test timed out: {:?}",
                     app.workspace_error
                 );
                 let _ = repaints.recv_timeout(Duration::from_millis(50));
@@ -2667,7 +2667,7 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         assert_eq!(
             replacement.font_size, 30.0,
-            "new sessions use terminal config"
+            "new workspaces use terminal config"
         );
         let other = replacement.workspace_id.unwrap();
         assert_ne!(Some(other), workspace_id);
