@@ -22,7 +22,7 @@ this directory is in force, and its history lives in `git log --follow <file>`.
 
 Refer to other ADRs by their slug in plain text in body prose. Markdown links
 to ADRs belong only in a final "Related Decisions" list, so that deleting a
-superseded record leaves at most one stale link.
+superseded record leaves at most one stale link per referencing ADR.
 -->
 
 ## Context
