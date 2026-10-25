@@ -704,6 +704,31 @@ mod tests {
     }
 
     #[test]
+    fn an_unbind_that_removes_a_configured_binding_warns() {
+        let (config, warnings) = parse(
+            r#"[keymap]
+            "Alt+w v" = { kind = "split", direction = "right" }
+            "alt+w" = { kind = "unbind" }
+        "#,
+        )
+        .unwrap();
+        assert!(
+            matches!(&warnings[..], [warning] if warning.contains("\"Alt+w v\"") && warning.contains("\"alt+w\"")),
+            "{warnings:#?}"
+        );
+        let mut expected = AppKeymap::default();
+        expected.apply(
+            vec![(
+                "alt+w".into(),
+                crate::shortcuts::parse_sequence("alt+w").unwrap(),
+                None,
+            )],
+            &mut vec![],
+        );
+        assert_eq!(config.keymap, expected);
+    }
+
+    #[test]
     fn later_sorting_spellings_of_one_chord_win() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
