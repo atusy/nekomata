@@ -492,7 +492,11 @@ mod tests {
             let (config, warnings) =
                 parse(&format!("[appearance.base.font]\nfamily = \"{family}\"")).unwrap();
             assert_eq!(config.font.family, None);
-            assert_eq!(warnings.len(), 1, "{family:?}: {warnings:?}");
+            assert_eq!(
+                warnings,
+                ["`appearance.base.font.family` is empty; using the default UI font"],
+                "{family:?}"
+            );
         }
     }
 
