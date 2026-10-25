@@ -210,7 +210,9 @@ impl App {
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
         cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
-        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
+        let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)?;
+        app.shortcuts.set_keymap(config.keymap);
+        Ok(app)
     }
 
     fn connect(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> anyhow::Result<Self> {

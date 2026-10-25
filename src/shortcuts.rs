@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use eframe::egui::{Event, InputState, Key};
 use felis_client_core::{
     Action as TerminalAction, Chord, ClipboardScope, IpcAction, KeyCode, Keymap,
@@ -27,15 +29,120 @@ pub enum Action {
     Copy,
 }
 
+/// nekomata's own bindings, keyed by chord sequence: felis binds single
+/// chords only, and splits need a prefix key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppKeymap {
+    bindings: BTreeMap<Vec<Chord>, Action>,
+}
+
+enum Lookup {
+    Action(Action),
+    Prefix,
+    Miss,
+}
+
+impl Default for AppKeymap {
+    fn default() -> Self {
+        let bindings = [
+            ("alt+c", Action::NewTab),
+            ("alt+t", Action::NextTab),
+            ("alt+shift+t", Action::PreviousTab),
+            ("alt+shift+p", Action::Palette),
+            ("alt+w alt+s", Action::Split(Axis::Vertical)),
+            ("alt+w alt+v", Action::Split(Axis::Horizontal)),
+            ("alt+w c", Action::ClosePane),
+            ("alt+w h", Action::Focus(Direction::Left)),
+            ("alt+w j", Action::Focus(Direction::Down)),
+            ("alt+w k", Action::Focus(Direction::Up)),
+            ("alt+w l", Action::Focus(Direction::Right)),
+        ];
+        Self {
+            bindings: bindings
+                .into_iter()
+                .map(|(keys, action)| (parse_sequence(keys).unwrap(), action))
+                .collect(),
+        }
+    }
+}
+
+/// Whitespace separates the chords of a sequence; each chord is spelled
+/// as in felis's `[keymap]`.
+pub fn parse_sequence(spelling: &str) -> Result<Vec<Chord>, String> {
+    let keys = spelling
+        .split_whitespace()
+        .map(|chord| chord.parse::<Chord>().map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if keys.is_empty() {
+        return Err("empty key sequence".into());
+    }
+    Ok(keys)
+}
+
+impl AppKeymap {
+    /// Applies user entries over the defaults. `None` unbinds a sequence and
+    /// every longer one it begins. A sequence whose leading chords are bound
+    /// on their own could never complete, so it is dropped.
+    pub fn apply(
+        &mut self,
+        entries: Vec<(String, Vec<Chord>, Option<Action>)>,
+        warnings: &mut Vec<String>,
+    ) {
+        let mut configured = BTreeMap::new();
+        for (spelling, keys, action) in entries {
+            match action {
+                None => {
+                    self.bindings.retain(|bound, _| !bound.starts_with(&keys));
+                    configured.retain(|bound: &Vec<Chord>, _| !bound.starts_with(&keys));
+                }
+                Some(action) => {
+                    self.bindings.insert(keys.clone(), action);
+                    configured.insert(keys, spelling);
+                }
+            }
+        }
+        let unreachable: Vec<_> = self
+            .bindings
+            .keys()
+            .filter(|keys| (1..keys.len()).any(|len| self.bindings.contains_key(&keys[..len])))
+            .cloned()
+            .collect();
+        for keys in unreachable {
+            self.bindings.remove(&keys);
+            // Defaults yield silently to a chord the user bound on its own.
+            if let Some(spelling) = configured.get(&keys) {
+                warnings.push(format!(
+                    "`keymap.\"{spelling}\"` is dropped because its leading keys are bound on their own"
+                ));
+            }
+        }
+    }
+
+    fn lookup(&self, keys: &[Chord]) -> Lookup {
+        if let Some(action) = self.bindings.get(keys) {
+            return Lookup::Action(action.clone());
+        }
+        // Sequences sort directly after their prefixes.
+        let longer = self
+            .bindings
+            .range(keys.to_vec()..)
+            .next()
+            .is_some_and(|(bound, _)| bound.starts_with(keys));
+        if longer { Lookup::Prefix } else { Lookup::Miss }
+    }
+}
+
 pub struct Shortcuts {
-    prefix: bool,
+    pending: Vec<Chord>,
+    keymap: AppKeymap,
     terminal: Keymap,
 }
 
 impl Default for Shortcuts {
     fn default() -> Self {
         Self {
-            prefix: false,
+            pending: Vec::new(),
+            keymap: AppKeymap::default(),
             // Preserve bare End for terminal editors unless explicitly bound.
             terminal: Keymap::default_for_platform().with_overrides([(
                 Chord::bare(KeyCode::Named(NamedKey::End)),
@@ -100,11 +207,16 @@ impl Shortcuts {
         shortcuts
     }
 
+    pub fn set_keymap(&mut self, keymap: AppKeymap) {
+        self.keymap = keymap;
+        self.pending.clear();
+    }
+
     pub fn consume(&mut self, input: &mut InputState) -> Vec<Action> {
         let mut actions = Vec::new();
         let mut suppress_text = false;
         if !input.focused {
-            self.prefix = false;
+            self.pending.clear();
             return actions;
         }
         input.events.retain(|event| {
@@ -121,50 +233,31 @@ impl Shortcuts {
                 return true;
             };
             suppress_text = false;
-            let alt = mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd;
-            let plain = !mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd && !mods.shift;
-            let prefix = std::mem::take(&mut self.prefix);
-            let action = if prefix {
-                match (*key, alt && !mods.shift, plain) {
-                    (Key::S, true, _) => Some(Action::Split(Axis::Vertical)),
-                    (Key::V, true, _) => Some(Action::Split(Axis::Horizontal)),
-                    (Key::C, _, true) => Some(Action::ClosePane),
-                    (Key::H, _, true) => Some(Action::Focus(Direction::Left)),
-                    (Key::J, _, true) => Some(Action::Focus(Direction::Down)),
-                    (Key::K, _, true) => Some(Action::Focus(Direction::Up)),
-                    (Key::L, _, true) => Some(Action::Focus(Direction::Right)),
-                    (Key::Escape, _, _) => {
-                        suppress_text = true;
-                        return false;
-                    }
-                    _ => None,
+            let chord = terminal_chord(*key, *mods);
+            let mut keys = std::mem::take(&mut self.pending);
+            let pending = !keys.is_empty();
+            if pending && *key == Key::Escape {
+                suppress_text = true;
+                return false;
+            }
+            keys.push(chord);
+            let action = match self.keymap.lookup(&keys) {
+                Lookup::Action(action) => Some(action),
+                Lookup::Prefix => {
+                    self.pending = keys;
+                    suppress_text = true;
+                    return false;
                 }
-            } else if alt {
-                match (*key, mods.shift) {
-                    (Key::W, false) => {
-                        self.prefix = true;
-                        suppress_text = true;
-                        return false;
-                    }
-                    (Key::C, false) => Some(Action::NewTab),
-                    (Key::T, false) => Some(Action::NextTab),
-                    (Key::T, true) => Some(Action::PreviousTab),
-                    (Key::P, true) => Some(Action::Palette),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            let action = action.or_else(|| {
-                if prefix {
-                    return None;
-                }
-                self.terminal
-                    .resolve(&terminal_chord(*key, *mods))
+                // An unfinished sequence gives the key to the program, not
+                // to a terminal binding it happens to match.
+                Lookup::Miss if pending => None,
+                Lookup::Miss => self
+                    .terminal
+                    .resolve(&keys[0])
                     .filter(|action| supported_terminal_action(action))
                     .cloned()
-                    .map(Action::Terminal)
-            });
+                    .map(Action::Terminal),
+            };
             if let Some(action) = action {
                 actions.push(action);
                 suppress_text = true;
@@ -367,6 +460,61 @@ mod tests {
                 },
             );
         }
+    }
+
+    #[test]
+    fn configured_spellings_match_the_chords_egui_keys_produce() {
+        for (spelling, key, modifiers) in [
+            ("alt+shift+t", Key::T, Modifiers::ALT | Modifiers::SHIFT),
+            ("alt+T", Key::T, Modifiers::ALT | Modifiers::SHIFT),
+            ("shift+alt+t", Key::T, Modifiers::ALT | Modifiers::SHIFT),
+            ("alt+w", Key::W, Modifiers::ALT),
+            ("c", Key::C, Modifiers::NONE),
+            ("ctrl+a", Key::A, Modifiers::CTRL),
+            ("alt+left", Key::ArrowLeft, Modifiers::ALT),
+            ("f5", Key::F5, Modifiers::NONE),
+        ] {
+            assert_eq!(
+                spelling.parse::<Chord>().unwrap(),
+                terminal_chord(key, modifiers),
+                "{spelling}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pending_sequence_swallows_escape_and_gives_misses_to_the_program() {
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let (actions, remaining) = consume_events(vec![
+            press(Key::W, Modifiers::ALT),
+            press(Key::Escape, Modifiers::NONE),
+            Event::Text("x".into()),
+            press(Key::C, Modifiers::NONE),
+            press(Key::W, Modifiers::ALT),
+            press(Key::PageUp, Modifiers::SHIFT),
+            press(Key::PageUp, Modifiers::SHIFT),
+            press(Key::W, Modifiers::ALT),
+            press(Key::F, ctrl_shift),
+        ]);
+        assert_eq!(
+            actions,
+            vec![Action::Terminal(TerminalAction::Scroll(
+                felis_client_core::ScrollStep::HalfPageUp
+            ))]
+        );
+        assert_eq!(
+            remaining,
+            vec![
+                press(Key::C, Modifiers::NONE),
+                press(Key::PageUp, Modifiers::SHIFT),
+                press(Key::F, ctrl_shift),
+            ]
+        );
     }
 
     #[test]
