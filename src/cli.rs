@@ -3,10 +3,10 @@ pub enum Command {
     Gui,
     DaemonRun,
     DaemonStop,
-    SessionsList,
-    Session {
+    WorkspacesList,
+    Workspace {
         window: Option<u32>,
-        session: Option<u64>,
+        workspace: Option<u64>,
     },
     List(Vec<String>),
     Help,
@@ -46,12 +46,12 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         [] => Ok(Command::Gui),
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
-        ["sessions", "list"] => Ok(Command::SessionsList),
+        ["sessions", "list"] => Ok(Command::WorkspacesList),
         ["sessions", "--help" | "-h"]
         | ["sessions", "list" | "new" | "attach", "--help" | "-h"]
         | ["daemon", "--help" | "-h"]
         | ["daemon", "run" | "stop", "--help" | "-h"] => Ok(Command::Help),
-        ["sessions", verb @ ("new" | "attach"), options @ ..] => parse_session(verb, options),
+        ["sessions", verb @ ("new" | "attach"), options @ ..] => parse_workspace(verb, options),
         ["--help" | "-h"]
         | ["felis", "--help" | "-h"]
         | ["felis", "sessions", "--help" | "-h"]
@@ -67,9 +67,9 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
     }
 }
 
-fn parse_session(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
+fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
     let mut window = None;
-    let mut session = None;
+    let mut workspace = None;
     let mut args = options.iter().copied();
     while let Some(arg) = args.next() {
         match arg {
@@ -81,16 +81,16 @@ fn parse_session(verb: &str, options: &[&str]) -> Result<Command, &'static str> 
                         .map_err(|_| "invalid window ID")?,
                 );
             }
-            id if verb == "attach" && session.is_none() && !id.starts_with('-') => {
-                session = Some(id.parse().map_err(|_| "invalid nekomata session ID")?);
+            id if verb == "attach" && workspace.is_none() && !id.starts_with('-') => {
+                workspace = Some(id.parse().map_err(|_| "invalid nekomata session ID")?);
             }
             _ => return Err("unknown or repeated session argument"),
         }
     }
-    if verb == "attach" && session.is_none() {
+    if verb == "attach" && workspace.is_none() {
         return Err("session ID is required");
     }
-    Ok(Command::Session { window, session })
+    Ok(Command::Workspace { window, workspace })
 }
 
 fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
@@ -186,19 +186,19 @@ mod tests {
     }
 
     #[test]
-    fn session_switch_commands_select_the_destination_and_window() {
+    fn workspace_switch_commands_select_the_destination_and_window() {
         assert_eq!(
             parse(&["sessions", "new"].map(String::from)),
-            Ok(Command::Session {
+            Ok(Command::Workspace {
                 window: None,
-                session: None
+                workspace: None
             })
         );
         assert_eq!(
             parse(&["sessions", "attach", "7", "--window", "42"].map(String::from)),
-            Ok(Command::Session {
+            Ok(Command::Workspace {
                 window: Some(42),
-                session: Some(7)
+                workspace: Some(7)
             })
         );
         for args in [

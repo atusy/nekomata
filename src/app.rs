@@ -290,7 +290,7 @@ impl App {
                 .and_then(|client| client.events.try_recv().ok());
             let Some(event) = event else { break };
             match (event.operation, event.result) {
-                (Operation::Open, Ok(Payload::Session { id, snapshot })) => {
+                (Operation::Open, Ok(Payload::Workspace { id, snapshot })) => {
                     if let Err(error) = snapshot.validate() {
                         self.workspace_error = Some(error.to_string());
                         continue;
@@ -299,10 +299,10 @@ impl App {
                     self.last_snapshot = Some(snapshot.clone());
                     self.restore_workspace(ctx, snapshot);
                 }
-                (Operation::List, Ok(Payload::Sessions(sessions))) => {
-                    self.workspace_roster = Some(sessions);
+                (Operation::List, Ok(Payload::Workspaces(workspaces))) => {
+                    self.workspace_roster = Some(workspaces);
                 }
-                (Operation::Prepare, Ok(Payload::Session { id, mut snapshot })) => {
+                (Operation::Prepare, Ok(Payload::Workspace { id, mut snapshot })) => {
                     if let Err(error) = snapshot.validate() {
                         self.cancel_workspace(error.to_string());
                         continue;
@@ -426,7 +426,7 @@ impl App {
 
     fn begin_workspace(
         &mut self,
-        session: Option<u64>,
+        workspace: Option<u64>,
         reply: Option<tokio::sync::oneshot::Sender<Reply>>,
     ) {
         let result = (|| -> anyhow::Result<()> {
@@ -436,7 +436,7 @@ impl App {
             );
             anyhow::ensure!(self.workspace_id.is_some(), "nekomata session is not ready");
             anyhow::ensure!(
-                session != self.workspace_id,
+                workspace != self.workspace_id,
                 "session is already attached to this window"
             );
             let client = self
@@ -445,7 +445,7 @@ impl App {
                 .ok_or_else(|| anyhow::anyhow!("nekomata daemon is unavailable"))?;
             client.prepare(
                 self.snapshot(),
-                session
+                workspace
                     .map(daemon::Selection::Id)
                     .unwrap_or(daemon::Selection::New),
             )?;
@@ -575,25 +575,25 @@ impl App {
                 }
                 refresh = ui.button("Refresh").clicked();
                 ui.separator();
-                if let Some(sessions) = &self.workspace_roster {
-                    for session in sessions {
-                        let current = Some(session.id) == self.workspace_id;
-                        let owner = session
+                if let Some(workspaces) = &self.workspace_roster {
+                    for workspace in workspaces {
+                        let current = Some(workspace.id) == self.workspace_id;
+                        let owner = workspace
                             .window
                             .map(|window| format!(" · window {window}"))
                             .unwrap_or_default();
                         let label = format!(
                             "Session {} · {} tabs · {} panes{owner}",
-                            session.id, session.tabs, session.panes
+                            workspace.id, workspace.tabs, workspace.panes
                         );
                         if ui
                             .add_enabled(
-                                session.window.is_none(),
+                                workspace.window.is_none(),
                                 egui::Button::new(label).selected(current),
                             )
                             .clicked()
                         {
-                            selected = Some(Some(session.id));
+                            selected = Some(Some(workspace.id));
                         }
                     }
                 } else {
@@ -604,8 +604,8 @@ impl App {
         if refresh && let Some(client) = &self.workspace {
             let _ = client.send(daemon::Request::List);
         }
-        if let Some(session) = selected {
-            self.begin_workspace(session, None);
+        if let Some(workspace) = selected {
+            self.begin_workspace(workspace, None);
         }
     }
 
@@ -689,7 +689,9 @@ impl App {
     fn control_requests(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.control.requests.try_recv() {
             match message.request {
-                Request::Switch { session } => self.begin_workspace(session, Some(message.reply)),
+                Request::Switch { workspace } => {
+                    self.begin_workspace(workspace, Some(message.reply))
+                }
                 Request::List => {
                     let active = self.tabs.get(self.active).map(|tab| tab.focused);
                     let mut output = format!(
@@ -1032,8 +1034,8 @@ impl App {
         match action {
             Action::Search => self.open_search(),
             Action::Terminal(action) => self.terminal_action(ctx, action),
-            Action::NewSession => self.begin_workspace(None, None),
-            Action::Sessions => {
+            Action::NewWorkspace => self.begin_workspace(None, None),
+            Action::OpenWorkspaces => {
                 self.workspaces_open = true;
                 self.workspace_roster = None;
                 if let Some(client) = &self.workspace {
@@ -1303,8 +1305,8 @@ impl App {
             ui.set_width(crate::theme::MENU_WIDTH);
             for (label, command) in [
                 ("Find in scrollback", Action::Search),
-                ("New session", Action::NewSession),
-                ("Switch session…", Action::Sessions),
+                ("New session", Action::NewWorkspace),
+                ("Switch session…", Action::OpenWorkspaces),
             ] {
                 if menu_item(ui, label, "").clicked() {
                     action = Some(command);
@@ -1537,9 +1539,9 @@ impl eframe::App for App {
         self.show(root_ui);
     }
 
-    // Not egui memory: felis and the workspace daemon own session state,
+    // Not egui memory: felis and the workspace daemon own persistent state,
     // every window process shares one eframe store while pane ids repeat
-    // across sessions, and `App::new` sets the style and theme anyway.
+    // across workspaces, and `App::new` sets the style and theme anyway.
     fn persist_egui_memory(&self) -> bool {
         false
     }
@@ -2596,7 +2598,7 @@ mod tests {
         }
         app.font_size = 18.0;
         let mut before = app.snapshot();
-        let session_id = app.workspace_id;
+        let workspace_id = app.workspace_id;
         app.save_workspace();
         eframe::App::on_exit(&mut app);
         drop(app);
@@ -2610,7 +2612,7 @@ mod tests {
         pump(&mut replacement, &connected);
         assert_eq!(replacement.font_size, 30.0);
         before.font_size = 30.0;
-        assert_eq!(replacement.workspace_id, session_id);
+        assert_eq!(replacement.workspace_id, workspace_id);
         assert_eq!(replacement.snapshot(), before);
         assert_eq!(replacement.tabs.len(), 2);
         assert_eq!(replacement.panes.len(), 3);
@@ -2622,7 +2624,7 @@ mod tests {
             .parent()
             .unwrap()
             .join("nekomata");
-        let id = session_id.unwrap();
+        let id = workspace_id.unwrap();
         let repaint = ctx.clone();
         let routing_executable = executable.clone();
         let command = replacement.runtime.spawn(async move {
@@ -2668,7 +2670,7 @@ mod tests {
             "new sessions use terminal config"
         );
         let other = replacement.workspace_id.unwrap();
-        assert_ne!(Some(other), session_id);
+        assert_ne!(Some(other), workspace_id);
         assert_eq!(replacement.panes.len(), 1);
         let other_shell = replacement
             .panes
@@ -2686,7 +2688,7 @@ mod tests {
             vec![
                 "sessions".into(),
                 "attach".into(),
-                session_id.unwrap().to_string(),
+                workspace_id.unwrap().to_string(),
             ],
         );
         assert!(output.status.success(), "{output:?}");
@@ -2701,12 +2703,12 @@ mod tests {
         );
         replacement.runtime.block_on(async {
             let mut client = daemon::connect().await.unwrap();
-            let Payload::Session { id, .. } =
+            let Payload::Workspace { id, .. } =
                 daemon::exchange(&mut client, daemon::Request::Open { window: u32::MAX })
                     .await
                     .unwrap()
             else {
-                panic!("expected session")
+                panic!("expected workspace")
             };
             assert_eq!(id, other);
             daemon::exchange(&mut client, daemon::Request::Save(broken))
@@ -2722,7 +2724,7 @@ mod tests {
             vec!["sessions".into(), "attach".into(), other.to_string()],
         );
         assert!(!output.status.success(), "{output:?}");
-        assert_eq!(replacement.workspace_id, session_id);
+        assert_eq!(replacement.workspace_id, workspace_id);
         assert_eq!(replacement.snapshot(), before);
         assert!(connected(&replacement));
         assert!(Arc::ptr_eq(
@@ -2733,16 +2735,17 @@ mod tests {
         assert!(replacement.pending_workspace.is_none());
         replacement.runtime.block_on(async {
             let mut client = daemon::connect().await.unwrap();
-            let Payload::Sessions(sessions) = daemon::exchange(&mut client, daemon::Request::List)
-                .await
-                .unwrap()
+            let Payload::Workspaces(workspaces) =
+                daemon::exchange(&mut client, daemon::Request::List)
+                    .await
+                    .unwrap()
             else {
-                panic!("expected sessions")
+                panic!("expected workspaces")
             };
             assert!(
-                sessions
+                workspaces
                     .iter()
-                    .find(|session| session.id == other)
+                    .find(|workspace| workspace.id == other)
                     .unwrap()
                     .window
                     .is_none()
@@ -2769,7 +2772,7 @@ mod tests {
             vec![
                 "sessions".into(),
                 "attach".into(),
-                session_id.unwrap().to_string(),
+                workspace_id.unwrap().to_string(),
             ],
         );
         assert!(output.status.success(), "{output:?}");

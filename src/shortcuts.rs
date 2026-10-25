@@ -9,8 +9,8 @@ use crate::layout::Axis;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Terminal(TerminalAction),
-    NewSession,
-    Sessions,
+    NewWorkspace,
+    OpenWorkspaces,
     NewTab,
     Split(Axis),
     ClosePane,

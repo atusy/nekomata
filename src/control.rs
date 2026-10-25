@@ -22,7 +22,8 @@ use crate::cli::PaneAction;
 pub enum Request {
     List,
     Switch {
-        session: Option<u64>,
+        #[serde(rename = "session")]
+        workspace: Option<u64>,
     },
     Attach {
         pane: Option<u64>,
@@ -170,7 +171,7 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
 }
 
 pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
-    let session = window
+    let workspace = window
         .is_none()
         .then(|| {
             std::env::var("NEKOMATA_SESSION_ID")
@@ -184,20 +185,20 @@ pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
             .and_then(|id| id.parse().ok())
     });
     tokio::runtime::Runtime::new()?.block_on(async {
-        let window = if let Some(id) = session {
+        let window = if let Some(id) = workspace {
             let mut stream = UnixStream::connect(crate::daemon::socket()?)
                 .await
                 .context("connect to the shell's nekomata session daemon")?;
-            let crate::daemon::Payload::Sessions(sessions) =
+            let crate::daemon::Payload::Workspaces(workspaces) =
                 crate::daemon::exchange(&mut stream, crate::daemon::Request::List).await?
             else {
                 bail!("unexpected session list response");
             };
             Some(
-                sessions
+                workspaces
                     .into_iter()
-                    .find(|session| session.id == id)
-                    .and_then(|session| session.window)
+                    .find(|workspace| workspace.id == id)
+                    .and_then(|workspace| workspace.window)
                     .context("the shell's nekomata session is not attached to a window")?,
             )
         } else {
@@ -281,7 +282,7 @@ mod tests {
 
     #[test]
     fn workspace_switch_keeps_its_wire_name_for_running_windows() {
-        let request = Request::Switch { session: Some(7) };
+        let request = Request::Switch { workspace: Some(7) };
         assert_eq!(
             serde_json::to_value(&request).unwrap(),
             serde_json::json!({"Switch": {"session": 7}})

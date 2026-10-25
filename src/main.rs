@@ -40,7 +40,7 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
-        cli::Command::DaemonStop | cli::Command::SessionsList => {
+        cli::Command::DaemonStop | cli::Command::WorkspacesList => {
             match daemon::command(matches!(command, cli::Command::DaemonStop)) {
                 Ok(output) => println!("{output}"),
                 Err(error) => {
@@ -50,8 +50,8 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
-        cli::Command::Session { window, session } => {
-            match control::run_request(window, control::Request::Switch { session }) {
+        cli::Command::Workspace { window, workspace } => {
+            match control::run_request(window, control::Request::Switch { workspace }) {
                 Ok(output) => println!("{output}"),
                 Err(error) => {
                     eprintln!("{error:#}");
