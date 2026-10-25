@@ -1231,9 +1231,13 @@ impl App {
                 if self.pending_workspace.is_some() || paste_pending {
                     ui.disable();
                 }
+                ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
+                // Reserve the full button height before either nested horizontal layout.
+                ui.spacing_mut().interact_size.y = crate::theme::ui_size(ui.style(), 30.0).max(
+                    ui.text_style_height(&egui::TextStyle::Button)
+                        + 2.0 * ui.spacing().button_padding.y,
+                );
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
-                    ui.spacing_mut().interact_size.y = 30.0;
                     let menu_open = egui::Popup::is_id_open(ui.ctx(), main_menu_id());
                     let menu_button = crate::theme::menu_button(ui, menu_open);
                     let search_width = if self.searching() {

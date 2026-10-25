@@ -47,6 +47,7 @@
                 path: type:
                 craneLib.filterCargoSources path type
                 || pkgs.lib.hasSuffix ".wgsl" path
+                || pkgs.lib.hasSuffix ".png" path
                 || builtins.baseNameOf path == "README.md"
                 || builtins.baseNameOf path == "LICENSE";
             };
@@ -67,6 +68,10 @@
               # Legacy rendering fixtures use an explicit font independent of user config.
               NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
               postInstall = ''
+                install -Dm644 ${./share/icons/nekomata.png} \
+                  $out/share/icons/hicolor/256x256/apps/nekomata.png
+                install -Dm644 ${./share/icons/nekomata.svg} \
+                  $out/share/icons/hicolor/scalable/apps/nekomata.svg
                 install -Dm644 ${./share/fish/vendor_conf.d/nekomata.fish} \
                   $out/share/fish/vendor_conf.d/nekomata.fish
               '';
@@ -74,7 +79,8 @@
                 executable="$out/bin/nekomata"
                 ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                   app="$out/Applications/nekomata.app/Contents"
-                  mkdir -p "$app/MacOS"
+                  mkdir -p "$app/MacOS" "$app/Resources"
+                  cp ${./share/icons/nekomata.icns} "$app/Resources/nekomata.icns"
                   cp ${./share/macos/Info.plist} "$app/Info.plist"
                   mv "$executable" "$app/MacOS/nekomata-bin"
                   executable="$app/MacOS/nekomata-bin"
@@ -129,6 +135,8 @@
                 cargo
                 rustc
                 rustfmt
+                resvg
+                python3
                 clippy
                 fish
                 rust-analyzer

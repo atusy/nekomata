@@ -10,6 +10,8 @@
   <string>nekomata</string>
   <key>CFBundleExecutable</key>
   <string>nekomata</string>
+  <key>CFBundleIconFile</key>
+  <string>nekomata.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
