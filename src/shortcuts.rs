@@ -119,16 +119,18 @@ impl AppKeymap {
     }
 
     fn lookup(&self, keys: &[Chord]) -> Lookup {
-        if let Some(action) = self.bindings.get(keys) {
-            return Lookup::Action(action.clone());
-        }
-        // Sequences sort directly after their prefixes.
-        let longer = self
+        use std::ops::Bound;
+        // Sequences sort directly after their prefixes, so the first entry
+        // from `keys` on is either `keys` itself or the nearest longer one.
+        match self
             .bindings
-            .range(keys.to_vec()..)
+            .range::<[Chord], _>((Bound::Included(keys), Bound::Unbounded))
             .next()
-            .is_some_and(|(bound, _)| bound.starts_with(keys));
-        if longer { Lookup::Prefix } else { Lookup::Miss }
+        {
+            Some((bound, action)) if bound[..] == *keys => Lookup::Action(action.clone()),
+            Some((bound, _)) if bound.starts_with(keys) => Lookup::Prefix,
+            _ => Lookup::Miss,
+        }
     }
 }
 
@@ -235,31 +237,32 @@ impl Shortcuts {
                 return true;
             };
             suppress_text = false;
-            let chord = terminal_chord(*key, *mods);
-            let mut keys = std::mem::take(&mut self.pending);
-            let pending = !keys.is_empty();
+            let pending = !self.pending.is_empty();
             if pending && *key == Key::Escape {
+                self.pending.clear();
                 suppress_text = true;
                 return false;
             }
-            keys.push(chord);
-            let action = match self.keymap.lookup(&keys) {
-                Lookup::Action(action) => Some(action),
+            // `pending` is cleared rather than replaced, so its allocation
+            // is reused across key presses.
+            self.pending.push(terminal_chord(*key, *mods));
+            let action = match self.keymap.lookup(&self.pending) {
                 Lookup::Prefix => {
-                    self.pending = keys;
                     suppress_text = true;
                     return false;
                 }
+                Lookup::Action(action) => Some(action),
                 // An unfinished sequence gives the key to the program, not
                 // to a terminal binding it happens to match.
                 Lookup::Miss if pending => None,
                 Lookup::Miss => self
                     .terminal
-                    .resolve(&keys[0])
+                    .resolve(&self.pending[0])
                     .filter(|action| supported_terminal_action(action))
                     .cloned()
                     .map(Action::Terminal),
             };
+            self.pending.clear();
             if let Some(action) = action {
                 actions.push(action);
                 suppress_text = true;
