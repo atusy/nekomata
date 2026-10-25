@@ -59,8 +59,8 @@ Not supported: key release events and OSC 52 clipboard reads.
   result; changing either searches again on the next move.
 - A search returns at most 1,000 results and 1 MiB of response data in total.
   A truncated result count is marked with `+`.
-- While the search field is open, input is not sent to the terminal. Escape
-  closes the field and its highlights.
+- While the search field is open, keyboard input is not sent to the terminal
+  (mouse input still is). Escape closes the field and its highlights.
 
 ## Rendering
 
