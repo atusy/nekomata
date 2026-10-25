@@ -289,7 +289,11 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
     mods.set(TerminalModifiers::ALT, modifiers.alt);
     // egui's `command` is also true for Ctrl on Linux; it is not SUPER.
     mods.set(TerminalModifiers::SUPER, modifiers.mac_cmd);
-    let key = match key {
+    Chord::with_mods(mods, terminal_key(key))
+}
+
+fn terminal_key(key: Key) -> KeyCode {
+    match key {
         Key::ArrowUp => KeyCode::Named(NamedKey::ArrowUp),
         Key::ArrowDown => KeyCode::Named(NamedKey::ArrowDown),
         Key::ArrowLeft => KeyCode::Named(NamedKey::ArrowLeft),
@@ -309,8 +313,7 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
                 .map(|chord| chord.key)
                 .unwrap_or(KeyCode::Character(name))
         }
-    };
-    Chord::with_mods(mods, key)
+    }
 }
 
 impl Shortcuts {
