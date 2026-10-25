@@ -171,7 +171,7 @@ pub struct App {
     help: bool,
     shortcuts: Shortcuts,
     palette: bool,
-    palette_query: String,
+    palette_state: crate::command_palette::CommandPalette,
 }
 
 impl App {
@@ -223,7 +223,7 @@ impl App {
             help: false,
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx)),
             palette: false,
-            palette_query: String::new(),
+            palette_state: Default::default(),
         };
         Ok(app)
     }
@@ -1042,7 +1042,7 @@ impl App {
             }
             Action::Palette => {
                 self.palette = true;
-                self.palette_query.clear();
+                self.palette_state = Default::default();
             }
             Action::FontScale(scale) => {
                 self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
@@ -1506,70 +1506,12 @@ impl App {
             });
         }
         if self.palette {
-            let mut chosen = None;
-            let enter =
-                ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            egui::Window::new("Command palette")
-                .open(&mut self.palette)
-                .show(ctx, |ui| {
-                    let response = ui.text_edit_singleline(&mut self.palette_query);
-                    if !response.has_focus() {
-                        response.request_focus();
-                    }
-                    for (label, command) in [
-                        ("Find in scrollback", Action::Search),
-                        ("New session", Action::NewSession),
-                        ("Switch session", Action::Sessions),
-                        ("New tab", Action::NewTab),
-                        ("Split left / right", Action::Split(Axis::Horizontal)),
-                        ("Split top / bottom", Action::Split(Axis::Vertical)),
-                        ("Next tab", Action::NextTab),
-                        ("Previous tab", Action::PreviousTab),
-                        ("Close pane (detach)", Action::ClosePane),
-                        ("Close tab (detach)", Action::CloseTab),
-                        ("Reset font size", Action::FontReset),
-                        (
-                            "Previous prompt",
-                            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
-                                felis_protocol::messages::PromptJump::Previous,
-                            )),
-                        ),
-                        (
-                            "Next prompt",
-                            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
-                                felis_protocol::messages::PromptJump::Next,
-                            )),
-                        ),
-                        (
-                            "Scroll to oldest output",
-                            Action::Terminal(felis_client_core::Action::Scroll(
-                                felis_client_core::ScrollStep::Home,
-                            )),
-                        ),
-                        (
-                            "Scroll to live output",
-                            Action::Terminal(felis_client_core::Action::Scroll(
-                                felis_client_core::ScrollStep::End,
-                            )),
-                        ),
-                    ] {
-                        if label
-                            .to_lowercase()
-                            .contains(&self.palette_query.to_lowercase())
-                        {
-                            let clicked = ui.button(label).clicked();
-                            if clicked || (enter && chosen.is_none()) {
-                                chosen = Some(command);
-                            }
-                        }
-                    }
-                });
-            if let Some(action) = chosen {
+            let (chosen, dismissed) = self.palette_state.show(ctx);
+            if dismissed || chosen.is_some() {
                 self.palette = false;
-                self.action(ctx, action);
             }
-            if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-                self.palette = false;
+            if let Some(action) = chosen {
+                self.action(ctx, action);
             }
         }
         self.workspace_picker(ctx);
@@ -2906,7 +2848,7 @@ mod tests {
             help: false,
             shortcuts: Shortcuts::default(),
             palette: false,
-            palette_query: String::new(),
+            palette_state: Default::default(),
         };
         app.add_tab(&ctx, None);
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
