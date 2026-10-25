@@ -120,9 +120,11 @@ fn parse_font(font: &toml::Table, out: &mut UiFont, warnings: &mut Warnings) -> 
                     toml::Value::Float(size) => *size as f32,
                     _ => return Err(format!("`{PATH}.size_px` must be a number")),
                 };
-                out.size_px = if size.is_nan() || size <= 0.0 {
+                // An overflowing value converts to infinity; like NaN it has
+                // no meaningful clamp, so felis also uses the default.
+                out.size_px = if !size.is_finite() || size <= 0.0 {
                     warnings.push(format!(
-                        "`{PATH}.size_px` must be positive; using the default"
+                        "`{PATH}.size_px` must be a positive finite number; using the default"
                     ));
                     None
                 } else if !FONT_SIZE_RANGE.contains(&size) {
@@ -329,6 +331,9 @@ mod tests {
             ("0", None),
             ("-3", None),
             ("nan", None),
+            ("inf", None),
+            ("-inf", None),
+            ("1e300", None),
             ("2", Some(4.0)),
             ("100.5", Some(72.0)),
         ] {
