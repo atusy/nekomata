@@ -26,7 +26,7 @@ You can switch a pane of a running GUI to another session from the command
 line.
 
 ```sh
-# Show window IDs, pane IDs, targets and session IDs
+# Show the window's ID and its pane IDs, targets and session IDs
 nekomata panes list
 
 # Switch the focused pane to another session on the same daemon
@@ -51,7 +51,9 @@ nekomata panes attach --ssh dev-server --daemon /run/user/1000/felis.sock --sess
 Run from a nekomata shell, these act on the window showing that shell's
 workspace. Add `--window WINDOW_ID` to pick a window explicitly — for example
 when several GUIs are running, or for a shell you moved into another
-workspace, which still points at the workspace it was started in.
+workspace, which still points at the workspace it was started in. The
+`WINDOW` column of `nekomata workspaces list` shows the IDs of running
+windows.
 
 ## Preparing an SSH host
 
