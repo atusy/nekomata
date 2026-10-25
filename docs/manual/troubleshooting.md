@@ -33,10 +33,13 @@ nekomata again:
 nix develop --command felis daemon stop --when-empty
 ```
 
-If you installed with `nix profile`, use the same flake reference instead,
-for example `nix develop github:atusy/nekomata --command …`. `nix develop`
-downloads the development environment; prefer it over another felis on your
-`PATH`, which may be a different revision.
+If you installed with `nix profile`, run the commands with the locked flake
+URL that `nix profile list` shows for nekomata (for example
+`nix develop 'github:atusy/nekomata/<rev>' --command …`); a plain
+`github:atusy/nekomata` follows the current default branch, whose felis may
+differ from yours. `nix develop` downloads the development environment;
+prefer it over another felis on your `PATH`, which may be a different
+revision.
 
 ## macOS asks for permissions in another app's name
 
@@ -61,7 +64,8 @@ Dock so that nekomata starts the daemon.
   nix develop --command felis config check --client nekomata
   ```
 
-  (in your nekomata clone, or with the flake reference you installed from).
+  (in your nekomata clone, or with the locked flake URL described
+  [above](#an-update-to-felis-does-not-take-effect)).
 
 ## Layouts are gone
 
