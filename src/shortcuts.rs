@@ -188,6 +188,8 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
         Key::Insert => KeyCode::Named(NamedKey::Insert),
         // egui displays this key as U+2212; bindings name the ASCII key.
         Key::Minus => KeyCode::Character("-".into()),
+        // egui has no symbol for this key and names it "Quote".
+        Key::Quote => KeyCode::Character("'".into()),
         _ => {
             let name = key.symbol_or_name().to_ascii_lowercase();
             name.parse::<Chord>()
@@ -473,6 +475,15 @@ mod tests {
             ("ctrl+a", Key::A, Modifiers::CTRL),
             ("alt+left", Key::ArrowLeft, Modifiers::ALT),
             ("f5", Key::F5, Modifiers::NONE),
+            ("'", Key::Quote, Modifiers::NONE),
+            ("ctrl+'", Key::Quote, Modifiers::CTRL),
+            (";", Key::Semicolon, Modifiers::NONE),
+            ("`", Key::Backtick, Modifiers::NONE),
+            ("[", Key::OpenBracket, Modifiers::NONE),
+            ("\\", Key::Backslash, Modifiers::NONE),
+            ("ctrl++", Key::Plus, Modifiers::CTRL),
+            ("-", Key::Minus, Modifiers::NONE),
+            ("space", Key::Space, Modifiers::NONE),
         ] {
             assert_eq!(
                 spelling.parse::<Chord>().unwrap(),
