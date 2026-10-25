@@ -30,11 +30,12 @@ for requirements.
 
 ## Get around
 
-| | |
+| Action | Keys |
 | --- | --- |
 | New tab | Alt+C |
 | Next / previous tab | Alt+T / Alt+Shift+T |
-| Split down / right | Alt+W → Alt+S / Alt+W → Alt+V |
+| Split down | Alt+W → Alt+S |
+| Split right | Alt+W → Alt+V |
 | Move between panes | Alt+W → H / J / K / L |
 | Close pane (the shell keeps running) | Alt+W → C |
 | Command palette | Alt+Shift+P |
