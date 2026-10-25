@@ -44,7 +44,7 @@ nekomata 独自の設定は、felis の文書とは別の `config.toml` に書�
 ```toml
 [appearance.base.font]
 # タブ・メニュー・検索欄・コマンドパレットなど UI の文字。端末の文字は felis の [font] で設定します。
-family = "UDEV Gothic NF" # 省略時はシステムのプロポーショナル体
+family = "UDEV Gothic NF" # 省略時は nekomata の既定 UI フォント
 size_px = 15              # 省略時は macOS のシステム UI サイズ、ほかの OS は 15
 
 [keymap]
@@ -54,7 +54,7 @@ size_px = 15              # 省略時は macOS のシステム UI サイズ、�
 "ctrl+a v"    = { kind = "split", direction = "right" }
 ```
 
-`family` は大文字・小文字を区別せず、OS のフォントディレクトリにあるファミリー名で探します。見つからない場合はシステムのフォントで起動します。`size_px` は整数・小数のどちらでも書けます。4〜72 の範囲外は範囲内に丸め、0 以下は既定値を使います。
+`family` は OS のフォント照合（macOS は CoreText、Linux は fontconfig）でファミリー名から探します。大文字・小文字は区別しません。見つからない場合や空の場合は、警告を出して nekomata の既定 UI フォントで起動します。既定 UI フォントは、macOS ではヒラギノ角ゴシック、Linux では Noto Sans CJK があればそれ、なければ egui の内蔵フォントです。`size_px` は整数・小数のどちらでも書けます。4〜72 の範囲外は範囲内に丸め、0 以下や無限大は既定値を使います。
 
 `[keymap]` は felis の `[keymap]` と同じ `"キー" = { kind = "…" }` の形です。1打鍵の書き方（`alt+shift+t`、`f5`、`ctrl+shift++` など）も felis と同じです。空白で区切ると連続キーになり、`"alt+w c"` は Alt+W に続けて C を押す操作です。書いたキーは既定の割り当てを置き換えます。1打鍵だけを割り当てると、そのキーで始まる既定の連続キーは無効になります（`"alt+w"` を割り当てると `Alt+W` 系の既定はすべて外れます）。先頭のキーが単独で割り当て済みの連続キーは、最後まで押せないので警告を出して無視します。`unbind` はそのキーと、そのキーで始まる連続キーを外します。
 
