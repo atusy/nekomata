@@ -11,6 +11,9 @@ pub const TAB_INACTIVE_FG: Color32 = Color32::from_rgb(140, 149, 167);
 pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
 pub const MENU_WIDTH: f32 = 256.0;
 pub const MENU_ROW_HEIGHT: f32 = 30.0;
+pub const PALETTE_WIDTH: f32 = 520.0;
+pub const PALETTE_ROW_HEIGHT: f32 = 32.0;
+pub const PALETTE_LIST_HEIGHT: f32 = 270.0;
 
 pub fn menu_style(style: &mut eframe::egui::Style) {
     use eframe::egui::{self, Stroke, Vec2};
