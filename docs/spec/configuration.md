@@ -32,6 +32,8 @@ nekomata applies:
 - `keymap` actions for system-clipboard copy and paste, font size, scrolling,
   prompt navigation and search, and `unbind`. Keys bound to other felis
   actions are passed to the terminal program (see [keymap](keymap.md)).
+  Chords the window turns into clipboard events cannot be bound (see
+  [keymap](keymap.md#clipboard-events)).
 
 nekomata does not apply `window`, `shader`, `mouse` or `clipboard`. Settings
 nekomata does not apply are accepted and have no effect.

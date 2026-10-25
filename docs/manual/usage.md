@@ -31,7 +31,9 @@ Default keys are below. `→` means "then press".
 
 Tab, pane and palette keys are set in nekomata's configuration; copy, paste
 and the other terminal keys are set in felis's (see
-[Configuration](configuration.md)).
+[Configuration](configuration.md)). Cmd+C and Cmd+V on macOS are fixed and
+cannot be rebound; on Linux, plain Ctrl+C and Ctrl+V always go to the
+program.
 
 Each text size step scales by 1.1. Prompt navigation needs a shell that
 reports prompt boundaries with OSC 133. `Scroll to oldest output`,
