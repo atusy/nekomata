@@ -21,7 +21,7 @@ Default keys are below. `→` means "then press".
 | Focus left / down / up / right pane | Alt+W → H / J / K / L |
 | Command palette | Alt+Shift+P |
 | Search scrollback | Ctrl+Shift+F, or Cmd+F (with or without Shift) on macOS |
-| Copy selection | Cmd+C on macOS, Ctrl+Shift+C on Linux |
+| Copy selection | Ctrl+Shift+C, or Cmd+C on macOS |
 | Paste | Ctrl+Shift+V, or Cmd+V on macOS |
 | Larger / smaller text | Ctrl+Shift+= / Ctrl+Shift+- (also Cmd+= / Cmd+- on macOS) |
 | Reset text size | Ctrl+Shift+0, or Cmd+0 on macOS |
