@@ -13,6 +13,10 @@ keymap entry bound to an action nekomata does not implement is forwarded to
 the terminal program. While the search field has focus, input is not sent to
 the terminal.
 
+A key that ends a pending application sequence without completing it skips
+the terminal keymap: the keys already pressed are discarded, and this key goes
+to the terminal program.
+
 ## Default bindings
 
 Application keymap:
@@ -64,8 +68,6 @@ means Alt+W followed by C.
   warning.
 - Escape cancels a pending sequence, so it may appear only as the first
   keystroke. Entries such as `"ctrl+a escape"` are ignored with a warning.
-- A key that continues no pending sequence ends the sequence and is forwarded
-  to the next layer.
 - Entries containing keystrokes the window can never report are ignored with
   a warning:
   - Cmd+X / Cmd+C / Cmd+V on macOS, and Ctrl+X / Ctrl+C / Ctrl+V elsewhere,

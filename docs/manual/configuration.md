@@ -56,8 +56,9 @@ size_px = 15                # default: felis's default font size
 
 Keys are written the same way as in felis's `[keymap]`. Separate keystrokes
 with spaces for a sequence: `"alt+w c"` is Alt+W, then C. Your entries
-replace the defaults for the same keys, and Escape cancels a sequence in
-progress.
+replace the defaults for the same keys. Escape cancels a sequence in
+progress; any other key that does not continue it is sent to the terminal
+program.
 
 | `kind` | Arguments | Action |
 | --- | --- | --- |
