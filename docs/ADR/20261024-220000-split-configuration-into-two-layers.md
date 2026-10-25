@@ -33,7 +33,7 @@ Configuration has two layers, each read from the document its owner defines.
 - **Dependency direction.** The application layer wraps the terminal layer, as
   a multiplexer wraps a terminal. Neither layer reads the other's document.
 - **Per-pane variation.** Values that vary per pane at runtime, such as a
-  per-pane font size, are runtime state over terminal-layer defaults, not a
+  future per-pane font size, are runtime state over terminal-layer defaults, not a
   third document.
 
 ## Considered Options
@@ -59,11 +59,6 @@ Configuration has two layers, each read from the document its owner defines.
   so users can write settings that silently have no effect in nekomata.
 - nekomata depends on felis-client-core's configuration API, so felis revision
   updates must check it.
-
-## Decision–Implementation Gap
-
-Workspace-scoped runtime state already overrides the terminal-layer font size
-for a whole workspace, but there is no per-pane font size yet.
 
 ## Related Decisions
 
