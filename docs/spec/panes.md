@@ -12,16 +12,22 @@ is distinct from the felis session ID.
 
 - A new tab uses the local daemon nekomata started with.
 - A split uses the connection target of the pane it splits.
-- A split starts in the current local directory the shell reported through
-  OSC 7, else in nekomata's startup directory.
-- A new shell starts in the home directory when nekomata is launched as an app,
-  and in the invoking directory when launched from a CLI.
-- On macOS the shell is started as `$SHELL -l`, a login shell.
-- New local shells receive `NEKOMATA_WORKSPACE_ID`, `NEKOMATA_WINDOW_ID` and
-  `NEKOMATA_PANE_ID`. nekomata never rewrites the environment of an existing
-  shell.
-- A new remote shell does not inherit the local shell path, working directory
-  or environment.
+- A local split starts in the directory its source shell last reported through
+  OSC 7. Other new local shells, and splits without a report, start in
+  nekomata's working directory, or in the home directory when that is `/`.
+  The macOS app launcher changes to the home directory before starting
+  nekomata.
+- A new local shell runs `$SHELL` (else `/bin/sh`); on macOS it runs as a login
+  shell (`-l`).
+- New local shells receive `NEKOMATA_WORKSPACE_ID` (once the window's
+  workspace is known), `NEKOMATA_WINDOW_ID`, `NEKOMATA_PANE_ID` and
+  `NEKOMATA_SHELL_INTEGRATION=1`. nekomata never rewrites the environment of an
+  existing shell.
+- A new remote shell runs the remote daemon's default command. It receives
+  none of the above: no `$SHELL`, working directory or environment is
+  forwarded.
+- Only a new local shell starts its felis daemon on demand. Attaching to a
+  session never starts a daemon, and nekomata never starts a remote daemon.
 
 `FELIS_SOCKET` selects a local felis daemon other than the default.
 
@@ -55,7 +61,8 @@ nekomata panes attach [PANE_ID] [--window WINDOW_ID] [--ssh HOST] [--daemon SOCK
 - The pane switches only after connecting and attaching succeed. The previous
   session is detached and keeps running. On failure the pane keeps its
   session and the CLI exits with an error.
-- A second attach to a pane while one is in progress fails.
+- A second attach to a pane while one is in progress fails, as does any
+  attach while the window is switching workspaces.
 - There is no CLI command that only detaches.
 
 ## Window resolution
@@ -80,6 +87,7 @@ workspace's window; pass `--window` there.
 
 - SSH commands run on the machine running the GUI. Hosts may be
   `~/.ssh/config` names or `user@host`.
-- The remote host needs a compatible `felis-daemon` on `PATH`.
+- The remote host needs a compatible `felis-daemon` on `PATH`, already
+  running: nekomata relays to it and never starts it, even for new shells.
 - Authentication must be non-interactive (public keys, SSH agent). Passwords
   and first-time host-key confirmation are not prompted for.
