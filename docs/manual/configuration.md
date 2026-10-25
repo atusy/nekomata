@@ -83,8 +83,9 @@ in felis's `[keymap]`.
 - In felis's file, such mistakes are silently ignored by nekomata; check the
   file with `felis config check --client nekomata` (see
   [Troubleshooting](troubleshooting.md#a-setting-has-no-effect)).
-- In either file, a TOML syntax error, or a type error outside `[keymap]`,
-  stops nekomata from starting. A malformed keymap entry is only dropped.
+- In either file, a TOML syntax error or a wrongly typed setting stops
+  nekomata from starting. A malformed keymap entry is only dropped, and so is
+  a malformed `font.fallback` entry in felis's file.
 
 Some bindings are rejected with a warning: keys the window never reports as
 key presses, such as Cmd+C, and sequences that can never complete because a
