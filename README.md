@@ -32,8 +32,48 @@ GUI 起動時は保存済みズームより設定の文字サイズを優先し�
 設定変更は GUI の再起動で反映します。既定パスにファイルがなければ起動でき、構文・型の誤りや読み込み失敗は起動エラーになります。
 
 この設定は [二層設定 ADR](docs/ADR/20261024-220000-split-configuration-into-two-layers.md) の terminal layer です。
-タブ・分割・メニューなどの application layer の設定文書はまだ実装していません。
-`[client.nekomata]` に nekomata 独自の設定キーを追加することはできません。
+`[client.nekomata]` に nekomata 独自の設定キーを追加することはできません。タブ・分割・メニューなどは次の application layer で設定します。
+
+## アプリケーション設定
+
+nekomata 独自の設定は、felis の文書とは別の `config.toml` に書きます。macOS は
+`~/Library/Application Support/nekomata/config.toml`、Linux は
+`$XDG_CONFIG_HOME/nekomata/config.toml`（未指定なら `~/.config/nekomata/config.toml`）です。
+ファイルがなければ既定値で起動します。設定できるのは次の2つです。
+
+```toml
+[appearance.base.font]
+# タブ・メニュー・検索欄・コマンドパレットなど UI の文字。端末の文字は felis の [font] で設定します。
+family = "UDEV Gothic NF" # 省略時はシステムのプロポーショナル体
+size_px = 15              # 省略時は macOS のシステム UI サイズ、ほかの OS は 15
+
+[keymap]
+"alt+n"       = { kind = "new_tab" }
+"alt+c"       = { kind = "unbind" }
+"ctrl+a s"    = { kind = "split", direction = "down" }
+"ctrl+a v"    = { kind = "split", direction = "right" }
+```
+
+`family` は大文字・小文字を区別せず、OS のフォントディレクトリにあるファミリー名で探します。見つからない場合はシステムのフォントで起動します。`size_px` は整数・小数のどちらでも書けます。4〜72 の範囲外は範囲内に丸め、0 以下は既定値を使います。
+
+`[keymap]` は felis の `[keymap]` と同じ `"キー" = { kind = "…" }` の形です。1打鍵の書き方（`alt+shift+t`、`f5`、`ctrl+shift++` など）も felis と同じです。空白で区切ると連続キーになり、`"alt+w c"` は Alt+W に続けて C を押す操作です。書いたキーだけ既定を置き換え、`unbind` はそのキーと、そのキーで始まる連続キーを外します。
+
+| `kind` | 引数 | 操作 |
+| --- | --- | --- |
+| `new_tab` | — | 新しいタブ |
+| `close_tab` | — | タブを閉じる |
+| `switch_tab` | `to = "next" \| "previous"` | 次 / 前のタブ |
+| `split` | `direction = "down" \| "right"` | 下 / 右に新しいペインを開く |
+| `close_pane` | — | ペインを閉じる（detach） |
+| `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` または `to = "next"` | 隣 / 次のペインに移動 |
+| `command_palette` | — | コマンドパレット |
+| `new_workspace` | — | 新しいワークスペース |
+| `open_workspaces` | — | ワークスペースの一覧 |
+| `unbind` | — | 既定の割り当てを外す |
+
+アプリケーションのキーを先に処理し、残りを felis の `[keymap]` へ渡します。連続キーの途中で Escape を押すと取り消します。割り当てのないキーを押すと連続キーを終え、そのキーは端末プログラムへ渡します。コピー・貼り付け・文字サイズ・スクロール・検索は端末の操作なので、felis の `[keymap]` で設定します。
+
+未知のキーや使えない値、壊れた `[keymap]` の項目は標準エラーに警告を出して無視し、残りの設定を使います。TOML の構文や値の型の誤りは起動エラーになります。設定の変更は GUI の再起動で反映します。
 
 ## 起動
 
@@ -77,7 +117,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 
 ## 操作
 
-フォントはkitty.confに合わせた **UDEV Gothic NF / 15pt** です。Nixパッケージと開発シェルでフォントを供給します。現在はフォントとキー設定をハードコードしています。
+既定のキーは次のとおりです。タブ・分割・コマンドパレットのキーは[アプリケーション設定](#アプリケーション設定)の `[keymap]` で、端末操作のキーは felis の `[keymap]` で変更できます。
 
 | 操作 | キー |
 | --- | --- |
@@ -97,7 +137,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 | 最古の出力 / 現在の出力へ移動 | Ctrl+Shift+Home / Ctrl+Shift+End |
 | 前 / 次のプロンプトへ移動 | Ctrl+Shift+Z / Ctrl+Shift+X |
 
-`→` はキーを順番に押す操作です。分割時はシェルがOSC 7で通知した現在のローカルディレクトリを引き継ぎます。通知がない場合はnekomataの起動ディレクトリを使います。以前のタブ・分割用ショートカットは置き換えました。設定ファイルがまだないため、kittyの `Alt+Shift+R`（設定再読み込み）は未割り当てです。
+`→` はキーを順番に押す操作です。分割時はシェルがOSC 7で通知した現在のローカルディレクトリを引き継ぎます。通知がない場合はnekomataの起動ディレクトリを使います。以前のタブ・分割用ショートカットは置き換えました。設定の再読み込みには対応していないため、kittyの `Alt+Shift+R` は未割り当てです。
 
 上部は `≡ | tab1 | tab2 | …` の1行構成です。左端の `≡` メニューからワークスペースの新規作成・切り替え、タブ追加、縦横分割、ペイン・タブの閉鎖、再接続、文字サイズ変更、ヘルプを利用できます。
 
