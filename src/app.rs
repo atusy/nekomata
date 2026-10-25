@@ -1220,8 +1220,7 @@ impl App {
         {
             focus_terminal(ctx);
         }
-        let mut menu_open = false;
-        egui::Panel::top("tabs")
+        let tabs = egui::Panel::top("tabs")
             .show_separator_line(false)
             .frame(
                 egui::Frame::new()
@@ -1235,113 +1234,8 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
                     ui.spacing_mut().interact_size.y = 30.0;
-                    let (_, menu) = egui::containers::menu::MenuButton::from_button(
-                        egui::Button::new(egui::RichText::new("≡").color(TAB_INACTIVE_FG))
-                            .frame(false)
-                            .min_size(Vec2::splat(30.0)),
-                    )
-                    .config(
-                        egui::containers::menu::MenuConfig::new()
-                            .style(crate::theme::menu_style)
-                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
-                    )
-                    .ui(ui, |ui| {
-                        ui.set_width(crate::theme::MENU_WIDTH);
-                        for (label, command) in [
-                            ("Find in scrollback", Action::Search),
-                            ("New session", Action::NewSession),
-                            ("Switch session…", Action::Sessions),
-                        ] {
-                            if menu_item(ui, label, "").clicked() {
-                                action = Some(command);
-                                ui.close();
-                            }
-                        }
-                        menu_separator(ui);
-                        for (label, shortcut, command) in [
-                            ("New tab", "Alt+C", Action::NewTab),
-                            (
-                                "Split right",
-                                "Alt+W  Alt+V",
-                                Action::Split(Axis::Horizontal),
-                            ),
-                            ("Split below", "Alt+W  Alt+S", Action::Split(Axis::Vertical)),
-                            ("Next pane", "", Action::NextPane),
-                        ] {
-                            if menu_item(ui, label, shortcut).clicked() {
-                                action = Some(command);
-                                ui.close();
-                            }
-                        }
-                        if menu_item(ui, "Attach terminal…", "").clicked() {
-                            self.picker.open(&self.runtime, ctx);
-                            ui.close();
-                        }
-                        menu_separator(ui);
-                        for (label, shortcut, command) in [
-                            ("Close pane", "Alt+W  C", Action::ClosePane),
-                            ("Close tab", "", Action::CloseTab),
-                        ] {
-                            if menu_item(ui, label, shortcut)
-                                .on_hover_text("Detach; keep the shell running")
-                                .clicked()
-                            {
-                                action = Some(command);
-                                ui.close();
-                            }
-                        }
-                        menu_separator(ui);
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.0);
-                            ui.label(
-                                egui::RichText::new("Text size")
-                                    .color(TAB_INACTIVE_FG)
-                                    .size(12.0),
-                            );
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui
-                                        .add_sized(
-                                            [30.0, 28.0],
-                                            egui::Button::new("+").fill(TAB_HOVER_BG),
-                                        )
-                                        .on_hover_text("Larger text")
-                                        .clicked()
-                                    {
-                                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(self.font_size * 1.1, 0.0);
-                                    }
-                                    if ui
-                                        .add_sized(
-                                            [52.0, 28.0],
-                                            egui::Button::new(format!("{:.0} pt", self.font_size))
-                                                .fill(TAB_HOVER_BG),
-                                        )
-                                        .on_hover_text("Reset text size")
-                                        .clicked()
-                                    {
-                                        self.font_size = crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
-                                    }
-                                    if ui
-                                        .add_sized(
-                                            [30.0, 28.0],
-                                            egui::Button::new("−").fill(TAB_HOVER_BG),
-                                        )
-                                        .on_hover_text("Smaller text")
-                                        .clicked()
-                                    {
-                                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(self.font_size / 1.1, 0.0);
-                                    }
-                                },
-                            );
-                        });
-                        menu_separator(ui);
-                        if menu_item(ui, "Keyboard shortcuts", "").clicked() {
-                            self.help = true;
-                            ui.close();
-                        }
-                    });
-                    menu_open = menu.is_some();
+                    let menu_open = egui::Popup::is_id_open(ui.ctx(), main_menu_id());
+                    let menu_button = crate::theme::menu_button(ui, menu_open);
                     let search_width = if self.searching() {
                         ui.available_width().min(360.0)
                     } else {
@@ -1397,8 +1291,105 @@ impl App {
                             |ui| self.search_bar(ui),
                         );
                     }
+                    menu_button
+                })
+                .inner
+            });
+        let menu_open = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
+            ui.set_width(crate::theme::MENU_WIDTH);
+            for (label, command) in [
+                ("Find in scrollback", Action::Search),
+                ("New session", Action::NewSession),
+                ("Switch session…", Action::Sessions),
+            ] {
+                if menu_item(ui, label, "").clicked() {
+                    action = Some(command);
+                    ui.close();
+                }
+            }
+            menu_separator(ui);
+            for (label, shortcut, command) in [
+                ("New tab", "Alt+C", Action::NewTab),
+                (
+                    "Split right",
+                    "Alt+W  Alt+V",
+                    Action::Split(Axis::Horizontal),
+                ),
+                ("Split below", "Alt+W  Alt+S", Action::Split(Axis::Vertical)),
+                ("Next pane", "", Action::NextPane),
+            ] {
+                if menu_item(ui, label, shortcut).clicked() {
+                    action = Some(command);
+                    ui.close();
+                }
+            }
+            if menu_item(ui, "Attach terminal…", "").clicked() {
+                self.picker.open(&self.runtime, ctx);
+                ui.close();
+            }
+            menu_separator(ui);
+            for (label, shortcut, command) in [
+                ("Close pane", "Alt+W  C", Action::ClosePane),
+                ("Close tab", "", Action::CloseTab),
+            ] {
+                if menu_item(ui, label, shortcut)
+                    .on_hover_text("Detach; keep the shell running")
+                    .clicked()
+                {
+                    action = Some(command);
+                    ui.close();
+                }
+            }
+            menu_separator(ui);
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("Text size")
+                        .color(TAB_INACTIVE_FG)
+                        .size(12.0),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_sized([30.0, 28.0], egui::Button::new("+").fill(TAB_HOVER_BG))
+                        .on_hover_text("Larger text")
+                        .clicked()
+                    {
+                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
+                            self.font_size * 1.1,
+                            0.0,
+                        );
+                    }
+                    if ui
+                        .add_sized(
+                            [52.0, 28.0],
+                            egui::Button::new(format!("{:.0} pt", self.font_size))
+                                .fill(TAB_HOVER_BG),
+                        )
+                        .on_hover_text("Reset text size")
+                        .clicked()
+                    {
+                        self.font_size =
+                            crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
+                    }
+                    if ui
+                        .add_sized([30.0, 28.0], egui::Button::new("−").fill(TAB_HOVER_BG))
+                        .on_hover_text("Smaller text")
+                        .clicked()
+                    {
+                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
+                            self.font_size / 1.1,
+                            0.0,
+                        );
+                    }
                 });
             });
+            menu_separator(ui);
+            if menu_item(ui, "Keyboard shortcuts", "").clicked() {
+                self.help = true;
+                ui.close();
+            }
+        })
+        .is_some();
         if let Some(action) = action {
             self.action(ctx, action);
         }
@@ -1718,6 +1709,38 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
         }
     }
     response.on_hover_text(label)
+}
+
+fn main_menu_id() -> egui::Id {
+    egui::Id::unique("main-menu")
+}
+
+fn show_tab_bar_menu<R>(
+    button: &egui::Response,
+    tab_bar: Rect,
+    content: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let anchor = Rect::from_min_max(
+        button.rect.min,
+        egui::pos2(button.rect.right(), tab_bar.bottom()),
+    );
+    egui::Popup::menu(button)
+        .id(main_menu_id())
+        .anchor(anchor)
+        .align(egui::RectAlign::BOTTOM_START)
+        .align_alternatives(&[])
+        .style(crate::theme::menu_style)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let frame_margin = egui::Frame::popup(ui.style()).total_margin().sum().y;
+            let available_height =
+                (ui.ctx().content_rect().bottom() - tab_bar.bottom() - frame_margin).max(0.0);
+            egui::ScrollArea::vertical()
+                .max_height(available_height)
+                .min_scrolled_height(available_height)
+                .show(ui, content)
+                .inner
+        })
 }
 
 fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
@@ -3121,6 +3144,51 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn main_menu_opens_below_the_complete_tab_bar() {
+        for (tab_height, window_height) in [(30.0, 700.0), (48.0, 700.0), (48.0, 320.0)] {
+            let ctx = egui::Context::default();
+            for frame in 0..3 {
+                let _ = crate::test_support::run(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(900.0, window_height),
+                        )),
+                        ..Default::default()
+                    },
+                    |root_ui| {
+                        let tabs = egui::Panel::top("tabs")
+                            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 6)))
+                            .show(root_ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let button = ui.add_sized([30.0, 30.0], egui::Button::new("≡"));
+                                    ui.allocate_space(Vec2::new(100.0, tab_height));
+                                    button
+                                })
+                                .inner
+                            });
+                        egui::Popup::open_id(&ctx, main_menu_id());
+                        let menu = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
+                            ui.set_min_size(Vec2::new(256.0, 450.0));
+                        })
+                        .unwrap();
+                        // The first popup frame is an invisible sizing pass.
+                        assert!(
+                            frame == 0
+                                || (menu.response.rect.top() >= tabs.response.rect.bottom()
+                                    && menu.response.rect.bottom() <= window_height),
+                            "menu {:?} overlaps tab bar {:?}",
+                            menu.response.rect,
+                            tabs.response.rect
+                        );
+                    },
+                );
+            }
+        }
     }
 
     #[test]

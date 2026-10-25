@@ -41,6 +41,50 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
+pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
+    use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
+    let size = (egui::vec2(16.0, ui.text_style_height(&TextStyle::Button))
+        + 2.0 * ui.spacing().button_padding)
+        .max(ui.spacing().interact_size);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), open, "Main menu")
+    });
+    if ui.is_rect_visible(rect) {
+        let fill = if open {
+            TAB_ACTIVE_BG
+        } else if response.hovered() || response.is_pointer_button_down_on() {
+            TAB_HOVER_BG
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, 5, fill);
+        let density = ui.ctx().pixels_per_point();
+        let width = (14.0 * density).round();
+        let thickness = density.round().max(1.0);
+        let pitch = (4.0 * density).round().max(thickness + 1.0);
+        // Snap the whole icon once: rounding three stroke centers separately can
+        // put the last stroke a pixel farther away, even at integer scale.
+        let origin = (rect.center().to_vec2() * density
+            - egui::vec2(width, 2.0 * pitch + thickness) / 2.0)
+            .round();
+        for row in 0..3 {
+            let min = (origin + egui::vec2(0.0, row as f32 * pitch)) / density;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(min.to_pos2(), egui::vec2(width, thickness) / density),
+                0,
+                if open { FG } else { TAB_INACTIVE_FG },
+            );
+        }
+    }
+    if response.hovered()
+        && let Some(cursor) = ui.visuals().interact_cursor
+    {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    response
+}
+
 pub fn tab_button(
     ui: &mut eframe::egui::Ui,
     title: &str,
@@ -139,6 +183,88 @@ pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn menu_trigger_matches_tab_ink_and_shows_its_open_state() {
+        use eframe::egui::{self, epaint::Shape};
+        for density in [1.0, 1.1, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(density);
+            ctx.set_fonts(super::chrome_fonts());
+            for open in [false, true] {
+                let mut menu_rect = egui::Rect::NOTHING;
+                let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
+                        ui.spacing_mut().interact_size.y = 30.0;
+                        menu_rect = super::menu_button(ui, open).rect;
+                        super::tab_button(ui, "nekomata", false);
+                    });
+                });
+                let lines: Vec<_> = frame
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::Rect(bar)
+                            if bar.rect != menu_rect && menu_rect.contains_rect(bar.rect) =>
+                        {
+                            Some(bar.rect)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    lines.len(),
+                    3,
+                    "menu icon must use three pixel-aligned bars"
+                );
+                let mut icon_rect = egui::Rect::NOTHING;
+                for bar in &lines {
+                    for edge in [bar.left(), bar.right(), bar.top(), bar.bottom()] {
+                        let pixels = edge * density;
+                        assert!(
+                            (pixels - pixels.round()).abs() < 0.0001,
+                            "bar edge must lie on a physical pixel boundary: density={density}, edge={pixels}"
+                        );
+                    }
+                    icon_rect = icon_rect.union(*bar);
+                }
+                let gaps: Vec<_> = lines
+                    .windows(2)
+                    .map(|pair| ((pair[1].top() - pair[0].bottom()) * density).round())
+                    .collect();
+                assert_eq!(
+                    gaps[0], gaps[1],
+                    "physical gaps must match at density={density}"
+                );
+                assert!(gaps[0] >= 1.0);
+                for bar in &lines {
+                    assert!(((bar.height() - lines[0].height()) * density).abs() < 0.0001);
+                }
+                let title_center = frame
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == "nekomata" => {
+                            Some(text.visual_bounding_rect().center().y)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(
+                    (icon_rect.center().y - title_center).abs() <= 0.5 / density,
+                    "menu icon and tab title must share their visible vertical center"
+                );
+                assert!((icon_rect.center().x - menu_rect.center().x).abs() <= 0.5 / density);
+                let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
+                    Shape::Rect(rect) if rect.rect == menu_rect && rect.fill == super::TAB_ACTIVE_BG));
+                assert_eq!(
+                    highlighted, open,
+                    "menu highlight must follow popup visibility"
+                );
+            }
+        }
+    }
+
     #[test]
     fn tab_title_ink_is_vertically_centered() {
         use eframe::egui::{self, epaint::Shape};
