@@ -534,6 +534,29 @@ mod tests {
     }
 
     #[test]
+    fn focus_pane_moves_in_every_direction_or_to_the_next_pane() {
+        use eframe::egui::{Key, Modifiers};
+        let text = r#"[keymap]
+            "f1" = { kind = "focus_pane", direction = "left" }
+            "f2" = { kind = "focus_pane", direction = "down" }
+            "f3" = { kind = "focus_pane", direction = "up" }
+            "f4" = { kind = "focus_pane", direction = "right" }
+            "f5" = { kind = "focus_pane", to = "next" }
+        "#;
+        let keys = [Key::F1, Key::F2, Key::F3, Key::F4, Key::F5].map(|key| (key, Modifiers::NONE));
+        assert_eq!(
+            press(text, &keys),
+            [
+                Action::Focus(Direction::Left),
+                Action::Focus(Direction::Down),
+                Action::Focus(Direction::Up),
+                Action::Focus(Direction::Right),
+                Action::NextPane,
+            ]
+        );
+    }
+
+    #[test]
     fn configured_sequences_replace_and_unbind_defaults() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
