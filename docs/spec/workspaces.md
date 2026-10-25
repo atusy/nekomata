@@ -72,7 +72,7 @@ connection to the nekomata daemon.
 ## CLI
 
 ```sh
-nekomata workspaces list                     # workspaces and the window each is attached to
+nekomata workspaces list                                       # workspaces and the window each is attached to
 nekomata workspaces new [--window WINDOW_ID]                   # switch a window to a new workspace
 nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]   # switch a window to this workspace
 ```
