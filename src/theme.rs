@@ -34,7 +34,7 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.override_font_id = Some(egui::FontId::proportional(ui_size(style, 14.0)));
     style.spacing.button_padding = Vec2::new(10.0, 5.0);
     style.spacing.item_spacing = Vec2::new(4.0, 2.0);
-    style.spacing.interact_size.y = MENU_ROW_HEIGHT;
+    style.spacing.interact_size.y = ui_size(style, MENU_ROW_HEIGHT);
     style.spacing.menu_margin = egui::Margin::same(6);
     style.visuals.window_fill = TAB_BAR_BG;
     style.visuals.window_stroke = Stroke::new(1.0_f32, MENU_BORDER);
@@ -228,7 +228,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
 #[cfg(test)]
 mod tests {
     #[test]
-    fn chrome_text_sizes_follow_the_configured_body() {
+    fn chrome_text_sizes_and_rows_follow_the_configured_body() {
         use eframe::egui::{FontId, Style, TextStyle};
         let mut style = Style::default();
         style
@@ -238,6 +238,7 @@ mod tests {
         assert_eq!(super::ui_size(&style, 12.0), 18.0);
         super::menu_style(&mut style);
         assert_eq!(style.override_font_id.unwrap().size, 21.0);
+        assert_eq!(style.spacing.interact_size.y, 1.5 * super::MENU_ROW_HEIGHT);
     }
 
     #[test]

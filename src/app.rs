@@ -866,7 +866,10 @@ impl App {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
             let entry = ui.add_sized(
-                [(ui.available_width() - 132.0).max(48.0), 30.0],
+                [
+                    (ui.available_width() - 132.0).max(48.0),
+                    crate::theme::ui_size(ui.style(), 30.0),
+                ],
                 egui::TextEdit::singleline(&mut pane.search_query)
                     .id_salt(("scrollback-query", tab.focused))
                     .hint_text("Search scrollback")
@@ -900,7 +903,7 @@ impl App {
             {
                 let search = pane.session.search.search.lock().unwrap();
                 let response = ui.add_sized(
-                    [40.0, 30.0],
+                    [40.0, crate::theme::ui_size(ui.style(), 30.0)],
                     egui::Label::new(if search.error.is_some() {
                         egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
                     } else if search.running {
@@ -1310,7 +1313,7 @@ impl App {
                         });
                     if self.searching() {
                         ui.allocate_ui_with_layout(
-                            Vec2::new(search_width, 30.0),
+                            Vec2::new(search_width, crate::theme::ui_size(ui.style(), 30.0)),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| self.search_bar(ui),
                         );
@@ -1370,8 +1373,9 @@ impl App {
                         .size(crate::theme::ui_size(ui.style(), 12.0)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let row = crate::theme::ui_size(ui.style(), 28.0);
                     if ui
-                        .add_sized([30.0, 28.0], egui::Button::new("+").fill(TAB_HOVER_BG))
+                        .add_sized([30.0, row], egui::Button::new("+").fill(TAB_HOVER_BG))
                         .on_hover_text("Larger text")
                         .clicked()
                     {
@@ -1382,7 +1386,7 @@ impl App {
                     }
                     if ui
                         .add_sized(
-                            [52.0, 28.0],
+                            [52.0, row],
                             egui::Button::new(format!("{:.0} pt", self.font_size))
                                 .fill(TAB_HOVER_BG),
                         )
@@ -1393,7 +1397,7 @@ impl App {
                             crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
                     }
                     if ui
-                        .add_sized([30.0, 28.0], egui::Button::new("−").fill(TAB_HOVER_BG))
+                        .add_sized([30.0, row], egui::Button::new("−").fill(TAB_HOVER_BG))
                         .on_hover_text("Smaller text")
                         .clicked()
                     {
@@ -1730,7 +1734,10 @@ fn show_tab_bar_menu<R>(
 
 fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
     ui.add_sized(
-        [ui.available_width(), crate::theme::MENU_ROW_HEIGHT],
+        [
+            ui.available_width(),
+            crate::theme::ui_size(ui.style(), crate::theme::MENU_ROW_HEIGHT),
+        ],
         egui::Button::new(label).shortcut_text(
             egui::RichText::new(shortcut)
                 .size(crate::theme::ui_size(ui.style(), 11.0))
@@ -2000,9 +2007,10 @@ fn draw_pane(
         );
     }
     if let Some(error) = &pane.links.error {
+        let height = crate::theme::ui_size(ui.style(), 32.0);
         let overlay = Rect::from_min_size(
-            text_rect.left_bottom() - Vec2::new(0.0, 32.0),
-            Vec2::new(text_rect.width(), 32.0),
+            text_rect.left_bottom() - Vec2::new(0.0, height),
+            Vec2::new(text_rect.width(), height),
         );
         painter.rect_filled(overlay, 0, BG);
         painter.text(
