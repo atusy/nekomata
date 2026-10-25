@@ -66,6 +66,8 @@ Not supported: key release events and OSC 52 clipboard reads.
 
 ## Reconnection
 
-- When the felis connection drops, nekomata reconnects to the same session.
+- When the transport to felis is lost, nekomata retries reconnecting to the
+  same session for a bounded period. When retries run out, or on any other
+  connection error, the pane shows the error.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
