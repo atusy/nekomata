@@ -61,10 +61,10 @@ means Alt+W followed by C.
 ## Rules
 
 - A user entry replaces the default binding for the same sequence.
-- Binding a single keystroke disables every default sequence that starts with
-  it. For example, binding `alt+w` removes all default `alt+w …` sequences.
-- A sequence whose first keystroke is itself bound can never complete; it is
-  ignored with a warning.
+- A sequence that starts with a shorter bound sequence can never complete and
+  is removed: silently for a default, with a warning for a user entry. For
+  example, binding `alt+w` removes every default `alt+w …` sequence, and a
+  user entry `alt+t x` is dropped unless `alt+t` is unbound.
 - `unbind` removes the sequence and every sequence that starts with it.
 - Entries are applied in byte order of their key strings. An `unbind` can
   therefore remove a user entry spelled so that it sorts earlier (for example
