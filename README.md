@@ -6,8 +6,8 @@ nekomata (猫又, the two-tailed cat) is a GUI for the felis terminal. felis
 keeps your shells alive in a daemon; nekomata arranges them in tabs and split
 panes and remembers how you left them.
 
-- **Restart without losing your place.** Quit or update the GUI, start it
-  again, and your tabs, splits and running commands are back.
+- **Restart without losing your place.** Quit the GUI or update its UI, start
+  it again, and your tabs, splits and running commands are back.
 - **Close a pane, keep the shell.** Shells live in felis, so you can attach to
   them again later, from any window.
 - **Panes from anywhere.** Point a pane at another felis daemon, locally or

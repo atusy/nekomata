@@ -4,8 +4,9 @@ A workspace is what one window shows: its tabs, how each tab is split, the
 felis session behind each pane, which tab and pane have focus, and the font
 size.
 
-The nekomata daemon, not the GUI, keeps workspaces. Quit or update the GUI,
-start it again, and your tabs, splits and running commands come back.
+The nekomata daemon, not the GUI, keeps workspaces. Quit the GUI or install
+an update that keeps the daemon protocol, start it again, and your tabs,
+splits and running commands come back.
 
 ## On startup
 
@@ -40,8 +41,11 @@ shell you moved into another workspace.
 The nekomata daemon starts on first use and keeps running after the last
 window closes. It holds workspaces in memory only.
 
-- GUI restart, update or crash: workspaces are restored (after a crash, up to
-  the last state the daemon received).
+- GUI restart, UI-only update or crash: workspaces are restored (after a
+  crash, up to the last state the daemon received). An update that changes
+  the daemon protocol requires
+  [retiring the old daemon](troubleshooting.md#nekomata-reports-an-incompatible-daemon),
+  which loses layouts.
 - nekomata daemon stop or crash: **layouts are lost**. felis shells survive,
   so you can [attach to them again](sessions.md).
 - OS restart: **layouts and shells are both lost**; felis keeps sessions in
