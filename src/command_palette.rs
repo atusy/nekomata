@@ -157,12 +157,14 @@ impl CommandPalette {
                         }
                     });
                 ui.separator();
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{} results", matches.len()))
-                            .size(12.0)
-                            .color(theme::TAB_INACTIVE_FG),
-                    );
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} results", matches.len()))
+                                .size(12.0)
+                                .color(theme::TAB_INACTIVE_FG),
+                        );
+                    });
                 });
             });
         let dismissed = response.should_close();
