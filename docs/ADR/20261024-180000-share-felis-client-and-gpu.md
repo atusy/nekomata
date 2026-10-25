@@ -68,8 +68,9 @@ adds only its application layer.
 Two pieces of terminal client policy are still nekomata's own copies:
 
 - **SSH connection and reconnection.** nekomata runs its own SSH relay and
-  retry loop instead of felis's carrier and redial, because it must keep
-  ownership of the `ssh` child process across cancellation and reconnects.
+  redials through it, instead of felis's carrier and redial, because it must
+  keep ownership of the `ssh` child process across cancellation and
+  reconnects. The retry policy itself is still felis's.
 - **Scrollback search navigation.** nekomata keeps its own result list,
   limits and viewport projection, mirroring the standalone felis GUI, because
   felis's client libraries do not expose a search model.
