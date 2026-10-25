@@ -70,9 +70,10 @@ command palette.
 
 ## Paste confirmation
 
-Pasting text that contains a newline or another control character (tabs
-excepted) into a terminal that has not enabled bracketed paste asks for
-confirmation first.
+Pasting text that contains a line break or another C0 control character
+(other than tab), such as Escape, into a terminal that has not enabled
+bracketed paste asks for confirmation first. See the
+[terminal specification](../spec/terminal.md#paste) for the exact rule.
 
 ![Paste confirmation](../images/terminal-tools-paste.png)
 
