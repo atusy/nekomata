@@ -96,6 +96,7 @@ impl CommandPalette {
             )
             .show(ctx, |ui| {
                 theme::menu_style(ui.style_mut());
+                ui.visuals_mut().weak_text_color = Some(theme::TAB_INACTIVE_FG);
                 ui.style_mut().visuals.selection.bg_fill = theme::TAB_ACTIVE_BG;
                 ui.style_mut().visuals.selection.stroke = egui::Stroke::new(1.0, theme::FG);
                 ui.set_width(width);
@@ -123,7 +124,9 @@ impl CommandPalette {
                         .font(egui::FontId::proportional(14.0))
                         .margin(egui::vec2(10.0, 7.0)),
                 );
-                search.request_focus();
+                if !search.has_focus() {
+                    search.request_focus();
+                }
                 let query = self.query.trim().to_lowercase();
                 let matches: Vec<_> = commands()
                     .into_iter()
@@ -230,5 +233,95 @@ mod tests {
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
             Some(Action::NewSession)
         );
+    }
+    #[test]
+    fn typing_filters_commands_and_resets_keyboard_selection() {
+        let ctx = egui::Context::default();
+        let mut palette = CommandPalette::default();
+        frame(&ctx, &mut palette, &[]);
+        frame(&ctx, &mut palette, &[]);
+        frame(&ctx, &mut palette, &[egui::Key::ArrowDown]);
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events: vec![egui::Event::Text(" TAB ".into())],
+                ..Default::default()
+            },
+            |ui| {
+                palette.show(ui.ctx());
+            },
+        );
+        assert_eq!(palette.query, " TAB ");
+        assert_eq!(
+            frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+            Some(Action::NewTab)
+        );
+    }
+
+    #[test]
+    fn empty_results_do_not_execute_and_escape_is_consumed() {
+        let ctx = egui::Context::default();
+        let mut palette = CommandPalette {
+            query: "no such command".into(),
+            selected: 0,
+        };
+        frame(&ctx, &mut palette, &[]);
+        assert_eq!(
+            frame(
+                &ctx,
+                &mut palette,
+                &[egui::Key::ArrowDown, egui::Key::Enter]
+            ),
+            (None, false)
+        );
+        assert_eq!(
+            frame(&ctx, &mut palette, &[egui::Key::Escape]),
+            (None, true)
+        );
+        assert!(!ctx.input(|input| input.key_pressed(egui::Key::Escape)));
+    }
+
+    #[test]
+    fn navigating_above_first_result_wraps_to_last() {
+        let ctx = egui::Context::default();
+        let mut palette = CommandPalette::default();
+        frame(&ctx, &mut palette, &[]);
+        frame(&ctx, &mut palette, &[egui::Key::ArrowUp]);
+        assert_eq!(
+            frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+            commands().pop().map(|(_, action)| action)
+        );
+    }
+
+    #[test]
+    fn palette_fits_small_and_large_viewports() {
+        for size in [egui::vec2(520.0, 320.0), egui::vec2(800.0, 600.0)] {
+            let ctx = egui::Context::default();
+            let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+            let mut palette = CommandPalette::default();
+            for _ in 0..3 {
+                let _ = crate::test_support::run(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(viewport),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        palette.show(ui.ctx());
+                    },
+                );
+            }
+            let rect = ctx
+                .memory(|memory| memory.area_rect(egui::Id::unique("command_palette")))
+                .unwrap();
+            assert!(
+                viewport.contains_rect(rect),
+                "viewport={viewport:?}, palette={rect:?}"
+            );
+        }
     }
 }
