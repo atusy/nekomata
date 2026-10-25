@@ -144,6 +144,8 @@ fn gpu_glyph_coverage_matches_srgb_composition() {
         for size in [15, 18, 36] {
             let cfg = RendererConfig {
                 font_size_physical_px: Some(size as f32),
+                theme_fg: Some(format!("#{:02x}{:02x}{:02x}", fg[0], fg[1], fg[2])),
+                theme_bg: Some(format!("#{:02x}{:02x}{:02x}", bg[0], bg[1], bg[2])),
                 ..Default::default()
             };
             let mut gpu =

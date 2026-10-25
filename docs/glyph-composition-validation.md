@@ -97,3 +97,41 @@ At implementation commit `529933c`: ordinary tests (94 passed, 18 ignored),
 clippy with warnings denied, formatting, the two Metal GPU tests, and the
 isolated live suite passed. The live runner completed its 12 primary tests,
 two SSH-carrier tests, and the pane-attachment check with the private relay.
+
+## Nix and Linux results
+
+`nix flake check` passed the aarch64-darwin package and fish checks. This command
+did not build Linux packages. The new GPU test also passed in the disposable
+Debian ARM64 guest on Vulkan / llvmpipe (Mesa 26.2.5, LLVM 21.1.8).
+The guest initially ran out of disk space while linking debug information;
+after removing this task's incremental cache, the test linked with
+`cargo rustc --locked --tests -- -C link-arg=-Wl,--strip-debug` and ran in the
+same Nix/Mesa environment. No Linux native-display acceptance is claimed.
+
+## CPU submission cost
+
+Apple M4 / Metal, release build, the existing `benchmark_gpu_submission` harness:
+100 measured frames after 10 warmup frames per workload, median milliseconds.
+The baseline build disables only the new embedded glyph pipeline; the corrected
+build enables it. The table is one sequential before/after run, after the large
+host builds finished. The harness uses its default font context, not the
+explicit UDEV font fixture above. Normal scheduling noise applies.
+
+| Panes | Grid per pane | Damage | Before ms | After ms | Difference ms |
+| --- | --- | --- | ---: | ---: | ---: |
+| 1 | 80×24 | none | 0.0027 | 0.0042 | +0.0015 |
+| 1 | 80×24 | one row | 0.0613 | 0.0814 | +0.0201 |
+| 1 | 80×24 | all rows | 0.2010 | 0.2216 | +0.0206 |
+| 1 | 200×60 | none | 0.0027 | 0.0027 | +0.0000 |
+| 1 | 200×60 | one row | 0.0685 | 0.0936 | +0.0251 |
+| 1 | 200×60 | all rows | 0.8833 | 0.9015 | +0.0182 |
+| 4 | 120×40 | none | 0.0036 | 0.0036 | +0.0000 |
+| 4 | 120×40 | one row per pane | 0.2110 | 0.3115 | +0.1005 |
+| 4 | 120×40 | all rows | 1.5828 | 1.7634 | +0.1806 |
+
+The readability change costs roughly 0.02ms for a changed single pane and
+0.18ms (11%) for the four-pane full update in this run. This measures CPU
+preparation/submission including egui tessellation, not GPU execution, final
+egui compositing, display presentation, or whole-application FPS. GPU completion
+is drained outside the measured region. The changed-frame cost is a deliberate
+trade-off; this is not a performance improvement.
