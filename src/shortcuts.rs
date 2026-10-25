@@ -529,6 +529,36 @@ mod tests {
     }
 
     #[test]
+    fn default_alt_w_sequences_split_close_and_focus() {
+        let mut events = vec![];
+        for (key, modifiers) in [
+            (Key::S, Modifiers::ALT),
+            (Key::V, Modifiers::ALT),
+            (Key::C, Modifiers::NONE),
+            (Key::H, Modifiers::NONE),
+            (Key::J, Modifiers::NONE),
+            (Key::K, Modifiers::NONE),
+            (Key::L, Modifiers::NONE),
+        ] {
+            events.extend([press(Key::W, Modifiers::ALT), press(key, modifiers)]);
+        }
+        let (actions, remaining) = consume_events(events);
+        assert_eq!(
+            actions,
+            vec![
+                Action::Split(Axis::Vertical),
+                Action::Split(Axis::Horizontal),
+                Action::ClosePane,
+                Action::Focus(Direction::Left),
+                Action::Focus(Direction::Down),
+                Action::Focus(Direction::Up),
+                Action::Focus(Direction::Right),
+            ]
+        );
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
     fn prefix_survives_frames_and_consumes_option_text() {
         let ctx = eframe::egui::Context::default();
         let mut shortcuts = Shortcuts::default();
