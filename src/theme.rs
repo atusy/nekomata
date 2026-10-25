@@ -42,23 +42,40 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
 }
 
 pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
-    use eframe::egui::{Color32, CornerRadius, Stroke};
-    ui.scope(|ui| {
-        let widgets = &mut ui.visuals_mut().widgets;
-        widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-        widgets.hovered.weak_bg_fill = TAB_HOVER_BG;
-        widgets.active.weak_bg_fill = TAB_HOVER_BG;
-        for state in [
-            &mut widgets.inactive,
-            &mut widgets.hovered,
-            &mut widgets.active,
-        ] {
-            state.corner_radius = CornerRadius::same(5);
-            state.bg_stroke = Stroke::NONE;
+    use eframe::egui::{self, Sense, Stroke, TextStyle, WidgetInfo};
+    let size = (egui::vec2(16.0, ui.text_style_height(&TextStyle::Button))
+        + 2.0 * ui.spacing().button_padding)
+        .max(ui.spacing().interact_size);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), open, "Main menu")
+    });
+    if ui.is_rect_visible(rect) {
+        let fill = if open {
+            TAB_ACTIVE_BG
+        } else if response.hovered() || response.is_pointer_button_down_on() {
+            TAB_HOVER_BG
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, 5, fill);
+        let stroke = Stroke::new(1.0, if open { FG } else { TAB_INACTIVE_FG });
+        for offset in [-4.0, 0.0, 4.0] {
+            ui.painter().line_segment(
+                [
+                    rect.center() + egui::vec2(-7.0, offset),
+                    rect.center() + egui::vec2(7.0, offset),
+                ],
+                stroke,
+            );
         }
-        tab_button(ui, "≡", open)
-    })
-    .inner
+    }
+    if response.hovered()
+        && let Some(cursor) = ui.visuals().interact_cursor
+    {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    response
 }
 
 pub fn tab_button(
@@ -176,22 +193,38 @@ mod tests {
                         super::tab_button(ui, "nekomata", false);
                     });
                 });
-                let ink_center = |label| {
-                    frame
-                        .shapes
-                        .iter()
-                        .find_map(|shape| match &shape.shape {
-                            Shape::Text(text) if text.galley.job.text == label => {
-                                Some(text.visual_bounding_rect().center().y)
-                            }
-                            _ => None,
-                        })
-                        .unwrap()
-                };
+                let lines: Vec<_> = frame
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        Shape::LineSegment { points, .. } if menu_rect.contains(points[0]) => {
+                            Some(*points)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(lines.len(), 3, "menu icon must use three drawn lines");
+                let mut icon_rect = egui::Rect::NOTHING;
+                for line in &lines {
+                    assert_eq!(line[0].y, line[1].y, "menu strokes must be horizontal");
+                    icon_rect.extend_with(line[0]);
+                    icon_rect.extend_with(line[1]);
+                }
+                let title_center = frame
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.job.text == "nekomata" => {
+                            Some(text.visual_bounding_rect().center().y)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
                 assert!(
-                    (ink_center("≡") - ink_center("nekomata")).abs() <= 0.5 / density,
+                    (icon_rect.center().y - title_center).abs() <= 0.5 / density,
                     "menu icon and tab title must share their visible vertical center"
                 );
+                assert_eq!(icon_rect.center().x, menu_rect.center().x);
                 let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
                     Shape::Rect(rect) if rect.rect == menu_rect && rect.fill == super::TAB_ACTIVE_BG));
                 assert_eq!(
