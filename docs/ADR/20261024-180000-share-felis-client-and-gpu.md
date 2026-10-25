@@ -36,8 +36,7 @@ adds only its application layer.
 - Reconnecting a pane never spawns a replacement shell and never replays input
   whose delivery is uncertain. Either would run commands the user did not
   issue, or issued once.
-- Closing a pane detaches its felis session explicitly; it does not end the
-  shell.
+- Closing a pane detaches from its felis session; it never ends the shell.
 - Keystrokes reach felis in the order they were typed, through bounded
   queues: a stalled connection must not grow memory without limit.
 - Drawing, mouse input and IME share one coordinate system per pane, so what
