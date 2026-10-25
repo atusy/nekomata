@@ -65,7 +65,12 @@ impl CommandPalette {
         let viewport = ctx.content_rect();
         let top = (viewport.height() * 0.12).min(64.0);
         let width = (viewport.width() - 48.0).clamp(100.0, theme::PALETTE_WIDTH);
-        let list_height = (viewport.height() - top - 88.0).clamp(32.0, theme::PALETTE_LIST_HEIGHT);
+        let style = ctx.global_style();
+        let row_height = theme::ui_size(&style, theme::PALETTE_ROW_HEIGHT);
+        let list_height = (viewport.height() - top - 88.0).clamp(
+            row_height,
+            theme::ui_size(&style, theme::PALETTE_LIST_HEIGHT),
+        );
         let mut chosen = None;
         let id = egui::Id::unique("command_palette");
         let response = egui::Modal::new(id)
@@ -93,7 +98,7 @@ impl CommandPalette {
                 ui.style_mut().visuals.selection.stroke = egui::Stroke::new(1.0, theme::FG);
                 ui.set_width(width);
                 let search = ui.add_sized(
-                    [width, 32.0],
+                    [width, row_height],
                     egui::TextEdit::singleline(&mut self.query)
                         .hint_text("Search commands…")
                         .font(egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)))
@@ -135,7 +140,7 @@ impl CommandPalette {
                         for (index, (label, action)) in matches.iter().enumerate() {
                             let selected = index == self.selected;
                             let row = ui.add_sized(
-                                [ui.available_width(), theme::PALETTE_ROW_HEIGHT],
+                                [ui.available_width(), row_height],
                                 egui::Button::new(*label)
                                     .shortcut_text(hints.get(action))
                                     .selected(selected),
