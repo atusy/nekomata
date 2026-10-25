@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | proposed |
+| Status | accepted |
 | Date | 2026-10-25 |
 | Decision-makers | atusy |
 
