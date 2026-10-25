@@ -19,22 +19,24 @@ Your workspace layouts are lost, but your shells keep running in felis;
 
 Restarting the GUI does not restart the felis daemon, which owns your shells.
 Ask the running daemon to replace itself with the felis bundled with
-nekomata, keeping every session:
+nekomata, keeping every session. Run this in the nekomata clone you installed
+from, so that you get the felis revision your nekomata is pinned to:
 
 ```sh
-nix develop github:atusy/nekomata --command felis daemon upgrade
+nix develop --command felis daemon upgrade
 ```
 
 If the daemon refuses, have it stop once your last shell exits, then start
 nekomata again:
 
 ```sh
-nix develop github:atusy/nekomata --command felis daemon stop --when-empty
+nix develop --command felis daemon stop --when-empty
 ```
 
-`nix develop` provides the felis revision nekomata is pinned to, at the cost
-of downloading the development environment; use it rather than another felis
-on your `PATH`.
+If you installed with `nix profile`, use the same flake reference instead,
+for example `nix develop github:atusy/nekomata --command …`. `nix develop`
+downloads the development environment; prefer it over another felis on your
+`PATH`, which may be a different revision.
 
 ## macOS asks for permissions in another app's name
 
@@ -56,8 +58,10 @@ Dock so that nekomata starts the daemon.
   warnings there; to check felis's file as nekomata reads it, run:
 
   ```sh
-  nix develop github:atusy/nekomata --command felis config check --client nekomata
+  nix develop --command felis config check --client nekomata
   ```
+
+  (in your nekomata clone, or with the flake reference you installed from).
 
 ## Layouts are gone
 
