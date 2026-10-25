@@ -79,7 +79,8 @@ in felis's `[keymap]`.
 ## When something is wrong
 
 - In nekomata's file, a mistyped key or an unusable value prints a warning on
-  standard error and is skipped; the rest of the file still applies.
+  standard error and is skipped, or, for an out-of-range size, clamped; the
+  rest of the file still applies.
 - In felis's file, such mistakes are silently ignored by nekomata; check the
   file with `felis config check --client nekomata` (see
   [Troubleshooting](troubleshooting.md#a-setting-has-no-effect)).
