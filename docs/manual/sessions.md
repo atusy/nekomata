@@ -42,8 +42,10 @@ nekomata panes attach --ssh dev-server --daemon /run/user/1000/felis.sock --sess
 - Splitting an SSH pane creates the new shell on the same host. New tabs use
   the local daemon.
 
-Run from a nekomata shell, these act on that shell's window. If several GUIs
-are running and the window is ambiguous, add `--window WINDOW_ID`.
+Run from a nekomata shell, these act on the window showing that shell's
+workspace. Add `--window WINDOW_ID` to pick a window explicitly — for example
+when several GUIs are running, or for a shell you moved into another
+workspace, which still points at the workspace it was started in.
 
 ## Preparing an SSH host
 
