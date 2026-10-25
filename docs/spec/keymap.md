@@ -84,3 +84,14 @@ means Alt+W followed by C.
   - characters egui does not treat as keys, such as `é`.
 - Copy, paste, font size, scrolling and search are terminal actions and are
   bound in felis's keymap, not here.
+
+## Clipboard events
+
+The window delivers Cmd+X / Cmd+C / Cmd+V on macOS, and Ctrl+X / Ctrl+C /
+Ctrl+V elsewhere, without Alt or Shift, as clipboard events rather than key
+presses, so neither keymap ever sees them and binding them has no effect.
+
+- On macOS, Cmd+C copies the selection and Cmd+V pastes (with the paste
+  confirmation rules of [terminal](terminal.md#paste)); Cmd+X does nothing.
+- Elsewhere, Ctrl+C, Ctrl+X and Ctrl+V are sent to the terminal program as
+  the control bytes 0x03, 0x18 and 0x16.
