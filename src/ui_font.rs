@@ -19,7 +19,7 @@ pub struct Face {
     pub index: u32,
 }
 
-/// The platform's UI text size, when it has one.
+/// The platform's UI text size, or 15 px where the platform reports none.
 pub fn default_size_px() -> f32 {
     system_size_px().unwrap_or(FALLBACK_SIZE_PX)
 }
