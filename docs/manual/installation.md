@@ -67,8 +67,9 @@ again where asked.
 
 ## Shells
 
-- From the app, new shells start in your home directory. From a terminal, they
-  start in the directory you ran `nekomata` from.
+- New tabs start in the directory you ran `nekomata` from, or in your home
+  directory when you launch the macOS app. Splits start in the directory of
+  the pane you split, when its shell reports it (OSC 7).
 - On macOS shells start as login shells (`$SHELL -l`), so zsh reads
   `.zprofile` and friends.
 - Changes to your shell configuration apply to new sessions. A reattached
