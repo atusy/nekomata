@@ -66,10 +66,10 @@ impl CommandPalette {
         let top = (viewport.height() * 0.12).min(64.0);
         let width = (viewport.width() - 48.0).clamp(100.0, theme::PALETTE_WIDTH);
         let style = ctx.global_style();
-        let row_height = theme::ui_size(&style, theme::PALETTE_ROW_HEIGHT);
+        let row_height = theme::ui_extent(&style, theme::PALETTE_ROW_HEIGHT);
         let list_height = (viewport.height() - top - 88.0).clamp(
             row_height,
-            theme::ui_size(&style, theme::PALETTE_LIST_HEIGHT),
+            theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT),
         );
         let mut chosen = None;
         let id = egui::Id::unique("command_palette");
