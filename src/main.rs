@@ -92,6 +92,10 @@ fn native_options() -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("nekomata")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../share/icons/nekomata.png"))
+                    .expect("bundled application icon is valid PNG"),
+            )
             .with_inner_size([1100.0, 740.0])
             .with_min_inner_size([480.0, 320.0]),
         ..Default::default()

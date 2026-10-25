@@ -62,23 +62,33 @@ pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Respo
             Color32::TRANSPARENT
         };
         ui.painter().rect_filled(rect, 5, fill);
-        let density = ui.ctx().pixels_per_point();
-        let width = (14.0 * density).round();
-        let thickness = density.round().max(1.0);
-        let pitch = (4.0 * density).round().max(thickness + 1.0);
-        // Snap the whole icon once: rounding three stroke centers separately can
-        // put the last stroke a pixel farther away, even at integer scale.
-        let origin = (rect.center().to_vec2() * density
-            - egui::vec2(width, 2.0 * pitch + thickness) / 2.0)
-            .round();
-        for row in 0..3 {
-            let min = (origin + egui::vec2(0.0, row as f32 * pitch)) / density;
-            ui.painter().rect_filled(
-                egui::Rect::from_min_size(min.to_pos2(), egui::vec2(width, thickness) / density),
-                0,
-                if open { FG } else { TAB_INACTIVE_FG },
-            );
-        }
+        let texture_id = egui::Id::unique("nekomata-menu-icon");
+        let texture = ui
+            .ctx()
+            .data(|data| data.get_temp::<egui::TextureHandle>(texture_id))
+            .unwrap_or_else(|| {
+                let icon =
+                    eframe::icon_data::from_png_bytes(include_bytes!("../share/icons/menu.png"))
+                        .expect("bundled menu icon is valid PNG");
+                let texture = ui.ctx().load_texture(
+                    "nekomata-menu-icon",
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [icon.width as usize, icon.height as usize],
+                        &icon.rgba,
+                    ),
+                    egui::TextureOptions::LINEAR,
+                );
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(texture_id, texture.clone()));
+                texture
+            });
+        let side = ui_size(ui.style(), 20.0).min(rect.height());
+        ui.painter().image(
+            texture.id(),
+            egui::Rect::from_center_size(rect.center(), egui::vec2(side, side)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            if open { FG } else { TAB_INACTIVE_FG },
+        );
     }
     if response.hovered()
         && let Some(cursor) = ui.visuals().interact_cursor
@@ -203,46 +213,24 @@ mod tests {
                         super::tab_button(ui, "nekomata", false);
                     });
                 });
-                let lines: Vec<_> = frame
+                let icons: Vec<_> = frame
                     .shapes
                     .iter()
                     .filter_map(|shape| match &shape.shape {
-                        Shape::Rect(bar)
-                            if bar.rect != menu_rect && menu_rect.contains_rect(bar.rect) =>
-                        {
-                            Some(bar.rect)
+                        Shape::Mesh(mesh) if menu_rect.contains_rect(mesh.calc_bounds()) => {
+                            Some(mesh)
                         }
                         _ => None,
                     })
                     .collect();
-                assert_eq!(
-                    lines.len(),
-                    3,
-                    "menu icon must use three pixel-aligned bars"
-                );
-                let mut icon_rect = egui::Rect::NOTHING;
-                for bar in &lines {
-                    for edge in [bar.left(), bar.right(), bar.top(), bar.bottom()] {
-                        let pixels = edge * density;
-                        assert!(
-                            (pixels - pixels.round()).abs() < 0.0001,
-                            "bar edge must lie on a physical pixel boundary: density={density}, edge={pixels}"
-                        );
-                    }
-                    icon_rect = icon_rect.union(*bar);
-                }
-                let gaps: Vec<_> = lines
-                    .windows(2)
-                    .map(|pair| ((pair[1].top() - pair[0].bottom()) * density).round())
-                    .collect();
-                assert_eq!(
-                    gaps[0], gaps[1],
-                    "physical gaps must match at density={density}"
-                );
-                assert!(gaps[0] >= 1.0);
-                for bar in &lines {
-                    assert!(((bar.height() - lines[0].height()) * density).abs() < 0.0001);
-                }
+                assert_eq!(icons.len(), 1, "menu must show the nekomata image");
+                let icon_rect = icons[0].calc_bounds();
+                assert!(icons[0].vertices.iter().all(|vertex| vertex.color
+                    == if open {
+                        super::FG
+                    } else {
+                        super::TAB_INACTIVE_FG
+                    }));
                 let title_center = frame
                     .shapes
                     .iter()
