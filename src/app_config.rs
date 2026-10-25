@@ -39,7 +39,8 @@ fn path() -> Option<PathBuf> {
 }
 
 /// A missing file means defaults; an unreadable or malformed one fails.
-fn read(path: &Path) -> anyhow::Result<(AppConfig, Warnings)> {
+/// `warnings` keeps what was found before a failure, too.
+fn read(path: &Path, warnings: &mut Warnings) -> anyhow::Result<AppConfig> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -47,39 +48,40 @@ fn read(path: &Path) -> anyhow::Result<(AppConfig, Warnings)> {
         }
         Err(error) => anyhow::bail!("cannot read {}: {error}", path.display()),
     };
-    parse(&text).map_err(|error| anyhow::anyhow!("config {} is invalid: {error}", path.display()))
+    parse(&text, warnings)
+        .map_err(|error| anyhow::anyhow!("config {} is invalid: {error}", path.display()))
 }
 
 pub fn load() -> anyhow::Result<AppConfig> {
     let Some(path) = path() else {
         return Ok(Default::default());
     };
-    let (config, warnings) = read(&path)?;
+    let mut warnings = Warnings::new();
+    let config = read(&path, &mut warnings);
+    // Report warnings even when the document fails, so one launch shows
+    // every problem found before the error.
     for warning in warnings {
         eprintln!("nekomata: {}: {warning}", path.display());
     }
-    Ok(config)
+    config
 }
 
 /// Unknown keys and unusable values warn; a value of the wrong shape is an
 /// error, as in felis's document.
-fn parse(text: &str) -> Result<(AppConfig, Warnings), String> {
+fn parse(text: &str, warnings: &mut Warnings) -> Result<AppConfig, String> {
     let root: toml::Table = text.parse().map_err(|error| format!("{error}"))?;
     let mut config = AppConfig::default();
-    let mut warnings = Warnings::new();
     for (key, value) in &root {
         match key.as_str() {
-            "appearance" => {
-                parse_appearance(table(value, "appearance")?, &mut config, &mut warnings)?
-            }
+            "appearance" => parse_appearance(table(value, "appearance")?, &mut config, warnings)?,
             "keymap" => {
-                let entries = parse_keymap(table(value, "keymap")?, &mut warnings);
-                config.keymap.apply(entries, &mut warnings);
+                let entries = parse_keymap(table(value, "keymap")?, warnings);
+                config.keymap.apply(entries, warnings);
             }
             _ => warnings.push(format!("unknown key `{key}`")),
         }
     }
-    Ok((config, warnings))
+    Ok(config)
 }
 
 fn parse_appearance(
@@ -293,11 +295,17 @@ fn table<'a>(value: &'a toml::Value, path: &str) -> Result<&'a toml::Table, Stri
 mod tests {
     use super::*;
 
+    /// The document with the warnings it produced.
+    fn parse(text: &str) -> Result<(AppConfig, Warnings), String> {
+        let mut warnings = Warnings::new();
+        super::parse(text, &mut warnings).map(|config| (config, warnings))
+    }
+
     #[test]
     fn a_missing_file_is_the_default_config() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
-            read(&dir.path().join("config.toml")).unwrap(),
+            read(&dir.path().join("config.toml"), &mut Warnings::new()).unwrap(),
             Default::default()
         );
     }
@@ -394,11 +402,19 @@ mod tests {
     }
 
     #[test]
+    fn warnings_found_before_a_structural_error_are_kept() {
+        let mut warnings = Warnings::new();
+        let text = "[appearance]\nalpha = 1\n[appearance.base.font]\nfamily = 1";
+        assert!(super::parse(text, &mut warnings).is_err());
+        assert_eq!(warnings, ["unknown key `appearance.alpha`"]);
+    }
+
+    #[test]
     fn an_invalid_file_names_its_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[appearance").unwrap();
-        let error = read(&path).unwrap_err().to_string();
+        let error = read(&path, &mut Warnings::new()).unwrap_err().to_string();
         assert!(error.contains(&path.display().to_string()), "{error}");
     }
 
