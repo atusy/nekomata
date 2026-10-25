@@ -194,24 +194,7 @@ impl App {
         style.visuals.window_stroke = Stroke::new(1.0_f32, crate::theme::MENU_BORDER);
         style.visuals.window_corner_radius = egui::CornerRadius::same(8);
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
-        // Application chrome uses egui fonts with a system CJK fallback.
-        let mut fonts = egui::FontDefinitions::default();
-        let candidates = [
-            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        ];
-        for path in candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("cjk".into(), egui::FontData::from_owned(bytes).into());
-                for kind in [egui::FontFamily::Monospace, egui::FontFamily::Proportional] {
-                    fonts.families.entry(kind).or_default().push("cjk".into());
-                }
-                break;
-            }
-        }
-        cc.egui_ctx.set_fonts(fonts);
+        cc.egui_ctx.set_fonts(crate::theme::chrome_fonts());
         crate::render::initialize(cc)?;
         Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
     }

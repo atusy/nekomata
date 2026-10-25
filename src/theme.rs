@@ -40,3 +40,96 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.active.weak_bg_fill = TAB_HOVER_BG;
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
+
+/// Application fonts are independent of terminal configuration.
+pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
+    use eframe::egui::{FontData, FontDefinitions, FontFamily};
+    let mut fonts = FontDefinitions::default();
+    for path in [
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert("cjk".into(), FontData::from_owned(bytes).into());
+            // Use one face for both Japanese and Latin in titles. Mixing a
+            // Latin primary with this taller fallback shifts CJK baselines.
+            fonts
+                .families
+                .entry(FontFamily::Proportional)
+                .or_default()
+                .insert(0, "cjk".into());
+            fonts
+                .families
+                .entry(FontFamily::Monospace)
+                .or_default()
+                .push("cjk".into());
+            break;
+        }
+    }
+    // Spinner titles can contain Braille, which neither the default egui
+    // fonts nor the CJK face necessarily covers.
+    for path in [
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert("symbols".into(), FontData::from_owned(bytes).into());
+            for kind in [FontFamily::Monospace, FontFamily::Proportional] {
+                fonts
+                    .families
+                    .entry(kind)
+                    .or_default()
+                    .push("symbols".into());
+            }
+            break;
+        }
+    }
+    fonts
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tab_titles_cover_braille_spinners_and_japanese() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts());
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            assert!(ui.fonts_mut(|fonts| fonts.has_glyphs(
+                &egui::FontId::proportional(14.0),
+                "⠇ 確認する felis設定の読み込み | nekomata"
+            )));
+        });
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tab_titles_share_a_baseline_across_japanese_and_latin() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts());
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            let galley = ui.painter().layout_no_wrap(
+                "H確f認".into(),
+                egui::FontId::proportional(14.0),
+                egui::Color32::WHITE,
+            );
+            let glyphs = &galley.rows[0].glyphs;
+            let baseline = glyphs[0].pos.y;
+            for glyph in glyphs {
+                assert!(
+                    (glyph.pos.y - baseline).abs() <= 0.5,
+                    "{} is off baseline: {} vs {}",
+                    glyph.chr,
+                    glyph.pos.y,
+                    baseline
+                );
+            }
+        });
+    }
+}
