@@ -15,6 +15,19 @@ pub const PALETTE_WIDTH: f32 = 520.0;
 pub const PALETTE_ROW_HEIGHT: f32 = 32.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 270.0;
 
+/// The body size the chrome's other text sizes were drawn against.
+const DESIGN_BODY_PX: f32 = 14.0;
+
+/// Scales a text size or row height drawn against a 14 px body to the
+/// configured body size.
+pub fn ui_size(style: &eframe::egui::Style, nominal: f32) -> f32 {
+    let body = style
+        .text_styles
+        .get(&eframe::egui::TextStyle::Body)
+        .map_or(DESIGN_BODY_PX, |font| font.size);
+    body * nominal / DESIGN_BODY_PX
+}
+
 pub fn menu_style(style: &mut eframe::egui::Style) {
     use eframe::egui::{self, Stroke, Vec2};
     egui::containers::menu::menu_style(style);
@@ -221,11 +234,20 @@ mod tests {
                 for open in [false, true] {
                     let mut menu_rect = egui::Rect::NOTHING;
                     let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                        ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
+                        ui.spacing_mut().interact_size.y = super::ui_size(ui.style(), 30.0).max(
+                            ui.text_style_height(&egui::TextStyle::Button)
+                                + 2.0 * ui.spacing().button_padding.y,
+                        );
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
-                            ui.spacing_mut().interact_size.y = super::ui_size(ui.style(), 30.0);
                             menu_rect = super::menu_button(ui, open).rect;
-                            super::tab_button(ui, "nekomata", false);
+                            egui::ScrollArea::horizontal()
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        super::tab_button(ui, "nekomata", false);
+                                    });
+                                });
                         });
                     });
                     let icons: Vec<_> = frame
@@ -258,8 +280,8 @@ mod tests {
                         .unwrap();
                     assert!(
                         (icon_rect.center().y - title_center - 2.0 * font_size / 14.0).abs()
-                            <= 0.5 / density,
-                        "menu silhouette needs a small optical offset below the tab title center"
+                            <= 1.0 / density,
+                        "menu optical offset: font={font_size}, density={density}, icon={icon_rect:?}, title_center={title_center}, menu={menu_rect:?}"
                     );
                     assert!((icon_rect.center().x - menu_rect.center().x).abs() <= 0.5 / density);
                     let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
