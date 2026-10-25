@@ -66,7 +66,9 @@ enum FaceRef {
     /// fontconfig's face index; on macOS only tests list through it.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     Index(u32),
-    /// CoreText names faces, not their position in a collection.
+    /// CoreText names faces, not their position in a collection; elsewhere
+    /// only tests list through it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     PostScript(String),
 }
 
