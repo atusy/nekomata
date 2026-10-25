@@ -257,6 +257,10 @@ mod fontconfig {
             }
             (lib.FcPatternAddString)(pattern, FC_FAMILY.as_ptr(), name.as_ptr().cast());
             let objects = (lib.FcObjectSetCreate)();
+            if objects.is_null() {
+                (lib.FcPatternDestroy)(pattern);
+                return found;
+            }
             (lib.FcObjectSetAdd)(objects, FC_FILE.as_ptr());
             (lib.FcObjectSetAdd)(objects, FC_INDEX.as_ptr());
             let set = (lib.FcFontList)(config.unwrap_or(std::ptr::null_mut()), pattern, objects);
