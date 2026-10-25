@@ -75,8 +75,8 @@ again where asked.
 ## Shells
 
 - New tabs start in the directory you ran `nekomata` from, or in your home
-  directory when you launch the macOS app. Splits start in the directory of
-  the pane you split, when its shell reports it (OSC 7).
+  directory when you launch the macOS app. Splits of a local pane start in
+  the directory of the pane you split, when its shell reports it (OSC 7).
 - On macOS shells start as login shells (`$SHELL -l`), so zsh reads
   `.zprofile` and friends.
 - Changes to your shell configuration apply to new sessions. A reattached
