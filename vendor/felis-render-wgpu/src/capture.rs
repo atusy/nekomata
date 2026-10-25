@@ -60,9 +60,19 @@ impl Renderer {
             dimension: TextureDimension::D2,
             format,
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC,
-            view_formats: &[],
+            view_formats: if self.fg_gamma_pipeline.is_some() {
+                &[wgpu::TextureFormat::Rgba8Unorm]
+            } else {
+                &[]
+            },
         });
         let view = texture.create_view(&TextureViewDescriptor::default());
+        let glyph_view = self.fg_gamma_pipeline.as_ref().map(|_| {
+            texture.create_view(&TextureViewDescriptor {
+                format: Some(wgpu::TextureFormat::Rgba8Unorm),
+                ..Default::default()
+            })
+        });
         let staging = self.device.create_buffer(&BufferDescriptor {
             label: Some("felis frame capture staging"),
             size: u64::from(padded_row) * u64::from(height),
@@ -75,7 +85,7 @@ impl Renderer {
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("felis frame capture encoder"),
             });
-        self.encode_cell_pass(&mut encoder, &view, counts);
+        self.encode_cell_pass(&mut encoder, &view, glyph_view.as_ref(), counts);
         encoder.copy_texture_to_buffer(
             TexelCopyTextureInfo {
                 texture: &texture,

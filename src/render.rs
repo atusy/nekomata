@@ -413,3 +413,7 @@ mod tests {
 #[cfg(test)]
 #[path = "../tests/support/gpu_benchmark.rs"]
 mod benchmark;
+
+#[cfg(test)]
+#[path = "../tests/support/glyph_rendering.rs"]
+mod glyph_rendering;
