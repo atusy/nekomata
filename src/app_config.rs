@@ -4,8 +4,12 @@ use std::path::{Path, PathBuf};
 use crate::layout::{Axis, Direction};
 use crate::shortcuts::{Action, AppKeymap};
 use felis_client_core::Chord;
+use felis_client_core::config::{MAX_FONT_SIZE_LOGICAL_PX, MIN_FONT_SIZE_LOGICAL_PX};
 
-const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 4.0..=72.0;
+/// The terminal's size limits, so one number means the same in both
+/// documents.
+const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> =
+    MIN_FONT_SIZE_LOGICAL_PX..=MAX_FONT_SIZE_LOGICAL_PX;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct AppConfig {
@@ -128,9 +132,10 @@ fn parse_font(font: &toml::Table, out: &mut UiFont, warnings: &mut Warnings) -> 
                     ));
                     None
                 } else if !FONT_SIZE_RANGE.contains(&size) {
-                    let clamped = size.clamp(*FONT_SIZE_RANGE.start(), *FONT_SIZE_RANGE.end());
+                    let (min, max) = (*FONT_SIZE_RANGE.start(), *FONT_SIZE_RANGE.end());
+                    let clamped = size.clamp(min, max);
                     warnings.push(format!(
-                        "`{PATH}.size_px` = {size} is outside [4, 72]; using {clamped}"
+                        "`{PATH}.size_px` = {size} is outside [{min}, {max}]; using {clamped}"
                     ));
                     Some(clamped)
                 } else {
