@@ -1,8 +1,15 @@
 # Installation
 
 nekomata is distributed as a Nix flake, so you need Nix with flakes enabled.
-It supports `aarch64-darwin`, `x86_64-linux` and `aarch64-linux`. On Linux the
-GUI needs X11 or Wayland, and OpenGL.
+The flake builds for `aarch64-darwin`, `x86_64-linux` and `aarch64-linux`. On
+Linux the GUI needs X11 or Wayland, and a Vulkan-capable GPU driver; the
+terminal renderer refuses adapters without compatible texture views.
+
+Day-to-day development and testing happen on macOS (Apple silicon). Linux has
+been checked only in a virtual machine (X11, software Vulkan): images, palette
+changes, input and copying from a selection. On macOS, keyboard input and
+selection, native IME, high-DPI displays and mouse use in TUIs still need
+broader checking.
 
 The felis daemon ships in the same package and starts automatically on first
 connection; you do not install it separately.
