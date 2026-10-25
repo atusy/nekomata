@@ -171,7 +171,7 @@ flake の対象は `aarch64-darwin`、`x86_64-linux`、`aarch64-linux` です。
 
 ## 端末共通のキー操作
 
-端末共通のキー操作にはfelisのキーマップを使い、タブ・分割の `Alt+W` 系操作はnekomataが扱います。修飾キーなしの `End` はシェルやTUIへ送ります。履歴の先頭・末尾への移動は、コマンドパレットの `Scroll to oldest output` / `Scroll to live output` からも実行できます。
+端末共通のキー操作にはfelisのキーマップを使い、タブ・分割の操作（既定は `Alt+W` 系）は nekomata の `[keymap]` が扱います。修飾キーなしの `End` はシェルやTUIへ送ります。履歴の先頭・末尾への移動は、コマンドパレットの `Scroll to oldest output` / `Scroll to live output` からも実行できます。
 
 `Previous prompt` / `Next prompt` はコマンドパレットからも実行できます。プロンプト移動には、**シェルがOSC 133のプロンプト境界を通知すること**が必要です。
 
