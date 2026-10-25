@@ -5,11 +5,12 @@ The flake builds for `aarch64-darwin`, `x86_64-linux` and `aarch64-linux`. On
 Linux the GUI needs X11 or Wayland, and a Vulkan-capable GPU driver; the
 terminal renderer refuses adapters without compatible texture views.
 
-Day-to-day development and testing happen on macOS (Apple silicon). Linux has
-been checked only in a virtual machine (X11, software Vulkan): images, palette
-changes, input and copying from a selection. On macOS, keyboard input and
-selection, native IME, high-DPI displays and mouse use in TUIs still need
-broader checking.
+nekomata is developed on macOS (Apple silicon). Linux has been checked only in
+a virtual machine (X11, software Vulkan), covering images, palette changes,
+input and copying from a selection. Native IME, high-DPI displays and mouse
+use in TUIs have had the least testing with the current GPU renderer on either
+platform; see the [validation reports](../native-rendering-validation.md) for
+what has been checked.
 
 The felis daemon ships in the same package and starts automatically on first
 connection; you do not install it separately.
