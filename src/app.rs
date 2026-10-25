@@ -1319,6 +1319,7 @@ impl App {
                 })
                 .inner
             });
+        let hints = self.shortcuts.hints();
         let menu_open = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
             ui.set_width(crate::theme::MENU_WIDTH);
             for (label, command) in [
@@ -1326,23 +1327,19 @@ impl App {
                 ("New workspace", Action::NewWorkspace),
                 ("Switch workspace…", Action::OpenWorkspaces),
             ] {
-                if menu_item(ui, label, "").clicked() {
+                if menu_item(ui, label, hints.get(&command)).clicked() {
                     action = Some(command);
                     ui.close();
                 }
             }
             menu_separator(ui);
-            for (label, shortcut, command) in [
-                ("New tab", "Alt+C", Action::NewTab),
-                (
-                    "Split right",
-                    "Alt+W  Alt+V",
-                    Action::Split(Axis::Horizontal),
-                ),
-                ("Split below", "Alt+W  Alt+S", Action::Split(Axis::Vertical)),
-                ("Next pane", "", Action::NextPane),
+            for (label, command) in [
+                ("New tab", Action::NewTab),
+                ("Split right", Action::Split(Axis::Horizontal)),
+                ("Split below", Action::Split(Axis::Vertical)),
+                ("Next pane", Action::NextPane),
             ] {
-                if menu_item(ui, label, shortcut).clicked() {
+                if menu_item(ui, label, hints.get(&command)).clicked() {
                     action = Some(command);
                     ui.close();
                 }
@@ -1352,11 +1349,11 @@ impl App {
                 ui.close();
             }
             menu_separator(ui);
-            for (label, shortcut, command) in [
-                ("Close pane", "Alt+W  C", Action::ClosePane),
-                ("Close tab", "", Action::CloseTab),
+            for (label, command) in [
+                ("Close pane", Action::ClosePane),
+                ("Close tab", Action::CloseTab),
             ] {
-                if menu_item(ui, label, shortcut)
+                if menu_item(ui, label, hints.get(&command))
                     .on_hover_text("Detach; keep the shell running")
                     .clicked()
                 {
@@ -1515,14 +1512,36 @@ impl App {
             self.add_tab(ctx, Some(id));
         }
         if self.help {
+            let hints = self.shortcuts.hints();
             egui::Window::new("About nekomata").open(&mut self.help).show(ctx, |ui| {
-                ui.label("Alt+C: new tab · Alt+T / Alt+Shift+T: next / previous tab");
-                ui.label("Alt+W, then Alt+S / Alt+V: split top/bottom / left/right");
-                ui.label("Alt+W, then C: close pane · H/J/K/L: focus left/down/up/right");
+                // Two spaces separate a sequence's chords; "—" is unbound.
+                let key = |action| match hints.get(&action) {
+                    "" => "—",
+                    text => text,
+                };
+                ui.label(format!(
+                    "{}: new tab · {} / {}: next / previous tab",
+                    key(Action::NewTab),
+                    key(Action::NextTab),
+                    key(Action::PreviousTab)
+                ));
+                ui.label(format!(
+                    "{} / {}: split top/bottom / left/right",
+                    key(Action::Split(Axis::Vertical)),
+                    key(Action::Split(Axis::Horizontal))
+                ));
+                ui.label(format!(
+                    "{}: close pane · {} / {} / {} / {}: focus left/down/up/right",
+                    key(Action::ClosePane),
+                    key(Action::Focus(crate::layout::Direction::Left)),
+                    key(Action::Focus(crate::layout::Direction::Down)),
+                    key(Action::Focus(crate::layout::Direction::Up)),
+                    key(Action::Focus(crate::layout::Direction::Right))
+                ));
                 ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
                 ui.label("Shift+PageUp / PageDown: scroll half a page · Ctrl+Shift+Home / End: oldest / live output");
                 ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");
-                ui.label("Alt+Shift+P: command palette");
+                ui.label(format!("{}: command palette", key(Action::Palette)));
                 ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
                 ui.label("Hover an OSC 8 link to preview its URL; Cmd+click (macOS) or Ctrl+click (Linux) opens it.");
@@ -1530,7 +1549,7 @@ impl App {
             });
         }
         if self.palette {
-            let (chosen, dismissed) = self.palette_state.show(ctx);
+            let (chosen, dismissed) = self.palette_state.show(ctx, self.shortcuts.hints());
             if dismissed || chosen.is_some() {
                 self.palette = false;
             }

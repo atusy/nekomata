@@ -47,22 +47,14 @@ fn commands() -> Vec<(&'static str, Action)> {
     ]
 }
 
-// Terminal bindings can be overridden in felis configuration. Only display
-// the workspace shortcuts whose bindings are owned by nekomata.
-fn shortcut(action: &Action) -> &'static str {
-    match action {
-        Action::NewTab => "Alt+C",
-        Action::Split(Axis::Horizontal) => "Alt+W  Alt+V",
-        Action::Split(Axis::Vertical) => "Alt+W  Alt+S",
-        Action::NextTab => "Alt+T",
-        Action::PreviousTab => "Alt+Shift+T",
-        Action::ClosePane => "Alt+W  C",
-        _ => "",
-    }
-}
-
 impl CommandPalette {
-    pub fn show(&mut self, ctx: &egui::Context) -> (Option<Action>, bool) {
+    /// Terminal bindings belong to felis's document, so `hints` covers only
+    /// the shortcuts nekomata's own keymap binds.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        hints: &crate::shortcuts::Hints,
+    ) -> (Option<Action>, bool) {
         let (up, down, enter) = ctx.input_mut(|input| {
             (
                 input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
@@ -145,7 +137,7 @@ impl CommandPalette {
                             let row = ui.add_sized(
                                 [ui.available_width(), theme::PALETTE_ROW_HEIGHT],
                                 egui::Button::new(*label)
-                                    .shortcut_text(shortcut(action))
+                                    .shortcut_text(hints.get(action))
                                     .selected(selected),
                             );
                             if selected && (up || down || search.changed()) {
@@ -188,7 +180,9 @@ mod tests {
             ..Default::default()
         };
         let mut result = (None, false);
-        let _ = crate::test_support::run(ctx, input, |ui| result = palette.show(ui.ctx()));
+        let _ = crate::test_support::run(ctx, input, |ui| {
+            result = palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints())
+        });
         result
     }
     #[test]
@@ -220,7 +214,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                palette.show(ui.ctx());
+                palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints());
             },
         );
         assert_eq!(palette.query, " TAB ");
@@ -279,7 +273,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        palette.show(ui.ctx());
+                        palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints());
                     },
                 );
             }

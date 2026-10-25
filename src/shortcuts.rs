@@ -136,6 +136,29 @@ impl AppKeymap {
         }
     }
 
+    /// The text menus show for each bound action: its shortest sequence,
+    /// the first in key order among equals.
+    pub fn hints(&self) -> Hints {
+        let mut hints: Vec<(Action, &[Chord])> = vec![];
+        for (keys, action) in &self.bindings {
+            match hints.iter_mut().find(|(bound, _)| bound == action) {
+                Some((_, shortest)) if keys.len() < shortest.len() => *shortest = keys,
+                Some(_) => {}
+                None => hints.push((action.clone(), keys)),
+            }
+        }
+        Hints(
+            hints
+                .into_iter()
+                .map(|(action, keys)| {
+                    let text = keys.iter().map(chord_label).collect::<Vec<_>>();
+                    // Two spaces read as "then", as the menus always showed.
+                    (action, text.join("  "))
+                })
+                .collect(),
+        )
+    }
+
     fn lookup(&self, keys: &[Chord]) -> Lookup {
         use std::ops::Bound;
         // Sequences sort directly after their prefixes, so the first entry
@@ -152,17 +175,65 @@ impl AppKeymap {
     }
 }
 
+/// Labels for the actions nekomata's keymap binds, built once per keymap.
+#[derive(Debug)]
+pub struct Hints(Vec<(Action, String)>);
+
+impl Hints {
+    /// Empty for an unbound action.
+    pub fn get(&self, action: &Action) -> &str {
+        self.0
+            .iter()
+            .find(|(bound, _)| bound == action)
+            .map_or("", |(_, text)| text)
+    }
+}
+
+/// `alt+shift+t` as menus show it: `Alt+Shift+T`.
+fn chord_label(chord: &Chord) -> String {
+    let mut label = String::new();
+    for (modifier, name) in [
+        (TerminalModifiers::CONTROL, "Ctrl"),
+        (TerminalModifiers::ALT, "Alt"),
+        (TerminalModifiers::SHIFT, "Shift"),
+        (
+            TerminalModifiers::SUPER,
+            if cfg!(target_os = "macos") {
+                "Cmd"
+            } else {
+                "Super"
+            },
+        ),
+    ] {
+        if chord.mods.contains(modifier) {
+            label.push_str(name);
+            label.push('+');
+        }
+    }
+    // felis spells named keys in snake case (`page_up`).
+    let key = Chord::bare(chord.key.clone()).to_string();
+    for word in key.split('_') {
+        let mut chars = word.chars();
+        label.extend(chars.next().map(|first| first.to_ascii_uppercase()));
+        label.push_str(chars.as_str());
+    }
+    label
+}
+
 pub struct Shortcuts {
     pending: Vec<Chord>,
     keymap: AppKeymap,
+    hints: Hints,
     terminal: Keymap,
 }
 
 impl Default for Shortcuts {
     fn default() -> Self {
+        let keymap = AppKeymap::default();
         Self {
             pending: Vec::new(),
-            keymap: AppKeymap::default(),
+            hints: keymap.hints(),
+            keymap,
             // Preserve bare End for terminal editors unless explicitly bound.
             terminal: Keymap::default_for_platform().with_overrides([(
                 Chord::bare(KeyCode::Named(NamedKey::End)),
@@ -228,6 +299,7 @@ impl Shortcuts {
         keymap: AppKeymap,
     ) -> Self {
         let mut shortcuts = Self {
+            hints: keymap.hints(),
             keymap,
             ..Self::default()
         };
@@ -235,6 +307,10 @@ impl Shortcuts {
             .terminal
             .apply_overrides(config.keymap.compile(None));
         shortcuts
+    }
+
+    pub fn hints(&self) -> &Hints {
+        &self.hints
     }
 
     pub fn consume(&mut self, input: &mut InputState) -> Vec<Action> {
@@ -580,6 +656,51 @@ mod tests {
             ]
         );
         assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn hints_name_the_active_bindings() {
+        let hints = AppKeymap::default().hints();
+        assert_eq!(hints.get(&Action::NewTab), "Alt+C");
+        assert_eq!(hints.get(&Action::PreviousTab), "Alt+Shift+T");
+        assert_eq!(hints.get(&Action::Split(Axis::Horizontal)), "Alt+W  Alt+V");
+        assert_eq!(hints.get(&Action::ClosePane), "Alt+W  C");
+        assert_eq!(hints.get(&Action::CloseTab), "");
+
+        let mut keymap = AppKeymap::default();
+        keymap.apply(
+            vec![
+                ("alt+c".into(), parse_sequence("alt+c").unwrap(), None),
+                (
+                    "ctrl+shift+page_up".into(),
+                    parse_sequence("ctrl+shift+page_up").unwrap(),
+                    Some(Action::NewTab),
+                ),
+                (
+                    "ctrl+a '".into(),
+                    parse_sequence("ctrl+a '").unwrap(),
+                    Some(Action::CloseTab),
+                ),
+            ],
+            &mut vec![],
+        );
+        let hints = keymap.hints();
+        assert_eq!(hints.get(&Action::NewTab), "Ctrl+Shift+PageUp");
+        assert_eq!(hints.get(&Action::CloseTab), "Ctrl+A  '");
+    }
+
+    #[test]
+    fn a_hint_prefers_the_shortest_binding() {
+        let mut keymap = AppKeymap::default();
+        keymap.apply(
+            vec![(
+                "alt+w n".into(),
+                parse_sequence("alt+w n").unwrap(),
+                Some(Action::NewTab),
+            )],
+            &mut vec![],
+        );
+        assert_eq!(keymap.hints().get(&Action::NewTab), "Alt+C");
     }
 
     #[test]
