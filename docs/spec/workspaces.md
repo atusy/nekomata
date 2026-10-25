@@ -31,7 +31,8 @@ felis daemon.
 
 At startup, a window attaches to the most recently used workspace that no
 window has attached. When none exists, it creates a workspace with one tab and
-one pane.
+one pane. The attached workspace's font size is replaced by the configured
+size (see [configuration](configuration.md#font-size-precedence)).
 
 ## Saving
 

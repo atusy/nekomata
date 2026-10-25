@@ -42,7 +42,8 @@ The nekomata daemon starts on first use and keeps running after the last
 window closes. It holds workspaces in memory only.
 
 - GUI restart, UI-only update or crash: workspaces are restored (after a
-  crash, up to the last state the daemon received). An update that changes
+  crash, up to the last state the daemon received), except the text size,
+  which starts at your configured size. An update that changes
   the daemon protocol requires
   [retiring the old daemon](troubleshooting.md#nekomata-reports-an-incompatible-daemon),
   which loses layouts.
