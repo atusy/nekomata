@@ -998,7 +998,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 12.0;
                     ui.label(
                         egui::RichText::new("Paste into terminal?")
-                            .size(20.0)
+                            .size(theme::ui_size(ui.style(), 20.0))
                             .strong()
                             .color(theme::FG),
                     );
