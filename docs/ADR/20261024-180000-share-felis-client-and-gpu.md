@@ -59,7 +59,6 @@ macOS validation remains separate from Linux VM results.
 - [x] Direct shared-device GPU renderer, with no frame readback.
 - [x] Vitro desktop analysis and final behavior evidence.
 
-Supersedes [the mesh adapter decision](_20261024-120000-reuse-felis-render-core.md).
 See the [reuse audit](../felis-rendering-reuse-audit.md) and
 [VM results](../vitro-rendering-validation.md). Changing four-pane workloads
 regressed on the software Vulkan adapter; native hardware performance remains
