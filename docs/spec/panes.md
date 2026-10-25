@@ -60,17 +60,21 @@ nekomata panes attach [PANE_ID] [--window WINDOW_ID] [--ssh HOST] [--daemon SOCK
 
 ## Window resolution
 
-The window a CLI command targets is the first of:
+A CLI command targets a window as follows:
 
-1. `--window`;
-2. the window currently attached to the workspace in `NEKOMATA_WORKSPACE_ID`
-   (or, when unset, the legacy `NEKOMATA_SESSION_ID`);
-3. `NEKOMATA_WINDOW_ID`;
-4. the only running GUI window.
+1. `--window`, when given.
+2. Otherwise, if `NEKOMATA_WORKSPACE_ID` holds a workspace ID (else, if the
+   legacy `NEKOMATA_SESSION_ID` does), the window that workspace is attached
+   to. If that workspace has no window or the nekomata daemon is unreachable,
+   the command fails; it does not fall back further.
+3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
+4. Otherwise the only running GUI window. With no window or several, the
+   command fails; with several, it reports the window discovery directory.
 
-When several candidates remain, the command fails and reports the window
-discovery directory. Because resolution goes through the workspace ID, a shell
-keeps reaching its window after the GUI restarts.
+Because resolution goes through the workspace ID, a shell keeps reaching its
+window after the GUI restarts. A shell carries the IDs it was started with,
+so a shell moved to another workspace by hand still targets its original
+workspace's window; pass `--window` there.
 
 ## SSH
 
