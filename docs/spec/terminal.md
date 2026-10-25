@@ -43,6 +43,8 @@ Not supported: key release events and OSC 52 clipboard reads.
 
 - Wheel and trackpad input scrolls the scrollback; when the terminal program
   requests mouse input, it receives wheel events instead.
+- With Shift, or Ctrl (Cmd on macOS), held, wheel input neither scrolls nor
+  reaches the program.
 - The alternate screen has no scrollback: there, wheel input reaches the
   program only when it requests mouse input.
 - Consecutive scroll requests are coalesced and sent to supporting daemons as
