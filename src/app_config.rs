@@ -12,16 +12,16 @@ const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> =
     MIN_FONT_SIZE_LOGICAL_PX..=MAX_FONT_SIZE_LOGICAL_PX;
 
 #[derive(Debug, Default, PartialEq)]
-pub struct AppConfig {
-    pub font: UiFont,
-    pub keymap: AppKeymap,
+struct AppConfig {
+    font: UiFont,
+    keymap: AppKeymap,
 }
 
 /// The font of nekomata's own widgets; terminals use felis's `[font]`.
 #[derive(Debug, Default, PartialEq)]
-pub struct UiFont {
-    pub family: Option<String>,
-    pub size_px: Option<f32>,
+struct UiFont {
+    family: Option<String>,
+    size_px: Option<f32>,
 }
 
 /// Recoverable problems; the caller reports them and keeps the rest.
@@ -71,18 +71,61 @@ fn printable(text: &str) -> String {
     out
 }
 
-pub fn load() -> anyhow::Result<AppConfig> {
-    let Some(path) = path() else {
-        return Ok(Default::default());
-    };
+/// The document resolved against the platform: what the GUI applies.
+pub struct Settings {
+    pub ui_size: f32,
+    pub ui_face: Option<crate::ui_font::Face>,
+    pub keymap: AppKeymap,
+}
+
+pub fn load() -> anyhow::Result<Settings> {
+    let path = path();
     let mut warnings = Warnings::new();
-    let config = read(&path, &mut warnings);
+    let config = match &path {
+        Some(path) => read(path, &mut warnings),
+        None => Ok(AppConfig::default()),
+    };
+    let settings = config.map(|config| {
+        let (ui_size, ui_face) = resolve_font(
+            &config.font,
+            crate::ui_font::default_size_px,
+            crate::ui_font::find,
+            &mut warnings,
+        );
+        Settings {
+            ui_size,
+            ui_face,
+            keymap: config.keymap,
+        }
+    });
     // Report warnings even when the document fails, so one launch shows
     // every problem found before the error.
+    let source = path.as_deref().unwrap_or(Path::new("config.toml"));
     for warning in warnings {
-        eprintln!("nekomata: {}: {}", path.display(), printable(&warning));
+        eprintln!("nekomata: {}: {}", source.display(), printable(&warning));
     }
-    config
+    settings
+}
+
+/// The UI body size and the configured face, with `default_size` and
+/// `find` standing in for the platform.
+fn resolve_font(
+    font: &UiFont,
+    default_size: impl FnOnce() -> f32,
+    find: impl FnOnce(&str) -> Option<crate::ui_font::Face>,
+    warnings: &mut Warnings,
+) -> (f32, Option<crate::ui_font::Face>) {
+    let size = font.size_px.unwrap_or_else(default_size);
+    let face = font.family.as_deref().and_then(|family| {
+        let face = find(family);
+        if face.is_none() {
+            warnings.push(format!(
+                "`appearance.base.font.family` = {family:?} is not installed; using the default UI font"
+            ));
+        }
+        face
+    });
+    (size, face)
 }
 
 /// Unknown keys and unusable values warn; a value of the wrong shape is an
@@ -327,6 +370,59 @@ mod tests {
         assert_eq!(
             read(&dir.path().join("config.toml"), &mut Warnings::new()).unwrap(),
             Default::default()
+        );
+    }
+
+    #[test]
+    fn an_unset_size_uses_the_platform_default_and_no_family_skips_the_search() {
+        let mut warnings = Warnings::new();
+        let (size, face) = resolve_font(
+            &UiFont::default(),
+            || 13.0,
+            |_| panic!("no family to search for"),
+            &mut warnings,
+        );
+        assert_eq!((size, face.is_none()), (13.0, true));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn a_configured_size_wins_and_a_found_family_supplies_the_face() {
+        let font = UiFont {
+            family: Some("UDev Gothic NF".into()),
+            size_px: Some(17.0),
+        };
+        let mut warnings = Warnings::new();
+        let (size, face) = resolve_font(
+            &font,
+            || 13.0,
+            |family| {
+                assert_eq!(family, "UDev Gothic NF");
+                Some(crate::ui_font::Face {
+                    bytes: vec![],
+                    index: 3,
+                })
+            },
+            &mut warnings,
+        );
+        assert_eq!((size, face.map(|face| face.index)), (17.0, Some(3)));
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn a_missing_family_warns_with_its_key() {
+        let font = UiFont {
+            family: Some("No Such Family".into()),
+            size_px: None,
+        };
+        let mut warnings = Warnings::new();
+        let (_, face) = resolve_font(&font, || 13.0, |_| None, &mut warnings);
+        assert!(face.is_none());
+        assert_eq!(
+            warnings,
+            [
+                "`appearance.base.font.family` = \"No Such Family\" is not installed; using the default UI font"
+            ]
         );
     }
 

@@ -177,20 +177,11 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
         crate::terminal_config::load(&cc.egui_ctx)?;
-        let config = crate::app_config::load()?;
-        let ui_size = config
-            .font
-            .size_px
-            .unwrap_or_else(crate::ui_font::default_size_px);
-        let ui_face = config.font.family.as_deref().and_then(|family| {
-            let face = crate::ui_font::find(family);
-            if face.is_none() {
-                eprintln!(
-                    "nekomata: font family `{family}` is not installed; using the system font"
-                );
-            }
-            face
-        });
+        let crate::app_config::Settings {
+            ui_size,
+            ui_face,
+            keymap,
+        } = crate::app_config::load()?;
 
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
@@ -210,7 +201,7 @@ impl App {
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
         cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
-        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, config.keymap)
+        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, keymap)
     }
 
     fn connect(
