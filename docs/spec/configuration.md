@@ -95,4 +95,5 @@ Specified in [keymap](keymap.md).
 
 Unknown keys, unusable values and malformed `[keymap]` entries are reported as
 warnings on standard error and ignored; the rest of the document applies.
-TOML syntax errors and type errors stop startup with an error.
+TOML syntax errors, type errors and read failures other than a missing file
+stop startup with an error.
