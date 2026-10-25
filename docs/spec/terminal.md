@@ -9,9 +9,10 @@ Text, 256 and RGB colors, CJK text, selection, copy and paste, scrollback,
 named keys, mouse input, committed IME text, Kitty images, dynamic palette
 changes and OSC 52 writes to the system clipboard are supported. Braille
 (U+2800–U+28FF) is drawn directly into cells, independently of the font.
+Text is shaped with the OpenType features configured in felis's `font`
+settings.
 
-Not supported: enabling ligatures from configuration, key release events and
-OSC 52 clipboard reads.
+Not supported: key release events and OSC 52 clipboard reads.
 
 ## Selection
 
