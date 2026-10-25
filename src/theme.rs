@@ -18,14 +18,25 @@ pub const PALETTE_LIST_HEIGHT: f32 = 270.0;
 /// The body size the chrome's other text sizes were drawn against.
 const DESIGN_BODY_PX: f32 = 14.0;
 
-/// Scales a text size or row height drawn against a 14 px body to the
-/// configured body size.
-pub fn ui_size(style: &eframe::egui::Style, nominal: f32) -> f32 {
-    let body = style
+fn body_scale(style: &eframe::egui::Style) -> f32 {
+    style
         .text_styles
         .get(&eframe::egui::TextStyle::Body)
-        .map_or(DESIGN_BODY_PX, |font| font.size);
-    body * nominal / DESIGN_BODY_PX
+        .map_or(DESIGN_BODY_PX, |font| font.size)
+        / DESIGN_BODY_PX
+}
+
+/// Scales a text size drawn against a 14 px body to the configured body
+/// size.
+pub fn ui_size(style: &eframe::egui::Style, nominal: f32) -> f32 {
+    nominal * body_scale(style)
+}
+
+/// Scales a row height or width drawn against a 14 px body up to fit a
+/// larger body. Smaller bodies keep the drawn extent, so rows stay whole
+/// pixels and as easy to hit as before.
+pub fn ui_extent(style: &eframe::egui::Style, nominal: f32) -> f32 {
+    nominal * body_scale(style).max(1.0)
 }
 
 pub fn menu_style(style: &mut eframe::egui::Style) {
@@ -34,7 +45,7 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.override_font_id = Some(egui::FontId::proportional(ui_size(style, 14.0)));
     style.spacing.button_padding = Vec2::new(10.0, 5.0);
     style.spacing.item_spacing = Vec2::new(4.0, 2.0);
-    style.spacing.interact_size.y = ui_size(style, MENU_ROW_HEIGHT);
+    style.spacing.interact_size.y = ui_extent(style, MENU_ROW_HEIGHT);
     style.spacing.menu_margin = egui::Margin::same(6);
     style.visuals.window_fill = TAB_BAR_BG;
     style.visuals.window_stroke = Stroke::new(1.0_f32, MENU_BORDER);
@@ -242,6 +253,23 @@ mod tests {
     }
 
     #[test]
+    fn chrome_extents_grow_with_the_body_but_never_shrink() {
+        use eframe::egui::{FontId, Style, TextStyle};
+        let mut style = Style::default();
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::proportional(13.0));
+        assert_eq!(super::ui_size(&style, 14.0), 13.0);
+        assert_eq!(super::ui_extent(&style, 30.0), 30.0);
+        super::menu_style(&mut style);
+        assert_eq!(style.spacing.interact_size.y, super::MENU_ROW_HEIGHT);
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::proportional(28.0));
+        assert_eq!(super::ui_extent(&style, 30.0), 60.0);
+    }
+
+    #[test]
     fn a_configured_face_leads_proportional_text_before_system_fallbacks() {
         use eframe::egui::FontFamily;
         let default = super::chrome_fonts(None);
@@ -282,7 +310,7 @@ mod tests {
                     let mut menu_rect = egui::Rect::NOTHING;
                     let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
                         ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
-                        ui.spacing_mut().interact_size.y = super::ui_size(ui.style(), 30.0).max(
+                        ui.spacing_mut().interact_size.y = super::ui_extent(ui.style(), 30.0).max(
                             ui.text_style_height(&egui::TextStyle::Button)
                                 + 2.0 * ui.spacing().button_padding.y,
                         );

@@ -859,7 +859,7 @@ impl App {
             let entry = ui.add_sized(
                 [
                     (ui.available_width() - 132.0).max(48.0),
-                    crate::theme::ui_size(ui.style(), 30.0),
+                    crate::theme::ui_extent(ui.style(), 30.0),
                 ],
                 egui::TextEdit::singleline(&mut pane.search_query)
                     .id_salt(("scrollback-query", tab.focused))
@@ -894,7 +894,7 @@ impl App {
             {
                 let search = pane.session.search.search.lock().unwrap();
                 let response = ui.add_sized(
-                    [40.0, crate::theme::ui_size(ui.style(), 30.0)],
+                    [40.0, crate::theme::ui_extent(ui.style(), 30.0)],
                     egui::Label::new(if search.error.is_some() {
                         egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
                     } else if search.running {
@@ -1247,7 +1247,7 @@ impl App {
                 }
                 ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
                 // Reserve the full button height before either nested horizontal layout.
-                ui.spacing_mut().interact_size.y = crate::theme::ui_size(ui.style(), 30.0).max(
+                ui.spacing_mut().interact_size.y = crate::theme::ui_extent(ui.style(), 30.0).max(
                     ui.text_style_height(&egui::TextStyle::Button)
                         + 2.0 * ui.spacing().button_padding.y,
                 );
@@ -1336,7 +1336,7 @@ impl App {
                         });
                     if self.searching() {
                         ui.allocate_ui_with_layout(
-                            Vec2::new(search_width, crate::theme::ui_size(ui.style(), 30.0)),
+                            Vec2::new(search_width, crate::theme::ui_extent(ui.style(), 30.0)),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| self.search_bar(ui),
                         );
@@ -1396,7 +1396,7 @@ impl App {
                         .size(crate::theme::ui_size(ui.style(), 12.0)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let row = crate::theme::ui_size(ui.style(), 28.0);
+                    let row = crate::theme::ui_extent(ui.style(), 28.0);
                     if ui
                         .add_sized([30.0, row], egui::Button::new("+").fill(TAB_HOVER_BG))
                         .on_hover_text("Larger text")
@@ -1788,7 +1788,7 @@ fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
     ui.add_sized(
         [
             ui.available_width(),
-            crate::theme::ui_size(ui.style(), crate::theme::MENU_ROW_HEIGHT),
+            crate::theme::ui_extent(ui.style(), crate::theme::MENU_ROW_HEIGHT),
         ],
         egui::Button::new(label).shortcut_text(
             egui::RichText::new(shortcut)
@@ -2059,7 +2059,7 @@ fn draw_pane(
         );
     }
     if let Some(error) = &pane.links.error {
-        let height = crate::theme::ui_size(ui.style(), 32.0);
+        let height = crate::theme::ui_extent(ui.style(), 32.0);
         let overlay = Rect::from_min_size(
             text_rect.left_bottom() - Vec2::new(0.0, height),
             Vec2::new(text_rect.width(), height),
