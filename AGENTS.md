@@ -13,6 +13,17 @@ nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The fel
 - `share/`: fish integration and macOS bundle metadata/native launcher.
 - `scripts/`: isolated integration tests and macOS installation.
 - `flake.nix`: packages, development environments, runtime fonts, and checks.
+- `docs/`: documentation, described below.
+
+## Documentation
+
+Write all documentation in English. Each kind of document has one home:
+
+- `README.md`: a short introduction for users; link to the manual for details.
+- `docs/manual/`: how to use nekomata, organized by user task. Summarize behavior and link to the spec for exact rules.
+- `docs/spec/`: normative observable behavior. Update it in the same commit as the behavior it describes.
+- `docs/ADR/`: architecture decisions only — ownership, boundaries, and their invariants — following `docs/ADR/template.md`. An ADR is a decision, not a description: record divergence from the code in its "Decision–Implementation Gap" section instead of rewriting the decision. Keep no status tables, validation logs, or change history; `git log` holds them. Delete a superseded ADR rather than renaming it with a `_` prefix.
+- Other `docs/*.md` files are dated rendering and validation reports; they describe the code at the time they were written.
 
 ## Build, Test, and Development Commands
 
