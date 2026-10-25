@@ -203,17 +203,20 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
 }
 
 impl Shortcuts {
-    pub fn from_config(config: &felis_client_core::config::EffectiveConfig) -> Self {
-        let mut shortcuts = Self::default();
+    /// nekomata's own `keymap` resolves first; felis's shared `config`
+    /// supplies the terminal bindings behind it.
+    pub fn from_config(
+        config: &felis_client_core::config::EffectiveConfig,
+        keymap: AppKeymap,
+    ) -> Self {
+        let mut shortcuts = Self {
+            keymap,
+            ..Self::default()
+        };
         shortcuts
             .terminal
             .apply_overrides(config.keymap.compile(None));
         shortcuts
-    }
-
-    pub fn set_keymap(&mut self, keymap: AppKeymap) {
-        self.keymap = keymap;
-        self.pending.clear();
     }
 
     pub fn consume(&mut self, input: &mut InputState) -> Vec<Action> {
@@ -289,7 +292,7 @@ mod tests {
         .unwrap();
         let (config, diagnostics) = document.resolve("nekomata");
         assert!(!diagnostics.has_errors());
-        let mut shortcuts = Shortcuts::from_config(&config);
+        let mut shortcuts = Shortcuts::from_config(&config, AppKeymap::default());
         let ctx = eframe::egui::Context::default();
         let _ = crate::test_support::run(
             &ctx,
@@ -324,7 +327,7 @@ mod tests {
             let (config, diagnostics) = document.resolve("nekomata");
             assert!(!diagnostics.has_errors());
             assert_eq!(config.keymap.compile(None).len(), 1);
-            let mut shortcuts = Shortcuts::from_config(&config);
+            let mut shortcuts = Shortcuts::from_config(&config, AppKeymap::default());
             let ctx = eframe::egui::Context::default();
             let _ = crate::test_support::run(
                 &ctx,

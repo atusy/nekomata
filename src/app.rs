@@ -210,12 +210,14 @@ impl App {
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
         cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
-        let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)?;
-        app.shortcuts.set_keymap(config.keymap);
-        Ok(app)
+        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, config.keymap)
     }
 
-    fn connect(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> anyhow::Result<Self> {
+    fn connect(
+        runtime: tokio::runtime::Runtime,
+        ctx: &egui::Context,
+        keymap: crate::shortcuts::AppKeymap,
+    ) -> anyhow::Result<Self> {
         let control = control::Server::bind(&runtime, ctx.clone())?;
         let workspace = WorkspaceClient::start(&runtime, ctx.clone(), control.window);
         let app = Self {
@@ -237,7 +239,7 @@ impl App {
             font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
             picker: SessionPicker::default(),
             help: false,
-            shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx)),
+            shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
             palette_state: Default::default(),
         };
@@ -2598,7 +2600,12 @@ mod tests {
         let mut config = felis_client_core::config::EffectiveConfig::default();
         config.font.size_px = Some(21.0);
         crate::terminal_config::install(&ctx, config);
-        let mut app = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
+        let mut app = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
         pump(&mut app, &connected);
         assert_eq!(app.font_size, 21.0);
         app.font_size = 30.0;
@@ -2624,7 +2631,12 @@ mod tests {
         let mut config = felis_client_core::config::EffectiveConfig::default();
         config.font.size_px = Some(30.0);
         crate::terminal_config::install(&ctx, config);
-        let mut replacement = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
+        let mut replacement = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
         pump(&mut replacement, &connected);
         assert_eq!(replacement.font_size, 30.0);
         before.font_size = 30.0;

@@ -454,8 +454,10 @@ mod tests {
     fn press(text: &str, keys: &[(eframe::egui::Key, eframe::egui::Modifiers)]) -> Vec<Action> {
         let (config, warnings) = parse(text).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
-        let mut shortcuts = crate::shortcuts::Shortcuts::default();
-        shortcuts.set_keymap(config.keymap);
+        let mut shortcuts = crate::shortcuts::Shortcuts::from_config(
+            &felis_client_core::config::EffectiveConfig::default(),
+            config.keymap,
+        );
         let events = keys
             .iter()
             .map(|&(key, modifiers)| eframe::egui::Event::Key {
