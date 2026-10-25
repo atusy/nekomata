@@ -15,7 +15,7 @@ cleanup() {
 trap cleanup EXIT
 bash scripts/test-fish-integration.sh
 cargo build --locked --bin nekomata
-target/debug/nekomata sessions list
+target/debug/nekomata workspaces list
 cargo test --locked live_ -- --ignored --nocapture --test-threads=1 --skip live_ssh_carrier
 # Exercise the SSH stdio carrier against a private local relay without contacting
 # an external host or relying on the user's SSH credentials/configuration.

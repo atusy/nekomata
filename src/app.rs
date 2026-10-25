@@ -2663,7 +2663,7 @@ mod tests {
             pump(app, &|_| task.is_finished());
             app.runtime.block_on(task).unwrap()
         };
-        let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
+        let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(
             replacement.font_size, 30.0,
@@ -2686,7 +2686,7 @@ mod tests {
         let output = command(
             &mut replacement,
             vec![
-                "sessions".into(),
+                "workspaces".into(),
                 "attach".into(),
                 workspace_id.unwrap().to_string(),
             ],
@@ -2721,7 +2721,7 @@ mod tests {
         let original_connection = replacement.panes[&1].session.clone();
         let output = command(
             &mut replacement,
-            vec!["sessions".into(), "attach".into(), other.to_string()],
+            vec!["workspaces".into(), "attach".into(), other.to_string()],
         );
         assert!(!output.status.success(), "{output:?}");
         assert_eq!(replacement.workspace_id, workspace_id);
@@ -2754,7 +2754,7 @@ mod tests {
 
         // A fresh switch directly after cancellation must not consume the old
         // cancellation acknowledgement as its own commit.
-        let output = command(&mut replacement, vec!["sessions".into(), "new".into()]);
+        let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
         let third_shell = replacement
             .panes
@@ -2770,7 +2770,7 @@ mod tests {
         let output = command(
             &mut replacement,
             vec![
-                "sessions".into(),
+                "workspaces".into(),
                 "attach".into(),
                 workspace_id.unwrap().to_string(),
             ],
