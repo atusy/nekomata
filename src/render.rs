@@ -46,6 +46,19 @@ pub fn load_fonts(ctx: &egui::Context) -> Result<Arc<FontStack>> {
     Ok(stack)
 }
 
+pub fn terminal_rect(rect: Rect, rows: u16, cell_height: f32, ppp: f32) -> Rect {
+    use egui::emath::GuiRounding as _;
+    let vertical_margin = ((rect.height() - f32::from(rows) * cell_height) / 2.0).max(0.0);
+    let centered = rect.shrink2(Vec2::new(0.0, vertical_margin));
+    // Match felis's physical-pixel placement. A half-pixel origin puts
+    // nearest sampling exactly between texels, where interpolation error
+    // can select different rows/columns across a single glyph.
+    Rect::from_min_size(
+        centered.min.round_to_pixels(ppp),
+        centered.size().round_to_pixels(ppp),
+    )
+}
+
 pub struct Renderer {
     gpu: GpuRenderer,
     host: RenderState,
@@ -294,6 +307,31 @@ mod tests {
     };
 
     #[test]
+    fn centered_terminal_keeps_whole_physical_pixels() {
+        for ppp in [1.0, 1.25, 1.5, 2.0] {
+            let pane =
+                Rect::from_min_size(Pos2::new(7.5, 9.0) / ppp, Vec2::new(320.25, 115.0) / ppp);
+            let rect = terminal_rect(pane, 6, 19.0 / ppp, ppp);
+            let origin = rect.min * ppp;
+            let size = rect.size() * ppp;
+            assert!((origin.x - origin.x.round()).abs() < 0.0001);
+            assert!((origin.y - origin.y.round()).abs() < 0.0001);
+            assert!((origin.x - 7.5).abs() <= 0.5001);
+            assert!((origin.y - 9.5).abs() <= 0.5001);
+            assert!((size.x - 320.0).abs() < 0.0001);
+            assert!((size.y - 114.0).abs() < 0.0001);
+            // The one-pixel remainder goes into a margin, never into the rows.
+            assert!((rect.bottom() * ppp - pane.bottom() * ppp).abs() <= 1.0001);
+        }
+    }
+
+    #[test]
+    fn terminal_smaller_than_one_row_keeps_the_available_height() {
+        let pane = Rect::from_min_size(Pos2::ZERO, Vec2::new(8.0, 7.0));
+        assert_eq!(terminal_rect(pane, 1, 19.0, 1.0), pane);
+    }
+
+    #[test]
     #[ignore = "requires a GPU adapter; run inside the Vitro desktop with --ignored"]
     fn gpu_shared_device_preserves_palette_and_image_pixels() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -413,3 +451,7 @@ mod tests {
 #[cfg(test)]
 #[path = "../tests/support/gpu_benchmark.rs"]
 mod benchmark;
+
+#[cfg(test)]
+#[path = "../tests/support/glyph_rendering.rs"]
+mod glyph_rendering;

@@ -1863,8 +1863,7 @@ fn draw_pane(
     let cols = (rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
     let rows = (rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
     // Split the unused fractional row between the top and bottom margins.
-    let vertical_margin = ((rect.height() - f32::from(rows) * ch) / 2.0).max(0.0);
-    let text_rect = rect.shrink2(Vec2::new(0.0, vertical_margin));
+    let text_rect = crate::render::terminal_rect(rect, rows, ch, ppp);
     if pane.dims != (rows, cols) {
         pane.dims = (rows, cols);
         pane.selection = None;
@@ -1872,8 +1871,8 @@ fn draw_pane(
             dims: RequestedDims {
                 rows: rows.into(),
                 cols: cols.into(),
-                pixel_w: (text_rect.width().max(0.0) * ui.ctx().pixels_per_point()) as u32,
-                pixel_h: (text_rect.height().max(0.0) * ui.ctx().pixels_per_point()) as u32,
+                pixel_w: (text_rect.width().max(0.0) * ppp).round() as u32,
+                pixel_h: (text_rect.height().max(0.0) * ppp).round() as u32,
             },
         });
     }
