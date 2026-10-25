@@ -617,6 +617,19 @@ mod tests {
     }
 
     #[test]
+    fn every_felis_terminal_kind_points_to_felis_document() {
+        for kind in TERMINAL_KINDS {
+            let (config, warnings) =
+                parse(&format!("[keymap]\n\"alt+q\" = {{ kind = \"{kind}\" }}")).unwrap();
+            assert_eq!(config.keymap, AppKeymap::default(), "{kind}");
+            assert!(
+                matches!(&warnings[..], [warning] if warning.contains("is a terminal binding")),
+                "{kind}: {warnings:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_sequence_behind_a_bound_chord_is_dropped_with_a_warning() {
         let (config, warnings) = parse(
             r#"[keymap]
