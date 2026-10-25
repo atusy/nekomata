@@ -85,7 +85,8 @@ in felis's `[keymap]`.
   [Troubleshooting](troubleshooting.md#a-setting-has-no-effect)).
 - In either file, a TOML syntax or type error stops nekomata from starting.
 
-Some bindings are rejected with a warning because the window can never report
-them, such as Cmd+C or a sequence after an already bound prefix. The full
-rules are in the [keymap specification](../spec/keymap.md) and the
+Some bindings are rejected with a warning: keys the window never reports as
+key presses, such as Cmd+C, and sequences that can never complete because a
+shorter prefix is bound on its own. The full rules are in the
+[keymap specification](../spec/keymap.md) and the
 [configuration specification](../spec/configuration.md).
