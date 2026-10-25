@@ -795,6 +795,40 @@ mod tests {
     }
 
     #[test]
+    fn clipboard_chords_are_dropped_because_they_never_arrive_as_keys() {
+        let command = if cfg!(target_os = "macos") {
+            "super"
+        } else {
+            "ctrl"
+        };
+        let (config, warnings) = parse(&format!(
+            r#"[keymap]
+            "{command}+c" = {{ kind = "new_tab" }}
+            "{command}+x" = {{ kind = "new_tab" }}
+            "alt+w {command}+v" = {{ kind = "close_tab" }}
+            "{command}+shift+c" = {{ kind = "close_tab" }}
+        "#
+        ))
+        .unwrap();
+        assert_eq!(warnings.len(), 3, "{warnings:#?}");
+        assert!(
+            warnings.iter().all(|warning| warning.contains("clipboard")),
+            "{warnings:#?}"
+        );
+        let mut expected = AppKeymap::default();
+        let spelling = format!("{command}+shift+c");
+        expected.apply(
+            vec![(
+                spelling.clone(),
+                crate::shortcuts::parse_sequence(&spelling).unwrap(),
+                Some(Action::CloseTab),
+            )],
+            &mut vec![],
+        );
+        assert_eq!(config.keymap, expected);
+    }
+
+    #[test]
     fn a_sequence_behind_a_bound_chord_is_dropped_with_a_warning() {
         let (config, warnings) = parse(
             r#"[keymap]
