@@ -78,9 +78,12 @@ in felis's `[keymap]`.
 
 ## When something is wrong
 
-- A mistyped key or an unusable value prints a warning on standard error and
-  is skipped; the rest of the file still applies.
-- A TOML syntax or type error stops nekomata from starting.
+- In nekomata's file, a mistyped key or an unusable value prints a warning on
+  standard error and is skipped; the rest of the file still applies.
+- In felis's file, such mistakes are silently ignored by nekomata; check the
+  file with `felis config check --client nekomata` (see
+  [Troubleshooting](troubleshooting.md#a-setting-has-no-effect)).
+- In either file, a TOML syntax or type error stops nekomata from starting.
 
 Some bindings are rejected with a warning because the window can never report
 them, such as Cmd+C or a sequence after an already bound prefix. The full

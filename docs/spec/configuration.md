@@ -51,7 +51,9 @@ when none is configured.
 ### Errors
 
 A missing file at the default path is not an error. Syntax errors, type
-errors and read failures stop startup with an error.
+errors and read failures stop startup with an error. Warnings about the
+document, such as unknown keys, are not shown; `felis config check --client
+nekomata` reports them.
 
 ## Application layer
 
