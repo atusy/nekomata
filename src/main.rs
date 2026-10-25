@@ -1,4 +1,5 @@
 mod app;
+mod app_config;
 mod cli;
 mod colors;
 mod command_palette;
@@ -22,6 +23,7 @@ mod terminal_search;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod ui_font;
 mod workspace;
 mod workspace_client;
 

@@ -104,7 +104,7 @@ impl CommandPalette {
                     [width, 32.0],
                     egui::TextEdit::singleline(&mut self.query)
                         .hint_text("Search commands…")
-                        .font(egui::FontId::proportional(14.0))
+                        .font(egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)))
                         .margin(egui::vec2(10.0, 7.0)),
                 );
                 if !search.has_focus() {
