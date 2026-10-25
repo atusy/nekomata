@@ -12,8 +12,8 @@ native keyboard delivery, mouse selection, resize gestures and high-DPI
 rendering on macOS, and IME composition on both platforms, have not yet been
 formally validated; see the [validation report](../native-rendering-validation.md).
 
-The felis daemon ships in the same package and starts automatically on first
-connection; you do not install it separately.
+The felis daemon ships in the same package and starts automatically when
+nekomata opens a new shell; you do not install it separately.
 
 ## Try it
 
