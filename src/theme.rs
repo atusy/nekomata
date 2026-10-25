@@ -46,8 +46,10 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
 
 pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
-    let size = (egui::vec2(16.0, ui.text_style_height(&TextStyle::Button))
-        + 2.0 * ui.spacing().button_padding)
+    let size = (egui::vec2(
+        ui_size(ui.style(), 16.0),
+        ui.text_style_height(&TextStyle::Button),
+    ) + 2.0 * ui.spacing().button_padding)
         .max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| {
@@ -203,59 +205,70 @@ mod tests {
     #[test]
     fn menu_trigger_matches_tab_ink_and_shows_its_open_state() {
         use eframe::egui::{self, epaint::Shape};
-        for density in [1.0, 1.1, 1.25, 1.5, 2.0] {
-            let ctx = egui::Context::default();
-            ctx.set_pixels_per_point(density);
-            ctx.set_fonts(super::chrome_fonts());
-            for open in [false, true] {
-                let mut menu_rect = egui::Rect::NOTHING;
-                let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
-                        ui.spacing_mut().interact_size.y = 30.0;
-                        menu_rect = super::menu_button(ui, open).rect;
-                        super::tab_button(ui, "nekomata", false);
-                    });
+        for font_size in [4.0, 10.0, 14.0, 24.0, 48.0, 72.0] {
+            for density in [1.0, 1.1, 1.25, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                ctx.set_pixels_per_point(density);
+                ctx.set_fonts(super::chrome_fonts());
+                ctx.set_theme(egui::Theme::Dark);
+                ctx.style_mut_of(egui::Theme::Dark, |style| {
+                    for text_style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+                        style
+                            .text_styles
+                            .insert(text_style, egui::FontId::proportional(font_size));
+                    }
                 });
-                let icons: Vec<_> = frame
-                    .shapes
-                    .iter()
-                    .filter_map(|shape| match &shape.shape {
-                        Shape::Mesh(mesh) if menu_rect.contains_rect(mesh.calc_bounds()) => {
-                            Some(mesh)
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                assert_eq!(icons.len(), 1, "menu must show the nekomata image");
-                let icon_rect = icons[0].calc_bounds();
-                assert!(icons[0].vertices.iter().all(|vertex| vertex.color
-                    == if open {
-                        super::FG
-                    } else {
-                        super::TAB_INACTIVE_FG
-                    }));
-                let title_center = frame
-                    .shapes
-                    .iter()
-                    .find_map(|shape| match &shape.shape {
-                        Shape::Text(text) if text.galley.job.text == "nekomata" => {
-                            Some(text.visual_bounding_rect().center().y)
-                        }
-                        _ => None,
-                    })
-                    .unwrap();
-                assert!(
-                    (icon_rect.center().y - title_center - 2.0).abs() <= 0.5 / density,
-                    "menu silhouette needs a small optical offset below the tab title center"
-                );
-                assert!((icon_rect.center().x - menu_rect.center().x).abs() <= 0.5 / density);
-                let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
+                for open in [false, true] {
+                    let mut menu_rect = egui::Rect::NOTHING;
+                    let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
+                            ui.spacing_mut().interact_size.y = super::ui_size(ui.style(), 30.0);
+                            menu_rect = super::menu_button(ui, open).rect;
+                            super::tab_button(ui, "nekomata", false);
+                        });
+                    });
+                    let icons: Vec<_> = frame
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            Shape::Mesh(mesh) if menu_rect.contains_rect(mesh.calc_bounds()) => {
+                                Some(mesh)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(icons.len(), 1, "menu must show the nekomata image");
+                    let icon_rect = icons[0].calc_bounds();
+                    assert!(icons[0].vertices.iter().all(|vertex| vertex.color
+                        == if open {
+                            super::FG
+                        } else {
+                            super::TAB_INACTIVE_FG
+                        }));
+                    let title_center = frame
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == "nekomata" => {
+                                Some(text.visual_bounding_rect().center().y)
+                            }
+                            _ => None,
+                        })
+                        .unwrap();
+                    assert!(
+                        (icon_rect.center().y - title_center - 2.0 * font_size / 14.0).abs()
+                            <= 0.5 / density,
+                        "menu silhouette needs a small optical offset below the tab title center"
+                    );
+                    assert!((icon_rect.center().x - menu_rect.center().x).abs() <= 0.5 / density);
+                    let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
                     Shape::Rect(rect) if rect.rect == menu_rect && rect.fill == super::TAB_ACTIVE_BG));
-                assert_eq!(
-                    highlighted, open,
-                    "menu highlight must follow popup visibility"
-                );
+                    assert_eq!(
+                        highlighted, open,
+                        "menu highlight must follow popup visibility"
+                    );
+                }
             }
         }
     }
