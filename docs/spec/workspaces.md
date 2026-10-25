@@ -8,10 +8,11 @@ felis daemon.
 
 ## The nekomata daemon
 
-- The GUI starts the nekomata daemon on first use. It keeps running after the
-  last window closes.
-- `nekomata daemon stop` stops it. Retained layouts are lost; felis shells
-  keep running.
+- The GUI and `nekomata workspaces list` start the nekomata daemon on first
+  use. It keeps running after the last window closes.
+- `nekomata daemon stop` stops it, and refuses while any window has a
+  workspace attached. It never starts a daemon. Retained layouts are lost;
+  felis shells keep running.
 - Workspaces are held in memory only. Stopping or crashing the daemon, or
   restarting the OS, loses every layout.
 - Client and daemon speak a versioned protocol. On an incompatible version the
