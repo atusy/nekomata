@@ -7,10 +7,10 @@ terminal renderer refuses adapters without compatible texture views.
 
 nekomata is developed on macOS (Apple silicon). Linux has been checked only in
 a virtual machine (X11, software Vulkan), covering images, palette changes,
-input and copying from a selection. Native IME, high-DPI displays and mouse
-use in TUIs have had the least testing with the current GPU renderer on either
-platform; see the [validation reports](../native-rendering-validation.md) for
-what has been checked.
+keyboard input and copying from a selection. With the current GPU renderer,
+native keyboard delivery, mouse selection, resize gestures and high-DPI
+rendering on macOS, and IME composition on both platforms, have not yet been
+formally validated; see the [validation report](../native-rendering-validation.md).
 
 The felis daemon ships in the same package and starts automatically on first
 connection; you do not install it separately.
