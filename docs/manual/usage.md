@@ -56,8 +56,8 @@ Prompt navigation needs a shell that reports prompt boundaries with OSC 133.
   input receives wheel events instead.
 
 - Hovering a link embedded with OSC 8 shows its URL. Cmd+click (macOS) or
-  Ctrl+click (Linux) opens it in the default application; Linux needs
-  `xdg-open`. Plain URL text is not turned into links.
+  Ctrl+click (Linux) opens it in the default application. Plain URL text is
+  not turned into links.
 
   ![Link URL preview](../images/terminal-tools-link.png)
 

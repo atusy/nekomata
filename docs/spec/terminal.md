@@ -25,7 +25,7 @@ Not supported: key release events and OSC 52 clipboard reads.
 
 - Hovering a link embedded with OSC 8 shows its URL.
 - Cmd+click (macOS) or Ctrl+click (Linux) passes the URL to the default
-  application; Linux requires `xdg-open`.
+  application, through `xdg-open` on Linux (bundled with the Nix package).
 - A link that fails felis's validation is not opened; the reason is shown.
 - Plain URL text is not turned into links.
 
