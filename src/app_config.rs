@@ -115,7 +115,16 @@ fn parse_font(font: &toml::Table, out: &mut UiFont, warnings: &mut Warnings) -> 
                 let family = value
                     .as_str()
                     .ok_or_else(|| format!("`{PATH}.family` must be a string"))?;
-                out.family = Some(family.to_owned());
+                // No face is named by blanks; searching would only cost a
+                // scan of every installed font.
+                out.family = if family.trim().is_empty() {
+                    warnings.push(format!(
+                        "`{PATH}.family` is empty; using the default UI font"
+                    ));
+                    None
+                } else {
+                    Some(family.to_owned())
+                };
             }
             "size_px" => {
                 // Either TOML spelling is accepted: 15 and 15.0 are one size.
@@ -346,6 +355,16 @@ mod tests {
                 parse(&format!("[appearance.base.font]\nsize_px = {size}")).unwrap();
             assert_eq!(config.font.size_px, expected, "{size}");
             assert_eq!(warnings.len(), 1, "{size}");
+        }
+    }
+
+    #[test]
+    fn an_empty_family_is_unset_with_a_warning() {
+        for family in ["", "  "] {
+            let (config, warnings) =
+                parse(&format!("[appearance.base.font]\nfamily = \"{family}\"")).unwrap();
+            assert_eq!(config.font.family, None);
+            assert_eq!(warnings.len(), 1, "{family:?}: {warnings:?}");
         }
     }
 
