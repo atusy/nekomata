@@ -7,25 +7,17 @@ License: Apache-2.0; upstream LICENSE is retained here.
 
 The Rust modules, shaders and README are copied from that revision. Cargo.toml
 resolves upstream workspace dependencies against the same pinned git source.
-The application integration patch touches `src/lib.rs`, `src/capture.rs`, and
-`src/shader.wgsl`:
+Only src/lib.rs has an application integration patch:
 
 - `new_embedded` accepts the host Device/Queue and shared FontStack, and uses staged uploads without
   enabling device features or requesting another adapter.
 - The offscreen texture can be sampled, with an Rgba8Unorm compatible view.
 - `embedded_texture_view` exposes that view for egui's native texture registry.
 - Construction does not replace the host's device-lost callback.
-- Embedded glyphs blend in encoded sRGB, matching egui's text composition.
-  A separate glyph pass loads the same attachment through its non-sRGB view;
-  the shader encodes glyph RGB once and leaves coverage/opacity untouched.
-  Backgrounds, images and decorations retain upstream linear-light blending
-  and ordering. The capture path uses the same glyph pass. Standalone surface
-  and offscreen constructors retain upstream behavior.
 
 The upstream renderer still owns shaping, glyph/image atlases, row invalidation,
 instance buffers, decoration shaders and render passes. nekomata does not fork
-those caches or rasterization policies. Text composition is an explicit local
-policy at the embedding seam. There is no CPU frame capture on the interactive path.
+those policies. There is no CPU frame capture on the interactive path.
 
 On upstream updates, compare every vendored file to the pinned source, then
 reapply and validate this seam. Remove the copy when an equivalent public

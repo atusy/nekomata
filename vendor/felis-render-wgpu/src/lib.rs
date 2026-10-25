@@ -286,8 +286,6 @@ pub struct Renderer {
     content_origin_px: [f32; 2],
     bg_pipeline: RenderPipeline,
     fg_pipeline: RenderPipeline,
-    /// Embedded text blends coverage in the same sRGB space as egui.
-    fg_gamma_pipeline: Option<RenderPipeline>,
     deco_pipeline: RenderPipeline,
     image_pipeline: RenderPipeline,
     upload_mode: UploadMode,
@@ -334,7 +332,6 @@ const OFFSCREEN_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 struct Offscreen {
     texture: wgpu::Texture,
     view: TextureView,
-    encoded_view: TextureView,
     /// Built on the first [`Renderer::read_frame`] and dropped on resize.
     staging: Option<Buffer>,
     /// A fresh texture holds no frame, and reading it back would hand
@@ -355,20 +352,13 @@ impl Offscreen {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: OFFSCREEN_FORMAT,
-            usage: TextureUsages::RENDER_ATTACHMENT
-                | TextureUsages::COPY_SRC
-                | TextureUsages::TEXTURE_BINDING,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC | TextureUsages::TEXTURE_BINDING,
             view_formats: &[TextureFormat::Rgba8Unorm],
         });
         let view = texture.create_view(&TextureViewDescriptor::default());
-        let encoded_view = texture.create_view(&TextureViewDescriptor {
-            format: Some(TextureFormat::Rgba8Unorm),
-            ..Default::default()
-        });
         Self {
             texture,
             view,
-            encoded_view,
             staging: None,
             rendered: false,
         }
@@ -588,51 +578,17 @@ impl Renderer {
         stack: FontStack,
     ) -> Result<Self, RendererError> {
         let cfg = offscreen_config(cfg)?;
-        let mut renderer = Self::build_offscreen(
-            device,
-            queue,
-            UploadMode::Staged,
-            width,
-            height,
-            &cfg,
-            stack,
-        );
-        let module = renderer
-            .device
-            .create_shader_module(ShaderModuleDescriptor {
-                label: Some("embedded glyph shader"),
-                source: ShaderSource::Wgsl(pipeline::SHADER_SOURCE.into()),
-            });
-        let layout = renderer
-            .device
-            .create_pipeline_layout(&PipelineLayoutDescriptor {
-                label: Some("embedded glyph pipeline layout"),
-                bind_group_layouts: &[
-                    Some(&renderer.fg_pipeline.get_bind_group_layout(0)),
-                    Some(&renderer.fg_pipeline.get_bind_group_layout(1)),
-                ],
-                immediate_size: 0,
-            });
-        renderer.fg_gamma_pipeline = Some(build_pipeline(
-            &renderer.device,
-            &module,
-            TextureFormat::Rgba8Unorm,
-            PipelineSpec {
-                layout: &layout,
-                vs_entry: "fg_vs",
-                fs_entry: "fg_gamma_fs",
-                buffer_layout: fg_instance_layout(),
-                blend: Some(BlendState::ALPHA_BLENDING),
-            },
-        ));
-        Ok(renderer)
+        Ok(Self::build_offscreen(device, queue, UploadMode::Staged, width, height, &cfg, stack))
     }
 
     /// Sample encoded sRGB pixels as egui expects, without CPU readback or a
     /// second sRGB decode in the compositor. Re-register this view on resize.
     pub fn embedded_texture_view(&self) -> Option<TextureView> {
         match &self.target {
-            Target::Offscreen(target) => Some(target.encoded_view.clone()),
+            Target::Offscreen(target) => Some(target.texture.create_view(&TextureViewDescriptor {
+                format: Some(TextureFormat::Rgba8Unorm),
+                ..Default::default()
+            })),
             Target::Surface { .. } => None,
         }
     }
@@ -843,7 +799,6 @@ impl Renderer {
             content_origin_px: [0.0, 0.0],
             bg_pipeline,
             fg_pipeline,
-            fg_gamma_pipeline: None,
             deco_pipeline,
             image_pipeline,
             upload_mode,
@@ -1194,11 +1149,7 @@ impl Renderer {
                 label: Some("felis frame encoder"),
             });
         self.uploader.encode(&self.device, &mut encoder);
-        let glyph_target = self
-            .fg_gamma_pipeline
-            .as_ref()
-            .and_then(|_| self.embedded_texture_view());
-        self.encode_cell_pass(&mut encoder, cell_target, glyph_target.as_ref(), &counts);
+        self.encode_cell_pass(&mut encoder, cell_target, &counts);
         self.encode_post_pass(&mut encoder, &view, screen, metrics, viewport);
         let submission = self.queue.submit(std::iter::once(encoder.finish()));
         self.mark_instances_submitted(&submission);
@@ -1553,10 +1504,24 @@ impl Renderer {
         &self,
         encoder: &mut CommandEncoder,
         cell_target: &TextureView,
-        glyph_target: Option<&TextureView>,
         counts: &DrawCounts,
     ) {
-        let mut pass = begin_cell_pass(encoder, cell_target, LoadOp::Clear(self.clear_color));
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("felis cell pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: cell_target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(self.clear_color),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
         let Some(viewport_bg) = self.viewport.bind_group() else {
             return;
         };
@@ -1592,27 +1557,10 @@ impl Renderer {
             pass.draw(0..4, 0..counts.img_under_text);
         }
         if let (Some(buf), true) = (self.fg_buffer.buffer(), counts.fg > 0) {
-            // Use the compatible non-sRGB view only for text. The same stored
-            // pixels then blend in encoded sRGB, retaining the rasterizer's
-            // edge coverage instead of brightening it on dark backgrounds.
-            // Loading the actual destination also handles images behind text.
-            if let Some(target) = glyph_target {
-                drop(pass);
-                pass = begin_cell_pass(encoder, target, LoadOp::Load);
-                pass.set_bind_group(0, viewport_bg, &[]);
-            }
-            pass.set_pipeline(self.fg_gamma_pipeline.as_ref().unwrap_or(&self.fg_pipeline));
+            pass.set_pipeline(&self.fg_pipeline);
             pass.set_bind_group(1, self.glyphs.bind_group(), &[]);
             pass.set_vertex_buffer(0, buf.slice(..));
             pass.draw(0..4, 0..counts.fg);
-            if glyph_target.is_some() {
-                drop(pass);
-                if counts.deco == 0 && counts.img_above == 0 {
-                    return;
-                }
-                pass = begin_cell_pass(encoder, cell_target, LoadOp::Load);
-                pass.set_bind_group(0, viewport_bg, &[]);
-            }
         }
         // After the glyphs, so a strikethrough sits over the ink and an
         // underline crosses descenders.
@@ -1814,29 +1762,6 @@ fn select_alpha_mode(
         );
         (opaque_default, false)
     }
-}
-
-fn begin_cell_pass<'a>(
-    encoder: &'a mut CommandEncoder,
-    target: &TextureView,
-    load: LoadOp<Color>,
-) -> wgpu::RenderPass<'a> {
-    encoder.begin_render_pass(&RenderPassDescriptor {
-        label: Some("felis cell pass"),
-        color_attachments: &[Some(RenderPassColorAttachment {
-            view: target,
-            depth_slice: None,
-            resolve_target: None,
-            ops: Operations {
-                load,
-                store: StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes: None,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    })
 }
 
 struct PipelineSpec<'a> {

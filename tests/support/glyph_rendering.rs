@@ -1,15 +1,11 @@
-//! Compare real GPU output with the rasterizer's coverage, independent of the shader.
+//! Verify that the egui compositor preserves the upstream terminal pixels.
 use super::*;
 use felis_client_core::ShadowScreen;
 use felis_grid::{
     Attributes, Cell, Color, Grapheme, StyleTable,
     wire::{RowEncode, encode_row},
 };
-use felis_protocol::{
-    ImageId, RowPayload,
-    messages::{GridMsg, ImageFormat, ImageMsg, ImageTarget, RequestedExtent},
-};
-use felis_shaping::ShapeCache;
+use felis_protocol::{RowPayload, messages::GridMsg};
 
 const COLS: u32 = 40;
 const LINES: [&str; 6] = [
@@ -57,48 +53,6 @@ fn screen(fg: [u8; 3], bg: [u8; 3]) -> ShadowScreen {
     shadow
 }
 
-fn assert_coverage(pixels: &[u8], stack: &FontStack, size: u32, fg: [u8; 3], bg: [u8; 3]) {
-    let metrics = stack.primary().cell_metrics(size as f32);
-    let width = metrics.width * COLS;
-    let mut cache = ShapeCache::default();
-    let mut edge_pixels = 0;
-    let mut worst = 0;
-    // These leading glyphs fit naturally and have no neighbour ink. Other
-    // fixture glyphs may intentionally be fitted/shaped by render-core.
-    for (row, line) in LINES.iter().enumerate() {
-        let bitmap = cache.get_or_insert(stack.primary(), line.chars().next().unwrap(), size);
-        for y in 0..metrics.height {
-            for x in 0..metrics.width {
-                let bx = x as i32 - bitmap.left;
-                let by = y as i32 - metrics.ascent as i32 + bitmap.top;
-                let coverage = if bx >= 0
-                    && by >= 0
-                    && bx < bitmap.width() as i32
-                    && by < bitmap.height() as i32
-                {
-                    bitmap.pixels().as_bytes()[(by as u32 * bitmap.width() + bx as u32) as usize]
-                } else {
-                    0
-                };
-                edge_pixels += usize::from(coverage > 0 && coverage < 255);
-                let a = f32::from(coverage) / 255.0;
-                let offset = ((row as u32 * metrics.height + y) * width + x) as usize * 4;
-                for c in 0..3 {
-                    let expected =
-                        (f32::from(fg[c]) * a + f32::from(bg[c]) * (1.0 - a)).round() as u8;
-                    worst = worst.max(pixels[offset + c].abs_diff(expected));
-                }
-                assert_eq!(pixels[offset + 3], 255);
-            }
-        }
-    }
-    assert!(edge_pixels > 20, "fixture must exercise partial coverage");
-    assert!(
-        worst <= 2,
-        "{size}px fg={fg:?} bg={bg:?}: sRGB coverage error {worst}"
-    );
-}
-
 fn capture(name: &str, width: u32, height: u32, pixels: &[u8]) {
     let Some(directory) = std::env::var_os("NEKOMATA_GLYPH_CAPTURE") else {
         return;
@@ -116,7 +70,7 @@ fn capture(name: &str, width: u32, height: u32, pixels: &[u8]) {
 
 #[test]
 #[ignore = "requires a GPU adapter and NEKOMATA_FONT; run in nix develop with --ignored"]
-fn gpu_glyph_coverage_matches_srgb_composition() {
+fn gpu_compositor_preserves_terminal_pixels() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let instance = wgpu::Instance::default();
     let adapter = runtime
@@ -169,79 +123,172 @@ fn gpu_glyph_coverage_matches_srgb_composition() {
             let mut pixels = Vec::new();
             gpu.read_frame(&mut pixels).unwrap();
             capture(&format!("glyph-{name}-{size}"), width, height, &pixels);
-            assert_coverage(&pixels, &stack, size, fg, bg);
-            assert!(gpu.capture_last_frame().unwrap().painted_pixels > 0);
-
-            // The text pass must blend against the actual destination, not
-            // an assumed cell background, and keep the image z-order intact.
-            let image_color = [64, 96, 128];
-            let mut images = ImageShadow::new();
-            let id = ImageId(1);
-            for msg in [
-                ImageMsg::Header {
-                    id,
-                    target: ImageTarget::New {
-                        width,
-                        height,
-                        format: ImageFormat::Rgb24,
-                        serial: None,
-                    },
-                },
-                ImageMsg::Chunk {
-                    id,
-                    bytes: image_color.repeat((width * height) as usize).into(),
-                },
-                ImageMsg::Complete { id },
-            ] {
-                images.apply(&msg).unwrap();
-            }
-            for z_index in [-1, 1] {
-                images
-                    .apply(&ImageMsg::Placement {
-                        image_id: id,
-                        placement_id: Some(felis_protocol::PlacementId(1)),
-                        anchor_row: 1,
-                        anchor_col: 1,
-                        cols: COLS as u16,
-                        rows: LINES.len() as u16,
-                        source: None,
-                        z_index,
-                        requested: Some(RequestedExtent {
-                            cols: COLS as u16,
-                            rows: LINES.len() as u16,
-                        }),
-                        serial: None,
-                    })
-                    .unwrap();
-                let mut layout = Default::default();
-                images.layout_into(
-                    &mut layout,
-                    shadow.screen(),
-                    (metrics.width as f32, metrics.height as f32),
-                    0,
+            for ppp in [1.0, 1.25, 1.5, 2.0] {
+                assert_presented_pixels(
+                    &device,
+                    &queue,
+                    &gpu.embedded_texture_view().unwrap(),
+                    [width, height],
+                    &pixels,
+                    ppp,
+                    &format!("glyph-{name}-{size}"),
                 );
-                gpu.render(
-                    shadow.screen(),
-                    &images.take_dirty_images(),
-                    &Images(&images),
-                    &layout,
-                    0,
-                    0,
-                )
-                .unwrap();
-                gpu.read_frame(&mut pixels).unwrap();
-                if z_index < 0 {
-                    assert_coverage(&pixels, &stack, size, fg, image_color);
-                } else {
-                    assert!(
-                        pixels
-                            .as_chunks::<4>()
-                            .0
-                            .iter()
-                            .all(|p| *p == [64, 96, 128, 255])
-                    );
-                }
             }
+            assert!(gpu.capture_last_frame().unwrap().painted_pixels > 0);
         }
     }
+}
+
+// Exercise the final egui draw, not only the terminal's offscreen attachment.
+fn assert_presented_pixels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: &wgpu::TextureView,
+    size: [u32; 2],
+    expected: &[u8],
+    ppp: f32,
+    name: &str,
+) {
+    use eframe::egui_wgpu::{Renderer as EguiRenderer, RendererOptions, ScreenDescriptor};
+    let [width, height] = size;
+    let canvas = [width + 32, height + 32];
+    let ctx = egui::Context::default();
+    ctx.set_pixels_per_point(ppp);
+    let mut renderer = EguiRenderer::new(
+        device,
+        wgpu::TextureFormat::Rgba8Unorm,
+        RendererOptions {
+            dithering: false,
+            ..Default::default()
+        },
+    );
+    let texture = renderer.register_native_texture(device, source, wgpu::FilterMode::Nearest);
+    // One unused physical pixel produces a half-pixel top margin. Fractional
+    // pane X positions also occur when the window is divided into columns.
+    let rect = terminal_rect(
+        Rect::from_min_size(
+            Pos2::new(7.5, 9.0) / ppp,
+            Vec2::new(width as f32, height as f32 + 1.0) / ppp,
+        ),
+        LINES.len() as u16,
+        height as f32 / LINES.len() as f32 / ppp,
+        ppp,
+    );
+    let output = crate::test_support::run(
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::ZERO,
+                Vec2::new(canvas[0] as f32, canvas[1] as f32) / ppp,
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            ui.ctx()
+                .layer_painter(egui::LayerId::background())
+                .with_clip_rect(rect)
+                .image(
+                    texture,
+                    rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+        },
+    );
+    let primitives = output.tessellate(&ctx);
+    let descriptor = ScreenDescriptor {
+        size_in_pixels: canvas,
+        pixels_per_point: ppp,
+    };
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("egui glyph presentation test"),
+        size: wgpu::Extent3d {
+            width: canvas[0],
+            height: canvas[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&Default::default());
+    let pitch = (canvas[0] * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("egui glyph presentation readback"),
+        size: u64::from(pitch * canvas[1]),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let callbacks = renderer.update_buffers(device, queue, &mut encoder, &primitives, &descriptor);
+    assert!(callbacks.is_empty());
+    {
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui glyph presentation"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+            .forget_lifetime();
+        renderer.render(&mut pass, &primitives, &descriptor);
+    }
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &target,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(pitch),
+                rows_per_image: Some(canvas[1]),
+            },
+        },
+        wgpu::Extent3d {
+            width: canvas[0],
+            height: canvas[1],
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, |result| result.unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
+    let x = (rect.min.x * ppp).round() as usize;
+    let y = (rect.min.y * ppp).round() as usize;
+    let actual: Vec<_> = (0..height as usize)
+        .flat_map(|row| {
+            let offset = (y + row) * pitch as usize + x * 4;
+            mapped[offset..offset + width as usize * 4].iter().copied()
+        })
+        .collect();
+    capture(&format!("{name}-presented-{ppp}"), width, height, &actual);
+    let errors = actual
+        .iter()
+        .zip(expected)
+        .filter(|(a, b)| a.abs_diff(**b) > 1)
+        .count();
+    assert_eq!(
+        errors, 0,
+        "egui must preserve every source pixel at {ppp}x ({rect:?})"
+    );
 }

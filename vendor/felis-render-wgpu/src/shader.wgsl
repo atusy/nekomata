@@ -100,7 +100,8 @@ fn fg_vs(@builtin(vertex_index) vid: u32, inst: FgInstance) -> FgVsOut {
     return out;
 }
 
-fn glyph_color(in: FgVsOut) -> vec4<f32> {
+@fragment
+fn fg_fs(in: FgVsOut) -> @location(0) vec4<f32> {
     if (in.is_color > 0.5) {
         // Color emoji: the atlas holds straight (non-premultiplied)
         // sRGB RGBA, so the sampler returns linear color. Composite the
@@ -116,25 +117,6 @@ fn glyph_color(in: FgVsOut) -> vec4<f32> {
     // through anti-aliased pixels.
     let coverage = textureSample(atlas_tex, atlas_sampler, in.uv).r;
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
-}
-
-@fragment
-fn fg_fs(in: FgVsOut) -> @location(0) vec4<f32> {
-    return glyph_color(in);
-}
-
-// The embedded glyph pass targets a non-sRGB view of the same attachment.
-// Encode RGB once, leaving coverage/opacity linear, so fixed-function blending
-// matches egui's sRGB text composition. The other passes retain linear blending.
-@fragment
-fn fg_gamma_fs(in: FgVsOut) -> @location(0) vec4<f32> {
-    let c = glyph_color(in);
-    let rgb = select(
-        1.055 * pow(max(c.rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055,
-        12.92 * c.rgb,
-        c.rgb <= vec3<f32>(0.0031308),
-    );
-    return vec4<f32>(rgb, c.a);
 }
 
 // ---- Decoration pass (SGR underlines / strikethrough / overline) ----
