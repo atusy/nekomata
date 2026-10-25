@@ -18,15 +18,23 @@ Your workspace layouts are lost, but your shells keep running in felis;
 ## An update to felis does not take effect
 
 Restarting the GUI does not restart the felis daemon, which owns your shells.
-To switch to the updated daemon, exit your existing shells, stop it, and
-start nekomata again:
+Ask the running daemon to replace itself with the felis bundled with
+nekomata, keeping every session:
 
 ```sh
-nix develop github:atusy/nekomata --command felis daemon stop
+nix develop github:atusy/nekomata --command felis daemon upgrade
 ```
 
-The bundled felis is the revision nekomata is built against; use it rather
-than another felis on your `PATH`.
+If the daemon refuses, have it stop once your last shell exits, then start
+nekomata again:
+
+```sh
+nix develop github:atusy/nekomata --command felis daemon stop --when-empty
+```
+
+`nix develop` provides the felis revision nekomata is pinned to, at the cost
+of downloading the development environment; use it rather than another felis
+on your `PATH`.
 
 ## macOS asks for permissions in another app's name
 
