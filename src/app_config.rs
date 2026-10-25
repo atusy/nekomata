@@ -48,8 +48,27 @@ fn read(path: &Path, warnings: &mut Warnings) -> anyhow::Result<AppConfig> {
         }
         Err(error) => anyhow::bail!("cannot read {}: {error}", path.display()),
     };
-    parse(&text, warnings)
-        .map_err(|error| anyhow::anyhow!("config {} is invalid: {error}", path.display()))
+    parse(&text, warnings).map_err(|error| {
+        anyhow::anyhow!(
+            "config {} is invalid: {}",
+            path.display(),
+            printable(&error)
+        )
+    })
+}
+
+/// Escapes control characters, which TOML strings and quoted keys can
+/// carry, so a config file cannot drive the terminal showing stderr.
+fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 pub fn load() -> anyhow::Result<AppConfig> {
@@ -61,7 +80,7 @@ pub fn load() -> anyhow::Result<AppConfig> {
     // Report warnings even when the document fails, so one launch shows
     // every problem found before the error.
     for warning in warnings {
-        eprintln!("nekomata: {}: {warning}", path.display());
+        eprintln!("nekomata: {}: {}", path.display(), printable(&warning));
     }
     config
 }
@@ -407,6 +426,16 @@ mod tests {
         let text = "[appearance]\nalpha = 1\n[appearance.base.font]\nfamily = 1";
         assert!(super::parse(text, &mut warnings).is_err());
         assert_eq!(warnings, ["unknown key `appearance.alpha`"]);
+    }
+
+    #[test]
+    fn control_characters_from_the_file_are_escaped_for_stderr() {
+        let (_, warnings) = parse("\"\\u001b]0;x\\u0007\" = 1").unwrap();
+        assert_eq!(warnings.len(), 1);
+        let shown = printable(&warnings[0]);
+        assert!(!shown.chars().any(char::is_control), "{shown}");
+        assert!(shown.contains("\\u{1b}]0;x\\u{7}"), "{shown}");
+        assert_eq!(printable("keymap.\"alt+x\" ✓"), "keymap.\"alt+x\" ✓");
     }
 
     #[test]
