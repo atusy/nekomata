@@ -41,6 +41,26 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
+pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
+    use eframe::egui::{Color32, CornerRadius, Stroke};
+    ui.scope(|ui| {
+        let widgets = &mut ui.visuals_mut().widgets;
+        widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+        widgets.hovered.weak_bg_fill = TAB_HOVER_BG;
+        widgets.active.weak_bg_fill = TAB_HOVER_BG;
+        for state in [
+            &mut widgets.inactive,
+            &mut widgets.hovered,
+            &mut widgets.active,
+        ] {
+            state.corner_radius = CornerRadius::same(5);
+            state.bg_stroke = Stroke::NONE;
+        }
+        tab_button(ui, "≡", open)
+    })
+    .inner
+}
+
 pub fn tab_button(
     ui: &mut eframe::egui::Ui,
     title: &str,
@@ -139,6 +159,49 @@ pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn menu_trigger_matches_tab_ink_and_shows_its_open_state() {
+        use eframe::egui::{self, epaint::Shape};
+        for density in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(density);
+            ctx.set_fonts(super::chrome_fonts());
+            for open in [false, true] {
+                let mut menu_rect = egui::Rect::NOTHING;
+                let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
+                        ui.spacing_mut().interact_size.y = 30.0;
+                        menu_rect = super::menu_button(ui, open).rect;
+                        super::tab_button(ui, "nekomata", false);
+                    });
+                });
+                let ink_center = |label| {
+                    frame
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == label => {
+                                Some(text.visual_bounding_rect().center().y)
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                assert!(
+                    (ink_center("≡") - ink_center("nekomata")).abs() <= 0.5 / density,
+                    "menu icon and tab title must share their visible vertical center"
+                );
+                let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
+                    Shape::Rect(rect) if rect.rect == menu_rect && rect.fill == super::TAB_ACTIVE_BG));
+                assert_eq!(
+                    highlighted, open,
+                    "menu highlight must follow popup visibility"
+                );
+            }
+        }
+    }
+
     #[test]
     fn tab_title_ink_is_vertically_centered() {
         use eframe::egui::{self, epaint::Shape};

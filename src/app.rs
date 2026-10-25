@@ -1234,11 +1234,8 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
                     ui.spacing_mut().interact_size.y = 30.0;
-                    let menu_button = ui.add(
-                        egui::Button::new(egui::RichText::new("≡").color(TAB_INACTIVE_FG))
-                            .frame(false)
-                            .min_size(Vec2::splat(30.0)),
-                    );
+                    let menu_open = egui::Popup::is_id_open(ui.ctx(), main_menu_id());
+                    let menu_button = crate::theme::menu_button(ui, menu_open);
                     let search_width = if self.searching() {
                         ui.available_width().min(360.0)
                     } else {
@@ -1714,6 +1711,10 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
     response.on_hover_text(label)
 }
 
+fn main_menu_id() -> egui::Id {
+    egui::Id::unique("main-menu")
+}
+
 fn show_tab_bar_menu<R>(
     button: &egui::Response,
     tab_bar: Rect,
@@ -1724,6 +1725,7 @@ fn show_tab_bar_menu<R>(
         egui::pos2(button.rect.right(), tab_bar.bottom()),
     );
     egui::Popup::menu(button)
+        .id(main_menu_id())
         .anchor(anchor)
         .align(egui::RectAlign::BOTTOM_START)
         .align_alternatives(&[])
@@ -3169,7 +3171,7 @@ mod tests {
                                 })
                                 .inner
                             });
-                        egui::Popup::open_id(&ctx, egui::Popup::menu(&tabs.inner).get_id());
+                        egui::Popup::open_id(&ctx, main_menu_id());
                         let menu = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
                             ui.set_min_size(Vec2::new(256.0, 450.0));
                         })
