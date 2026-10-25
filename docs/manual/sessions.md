@@ -5,14 +5,20 @@ Closing the pane leaves the session running, so you can attach to it later.
 
 ## Reattaching a session
 
+`≡` → `Attach terminal…` lists the sessions of the local daemon and opens the
+one you pick in a new tab. To list them from a shell:
+
 ```sh
 nekomata felis sessions list
 nekomata felis sessions list --format json
 ```
 
-`≡` → `Attach terminal…` opens a session from the local daemon in a new tab.
+Without installing nekomata, use
+`nix run github:atusy/nekomata -- felis sessions list`. To move a session into
+an existing pane instead, see [Retargeting a pane](#retargeting-a-pane).
 
-Set `FELIS_SOCKET` to use a local felis daemon other than the default.
+nekomata uses the default local felis daemon. Start nekomata with
+`FELIS_SOCKET` set to use another one.
 
 ## Retargeting a pane
 
