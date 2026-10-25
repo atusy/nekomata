@@ -55,8 +55,8 @@ size (see [configuration](configuration.md#font-size-precedence)).
 4. Only then does the switch commit and the source lease end.
 
 If any step fails — including a destination session that errors, ends or
-detaches, or the requesting CLI disconnecting — the reservation is cancelled
-and the window keeps its current workspace.
+detaches — the reservation is cancelled and the window keeps its current
+workspace. Interrupting a CLI that requested the switch does not cancel it.
 
 ## Closing panes and tabs
 
