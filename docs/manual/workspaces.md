@@ -49,8 +49,9 @@ window closes. It holds workspaces in memory only.
   which loses layouts.
 - nekomata daemon stop or crash: **layouts are lost**. felis shells survive,
   so you can [attach to them again](sessions.md).
-- OS restart: **layouts and shells are both lost**; felis keeps sessions in
-  memory too.
+- OS restart: **layouts and local shells are both lost**; felis keeps
+  sessions in memory too. Sessions on an SSH host survive while that host's
+  felis daemon keeps running.
 
 After closing every window, you can stop the daemon. Layouts are lost; shells
 keep running.
