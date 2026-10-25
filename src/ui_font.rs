@@ -42,9 +42,10 @@ fn system_size_px() -> Option<f32> {
 /// matches family names (ignoring case, localized names included).
 ///
 /// Runs once at startup on the GUI thread. Only the matched family's
-/// files are opened, so it takes a few milliseconds, but the first
-/// CoreText query in a process can take a few hundred while the system
-/// builds its font cache.
+/// files are opened, so it takes about 2 ms. CoreText's per-process setup
+/// costs a few hundred milliseconds on its first query, but by the time
+/// the app is created opening the window has already paid it, so neither
+/// this nor `default_size_px` waits on it there.
 pub fn find(family: &str) -> Option<Face> {
     let (path, index) = select(&platform::candidates(family), family)?;
     Some(Face {
