@@ -60,7 +60,7 @@ command palette.
   ![Rectangular selection](../images/terminal-tools-rectangle.png)
 
 - The wheel or trackpad scrolls the scrollback. A TUI that requests mouse
-  input receives wheel events instead; hold Shift to scroll anyway.
+  input receives wheel events instead.
 
 - Hovering a link embedded with OSC 8 shows its URL. Cmd+click (macOS) or
   Ctrl+click (Linux) opens it in the default application. Plain URL text is
