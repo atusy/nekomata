@@ -84,6 +84,9 @@ pub fn parse_sequence(spelling: &str) -> Result<Vec<Chord>, String> {
     {
         return Err("Escape cancels a pending sequence, so it can only start one".into());
     }
+    if !keys.iter().all(is_deliverable) {
+        return Err("the window cannot report this chord, so it never arrives as a key".into());
+    }
     if keys.iter().any(is_clipboard_chord) {
         return Err(
             "the window turns this chord into a clipboard event, so it never arrives as a key"
@@ -91,6 +94,15 @@ pub fn parse_sequence(spelling: &str) -> Result<Vec<Chord>, String> {
         );
     }
     Ok(keys)
+}
+
+/// egui reports Super only as macOS's Cmd, and only keys it has a
+/// [`Key`] for; any other chord parses but can never be pressed.
+fn is_deliverable(chord: &Chord) -> bool {
+    if !cfg!(target_os = "macos") && chord.mods.contains(TerminalModifiers::SUPER) {
+        return false;
+    }
+    Key::ALL.iter().any(|&key| terminal_key(key) == chord.key)
 }
 
 /// Mirrors egui-winit's clipboard shortcuts (`is_cut_command` and siblings):

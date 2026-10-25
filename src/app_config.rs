@@ -829,6 +829,42 @@ mod tests {
     }
 
     #[test]
+    fn chords_the_window_cannot_deliver_are_dropped() {
+        let (config, warnings) = parse(
+            r#"[keymap]
+            "alt+é" = { kind = "new_tab" }
+            "alt+w ctrl+¥" = { kind = "close_tab" }
+            "super+n" = { kind = "close_tab" }
+            "ctrl+'" = { kind = "command_palette" }
+        "#,
+        )
+        .unwrap();
+        let undeliverable = if cfg!(target_os = "macos") { 2 } else { 3 };
+        assert_eq!(warnings.len(), undeliverable, "{warnings:#?}");
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| warning.contains("never arrives")),
+            "{warnings:#?}"
+        );
+        let mut expected = AppKeymap::default();
+        let mut entries = vec![(
+            "ctrl+'".to_string(),
+            crate::shortcuts::parse_sequence("ctrl+'").unwrap(),
+            Some(Action::Palette),
+        )];
+        if cfg!(target_os = "macos") {
+            entries.push((
+                "super+n".into(),
+                crate::shortcuts::parse_sequence("super+n").unwrap(),
+                Some(Action::CloseTab),
+            ));
+        }
+        expected.apply(entries, &mut vec![]);
+        assert_eq!(config.keymap, expected);
+    }
+
+    #[test]
     fn a_sequence_behind_a_bound_chord_is_dropped_with_a_warning() {
         let (config, warnings) = parse(
             r#"[keymap]
