@@ -10,7 +10,7 @@ nekomata felis sessions list
 nekomata felis sessions list --format json
 ```
 
-`≡` → `Attach…` opens a session from the local daemon in a new tab.
+`≡` → `Attach terminal…` opens a session from the local daemon in a new tab.
 
 Set `FELIS_SOCKET` to use a local felis daemon other than the default.
 
