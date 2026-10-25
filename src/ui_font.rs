@@ -207,7 +207,7 @@ mod platform {
     }
 }
 
-/// Compiled on macOS for its tests, which run when libfontconfig loads.
+/// Compiled on macOS for its tests; the dev shell provides libfontconfig.
 #[cfg(any(not(target_os = "macos"), test))]
 mod fontconfig {
     use std::ffi::{CStr, CString, OsStr, c_int};
@@ -408,6 +408,12 @@ mod tests {
             return skip();
         };
         let Some(lib) = fontconfig::library() else {
+            // The dev shell and package build provide the library and set
+            // this, so a missing one fails there instead of passing.
+            assert!(
+                std::env::var_os("NEKOMATA_REQUIRE_FONTCONFIG").is_none(),
+                "libfontconfig is not loadable"
+            );
             eprintln!("skipped: libfontconfig is not loadable");
             return;
         };
