@@ -441,6 +441,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn workspace_payloads_keep_their_wire_names_for_running_daemons() {
+        let workspace = Payload::Session {
+            id: 3,
+            snapshot: Snapshot::default(),
+        };
+        let json = serde_json::to_value(&workspace).unwrap();
+        assert_eq!(json["Session"]["id"], 3);
+        assert_eq!(
+            serde_json::to_value(Payload::Sessions(vec![])).unwrap(),
+            serde_json::json!({"Sessions": []})
+        );
+    }
+
+    #[test]
     fn startup_resumes_the_latest_unattached_session() {
         let mut registry = Registry::default();
         let older = registry.claim(1, 101, Selection::New).unwrap();

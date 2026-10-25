@@ -279,6 +279,15 @@ mod tests {
         task.await.unwrap().unwrap();
     }
 
+    #[test]
+    fn workspace_switch_keeps_its_wire_name_for_running_windows() {
+        let request = Request::Switch { session: Some(7) };
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({"Switch": {"session": 7}})
+        );
+    }
+
     #[tokio::test]
     async fn oversized_requests_never_reach_the_gui() {
         let (mut client, server) = UnixStream::pair().unwrap();
