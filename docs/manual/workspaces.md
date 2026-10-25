@@ -42,8 +42,10 @@ window closes. It holds workspaces in memory only.
 
 - GUI restart, update or crash: workspaces are restored (after a crash, up to
   the last state the daemon received).
-- nekomata daemon stop or crash, or an OS restart: **layouts are lost**. felis
-  shells survive, so you can [attach to them again](sessions.md).
+- nekomata daemon stop or crash: **layouts are lost**. felis shells survive,
+  so you can [attach to them again](sessions.md).
+- OS restart: **layouts and shells are both lost**; felis keeps sessions in
+  memory too.
 
 After closing every window, you can stop the daemon. Layouts are lost; shells
 keep running.
