@@ -123,7 +123,7 @@ impl Pane {
             ("NEKOMATA_PANE_ID".into(), id.to_string()),
         ];
         if let Some(id) = workspace {
-            env.push(("NEKOMATA_SESSION_ID".into(), id.to_string()));
+            env.push((control::WORKSPACE_ENV.into(), id.to_string()));
         }
         Self::from_session(Arc::new(Session::start(
             runtime,
@@ -2630,7 +2630,7 @@ mod tests {
         let command = replacement.runtime.spawn(async move {
             let result = tokio::process::Command::new(routing_executable)
                 .args(["panes", "list"])
-                .env("NEKOMATA_SESSION_ID", id.to_string())
+                .env(control::WORKSPACE_ENV, id.to_string())
                 .env("NEKOMATA_WINDOW_ID", u32::MAX.to_string())
                 .output()
                 .await
