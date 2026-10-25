@@ -86,7 +86,8 @@ pub fn load() -> anyhow::Result<AppConfig> {
 }
 
 /// Unknown keys and unusable values warn; a value of the wrong shape is an
-/// error, as in felis's document.
+/// error, as in felis's document. `[keymap]` entries are the exception:
+/// they follow felis's per-entry rule and a malformed one is dropped.
 fn parse(text: &str, warnings: &mut Warnings) -> Result<AppConfig, String> {
     let root: toml::Table = text.parse().map_err(|error| format!("{error}"))?;
     let mut config = AppConfig::default();
