@@ -55,10 +55,11 @@ when none is configured.
 
 A missing file at the default path is not an error. felis-client-core
 classifies every other problem as an error or a warning. Errors — syntax
-errors, read failures and most type errors — stop startup. Warnings, such as
-unknown keys or a malformed individual `keymap` or `font.fallback` entry,
-skip the offending item and are not shown; `felis config check --client
-nekomata` reports both kinds.
+errors, read failures and most type errors — stop startup. Warnings do not
+stop startup and are not shown: the offending item is skipped (unknown keys,
+a malformed individual `keymap` or `font.fallback` entry) or adjusted (an
+out-of-range font size is clamped). `felis config check --client nekomata`
+reports both kinds.
 
 ## Application layer
 
