@@ -51,7 +51,12 @@ Dock so that nekomata starts the daemon.
   [Configuration](configuration.md)).
 - Some felis sections are not honored by nekomata yet: `window`, `shader`,
   `mouse` and `clipboard`.
-- Look for warnings on standard error.
+- Look for warnings on standard error. Only nekomata's own file reports
+  warnings there; to check felis's file as nekomata reads it, run:
+
+  ```sh
+  nix develop github:atusy/nekomata --command felis config check --client nekomata
+  ```
 
 ## Layouts are gone
 
