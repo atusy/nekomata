@@ -1,0 +1,76 @@
+# Keymap
+
+## Dispatch order
+
+A key press is offered, in order, to:
+
+1. the application keymap (nekomata's `[keymap]`),
+2. the terminal keymap (felis's `[keymap]`, resolved for `nekomata`),
+3. the terminal program.
+
+A layer that does not consume the key forwards it to the next. A terminal
+keymap entry bound to an action nekomata does not implement is forwarded to
+the terminal program. While the search field has focus, input is not sent to
+the terminal.
+
+## Default bindings
+
+Application keymap:
+
+| Sequence | Action |
+| --- | --- |
+| `alt+c` | `new_tab` |
+| `alt+t` / `alt+shift+t` | `switch_tab` next / previous |
+| `alt+w alt+s` | `split` down |
+| `alt+w alt+v` | `split` right |
+| `alt+w c` | `close_pane` |
+| `alt+w h` / `j` / `k` / `l` | `focus_pane` left / down / up / right |
+| `alt+shift+p` | `command_palette` |
+
+Terminal keymap defaults are felis's. Unmodified `End` is sent to the terminal
+program.
+
+## Application keymap entries
+
+An entry has the same form as felis's keymap: `"keys" = { kind = "…", … }`.
+A single keystroke is written as in felis (`alt+shift+t`, `f5`,
+`ctrl+shift++`). Keystrokes separated by spaces form a sequence: `"alt+w c"`
+means Alt+W followed by C.
+
+| `kind` | Arguments | Action |
+| --- | --- | --- |
+| `new_tab` | — | Open a tab |
+| `close_tab` | — | Close the active tab |
+| `switch_tab` | `to = "next" \| "previous"` | Activate the next / previous tab |
+| `split` | `direction = "down" \| "right"` | Open a pane below / right of the active pane |
+| `close_pane` | — | Close the active pane (detaches its session) |
+| `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` or `to = "next"` | Focus a neighboring / the next pane |
+| `command_palette` | — | Open the command palette |
+| `new_workspace` | — | Switch to a new workspace |
+| `open_workspaces` | — | Open the workspace list |
+| `unbind` | — | Remove bindings (see below) |
+
+## Rules
+
+- A user entry replaces the default binding for the same sequence.
+- Binding a single keystroke disables every default sequence that starts with
+  it. For example, binding `alt+w` removes all default `alt+w …` sequences.
+- A sequence whose first keystroke is itself bound can never complete; it is
+  ignored with a warning.
+- `unbind` removes the sequence and every sequence that starts with it.
+- Entries are applied in byte order of their key strings. An `unbind` can
+  therefore remove a user entry spelled so that it sorts earlier (for example
+  `"alt+w" = { kind = "unbind" }` removes `"Alt+w v"`); this is reported as a
+  warning.
+- Escape cancels a pending sequence, so it may appear only as the first
+  keystroke. Entries such as `"ctrl+a escape"` are ignored with a warning.
+- A key that continues no pending sequence ends the sequence and is forwarded
+  to the next layer.
+- Entries containing keystrokes the window can never report are ignored with
+  a warning:
+  - Cmd+X / Cmd+C / Cmd+V on macOS, and Ctrl+X / Ctrl+C / Ctrl+V elsewhere,
+    without Alt or Shift, which the window turns into clipboard events;
+  - `super` outside macOS;
+  - characters egui does not treat as keys, such as `é`.
+- Copy, paste, font size, scrolling and search are terminal actions and are
+  bound in felis's keymap, not here.
