@@ -12,8 +12,7 @@ pub struct Presentation {
 }
 
 impl Presentation {
-    pub fn new(now: Instant) -> Self {
-        let config = CursorConfig::default();
+    pub fn new(now: Instant, config: &CursorConfig) -> Self {
         Self {
             blink: BlinkClock::new(config.blink, config.blink_interval_ms, now),
             cursor: None,
@@ -81,7 +80,7 @@ impl Presentation {
         if let Some(overlay) = &mut self.preedit {
             overlay.anchor = cursor;
         }
-        changed |= self.blink.tick(now, wants_blink);
+        changed |= focused && self.blink.tick(now, wants_blink);
         changed || was_visible != self.blink.visible()
     }
 
@@ -89,7 +88,9 @@ impl Presentation {
         self.blink.visible()
     }
     pub fn next_deadline(&self, wants_blink: bool) -> Option<Instant> {
-        self.blink.next_deadline(wants_blink)
+        self.focused
+            .then(|| self.blink.next_deadline(wants_blink))
+            .flatten()
     }
 }
 
@@ -99,9 +100,23 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn configured_never_blink_keeps_the_cursor_visible() {
+        let now = Instant::now();
+        let config = CursorConfig {
+            blink: felis_client_core::config::CursorBlinkMode::Never,
+            ..Default::default()
+        };
+        let mut state = Presentation::new(now, &config);
+        state.update(now, (0, 0), true, true, &[]);
+        state.update(now + Duration::from_secs(1), (0, 0), true, true, &[]);
+        assert!(state.cursor_visible());
+        assert!(state.next_deadline(true).is_none());
+    }
+
+    #[test]
     fn ime_ranges_are_converted_from_characters_to_utf8_bytes_and_cleared_on_commit() {
         let now = Instant::now();
-        let mut state = Presentation::new(now);
+        let mut state = Presentation::new(now, &CursorConfig::default());
         assert!(state.update(
             now,
             (2, 3),
@@ -129,7 +144,7 @@ mod tests {
     #[test]
     fn blink_restarts_on_input_and_does_not_schedule_an_unfocused_cursor() {
         let now = Instant::now();
-        let mut state = Presentation::new(now);
+        let mut state = Presentation::new(now, &CursorConfig::default());
         state.update(now, (0, 0), true, true, &[]);
         assert!(state.cursor_visible());
         let later = now + Duration::from_millis(531);

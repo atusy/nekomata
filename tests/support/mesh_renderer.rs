@@ -75,7 +75,7 @@ impl Renderer {
             ),
             TextureOptions::NEAREST,
         );
-        let theme = crate::theme::terminal_theme();
+        let theme = felis_render_core::palette::Theme::default();
         Ok(Self {
             font_size,
             ppp,
@@ -530,6 +530,10 @@ mod tests {
     fn right_edge_background_extension_does_not_stretch_the_cursor() {
         let ctx = egui::Context::default();
         let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        renderer.theme.cursor = Some(felis_render_core::palette::srgb_to_linear_rgba(
+            [163, 190, 140],
+            1.0,
+        ));
         let mut shadow = ShadowScreen::new(1, 3);
         shadow
             .apply(&GridMsg::CursorState {
@@ -673,16 +677,16 @@ mod tests {
     }
 
     #[test]
-    fn shared_renderer_preserves_the_existing_terminal_palette() {
+    fn shared_renderer_uses_the_upstream_terminal_palette() {
         let ctx = egui::Context::default();
         let renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
         assert_eq!(
             linear_rgba_to_srgb8(renderer.theme.palette[4]),
-            [129, 161, 193, 255]
+            [0, 0, 238, 255]
         );
         assert_eq!(
             linear_rgba_to_srgb8(renderer.theme.bg),
-            crate::theme::BG.to_array()
+            linear_rgba_to_srgb8(felis_render_core::palette::Theme::default().bg)
         );
     }
 

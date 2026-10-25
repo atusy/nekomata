@@ -1,5 +1,4 @@
 use eframe::egui::Color32;
-use felis_protocol::messages::SessionToDaemonMsg;
 
 pub const BG: Color32 = Color32::from_rgb(20, 23, 31);
 pub const FG: Color32 = Color32::from_rgb(216, 222, 233);
@@ -8,40 +7,6 @@ pub const TAB_BAR_BG: Color32 = Color32::from_rgb(24, 28, 37);
 pub const TAB_ACTIVE_BG: Color32 = Color32::from_rgb(48, 55, 68);
 pub const TAB_HOVER_BG: Color32 = Color32::from_rgb(36, 43, 54);
 pub const TAB_INACTIVE_FG: Color32 = Color32::from_rgb(140, 149, 167);
-
-pub const ANSI_PALETTE: [[u8; 3]; 16] = [
-    [46, 52, 64],
-    [191, 97, 106],
-    [163, 190, 140],
-    [235, 203, 139],
-    [129, 161, 193],
-    [180, 142, 173],
-    [136, 192, 208],
-    [229, 233, 240],
-    [76, 86, 106],
-    [191, 97, 106],
-    [163, 190, 140],
-    [235, 203, 139],
-    [129, 161, 193],
-    [180, 142, 173],
-    [143, 188, 187],
-    [236, 239, 244],
-];
-
-pub fn terminal_theme() -> felis_render_core::palette::Theme {
-    use felis_render_core::palette::{Theme, srgb_to_linear_rgba};
-    let linear = |color: Color32| srgb_to_linear_rgba([color.r(), color.g(), color.b()], 1.0);
-    let mut theme = Theme {
-        fg: linear(FG),
-        bg: linear(BG),
-        cursor: Some(linear(ACCENT)),
-        ..Theme::default()
-    };
-    for (slot, rgb) in theme.palette.iter_mut().zip(ANSI_PALETTE) {
-        *slot = Some(rgb);
-    }
-    theme
-}
 
 pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
 pub const MENU_WIDTH: f32 = 256.0;
@@ -76,16 +41,178 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
-pub fn configure() -> SessionToDaemonMsg {
-    let rgb = |color: Color32| (color.r(), color.g(), color.b());
-    SessionToDaemonMsg::ConfigureTheme {
-        fg: Some(rgb(FG)),
-        bg: Some(rgb(BG)),
-        cursor: Some(rgb(ACCENT)),
-        palette: ANSI_PALETTE
-            .into_iter()
-            .enumerate()
-            .map(|(index, [r, g, b])| (index as u8, (r, g, b)))
-            .collect(),
+pub fn tab_button(
+    ui: &mut eframe::egui::Ui,
+    title: &str,
+    selected: bool,
+) -> eframe::egui::Response {
+    use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
+    let color = if selected { FG } else { TAB_INACTIVE_FG };
+    let galley = ui.painter().layout_no_wrap(
+        title.to_owned(),
+        TextStyle::Button.resolve(ui.style()),
+        color,
+    );
+    let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response
+        .widget_info(|| WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, title));
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        ui.painter().rect_filled(
+            rect,
+            visuals.corner_radius,
+            if selected {
+                TAB_ACTIVE_BG
+            } else {
+                visuals.weak_bg_fill
+            },
+        );
+        if galley.mesh_bounds.is_finite() {
+            // Font line boxes include asymmetric ascent/descent whitespace.
+            // Keep the button size, but center the visible glyphs vertically.
+            let pos = egui::pos2(
+                rect.center().x - galley.size().x / 2.0,
+                rect.center().y - galley.mesh_bounds.center().y,
+            );
+            ui.painter().galley(pos, galley, color);
+        }
+    }
+    if response.hovered()
+        && let Some(cursor) = ui.visuals().interact_cursor
+    {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    response
+}
+
+/// Application fonts are independent of terminal configuration.
+pub fn chrome_fonts() -> eframe::egui::FontDefinitions {
+    use eframe::egui::{FontData, FontDefinitions, FontFamily};
+    let mut fonts = FontDefinitions::default();
+    for path in [
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert("cjk".into(), FontData::from_owned(bytes).into());
+            // Use one face for both Japanese and Latin in titles. Mixing a
+            // Latin primary with this taller fallback shifts CJK baselines.
+            fonts
+                .families
+                .entry(FontFamily::Proportional)
+                .or_default()
+                .insert(0, "cjk".into());
+            fonts
+                .families
+                .entry(FontFamily::Monospace)
+                .or_default()
+                .push("cjk".into());
+            break;
+        }
+    }
+    // Spinner titles can contain Braille, which neither the default egui
+    // fonts nor the CJK face necessarily covers.
+    for path in [
+        "/System/Library/Fonts/Apple Symbols.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+    ] {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert("symbols".into(), FontData::from_owned(bytes).into());
+            for kind in [FontFamily::Monospace, FontFamily::Proportional] {
+                fonts
+                    .families
+                    .entry(kind)
+                    .or_default()
+                    .push("symbols".into());
+            }
+            break;
+        }
+    }
+    fonts
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tab_title_ink_is_vertically_centered() {
+        use eframe::egui::{self, epaint::Shape};
+        for density in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(density);
+            ctx.set_fonts(super::chrome_fonts());
+            for title in [
+                "確認する felis設定の読み込み | nekomata",
+                "⠇ 確認する",
+                "English gy",
+            ] {
+                for selected in [false, true] {
+                    let mut rect = egui::Rect::NOTHING;
+                    let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                        ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
+                        rect = super::tab_button(ui, title, selected).rect;
+                    });
+                    let ink = frame
+                        .shapes
+                        .iter()
+                        .find_map(|shape| match &shape.shape {
+                            Shape::Text(text) if text.galley.job.text == title => {
+                                Some(text.visual_bounding_rect())
+                            }
+                            _ => None,
+                        })
+                        .expect("tab title is painted");
+                    let difference = ink.center().y - rect.center().y;
+                    assert!(
+                        difference.abs() <= 0.5 / density,
+                        "title={title:?}, density={density}, offset={difference}, ink={ink:?}, button={rect:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tab_titles_cover_braille_spinners_and_japanese() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts());
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            assert!(ui.fonts_mut(|fonts| fonts.has_glyphs(
+                &egui::FontId::proportional(14.0),
+                "⠇ 確認する felis設定の読み込み | nekomata"
+            )));
+        });
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tab_titles_share_a_baseline_across_japanese_and_latin() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts());
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            let galley = ui.painter().layout_no_wrap(
+                "H確f認".into(),
+                egui::FontId::proportional(14.0),
+                egui::Color32::WHITE,
+            );
+            let glyphs = &galley.rows[0].glyphs;
+            let baseline = glyphs[0].pos.y;
+            for glyph in glyphs {
+                assert!(
+                    (glyph.pos.y - baseline).abs() <= 0.5,
+                    "{} is off baseline: {} vs {}",
+                    glyph.chr,
+                    glyph.pos.y,
+                    baseline
+                );
+            }
+        });
     }
 }
