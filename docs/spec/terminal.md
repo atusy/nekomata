@@ -31,10 +31,11 @@ Not supported: key release events and OSC 52 clipboard reads.
 
 ## Paste
 
-- Pasting text that contains newlines or other control characters into a
-  terminal without bracketed paste asks for confirmation.
-- Plain text and tabs, and any paste while bracketed paste is enabled, are sent
-  without confirmation.
+- Pasting text that contains a C0 control character other than tab
+  (U+0000–U+001F, such as a newline) into a terminal without bracketed paste
+  asks for confirmation.
+- Any other text, including tabs, DEL and C1 controls, and any paste while
+  bracketed paste is enabled, is sent without confirmation.
 - If the pane's connection changes while confirmation is pending, the paste is
   discarded.
 
