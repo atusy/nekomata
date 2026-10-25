@@ -16,7 +16,8 @@ Not supported: key release events and OSC 52 clipboard reads.
 
 ## Selection
 
-- Dragging selects text; Alt+drag selects a rectangle.
+- Dragging selects text; Alt+drag selects a rectangle. Double-click selects a
+  word and triple-click a line.
 - When the terminal program uses the mouse, Shift+drag selects text and
   Shift+Alt+drag selects a rectangle.
 
@@ -40,7 +41,9 @@ Not supported: key release events and OSC 52 clipboard reads.
 ## Scrolling
 
 - Wheel and trackpad input scrolls the scrollback; when the terminal program
-  requests mouse input, it receives wheel events instead.
+  requests mouse input, it receives wheel events instead, unless Shift is held.
+- The alternate screen has no scrollback: there, wheel input reaches the
+  program only when it requests mouse input.
 - Consecutive scroll requests are coalesced and sent to supporting daemons as
   relative moves.
 - Prompt navigation requires the shell to report OSC 133 prompt boundaries.
