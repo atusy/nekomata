@@ -58,15 +58,12 @@ presents — is retained by a dedicated nekomata daemon, not by a GUI window.
 - Replacing the GUI keeps tab layouts and running commands.
 - One process arbitrates simultaneous startup and workspace switches.
 - The direct felis transport and rendering stay unchanged.
-- Clients and the daemon need a versioned protocol, and incompatible versions
-  stop with an error until the user restarts the daemon.
+- Clients and the daemon need a versioned protocol, and a protocol change
+  requires users to retire the running daemon.
 - Layout changes travel to the daemon asynchronously, so a GUI crash can lose
   the latest changes that had not reached it.
-
-## Decision–Implementation Gap
-
-The daemon keeps workspaces in memory only. Restarting the nekomata daemon or
-the OS loses every layout; disk persistence is deferred.
+- Retained layouts last only as long as the daemon unless it also persists
+  them, which this decision leaves open.
 
 ## Related Decisions
 
