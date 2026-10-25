@@ -38,7 +38,10 @@ adds only its application layer.
   issue, or issued once.
 - Closing a pane detaches its felis session explicitly; it does not end the
   shell.
-- Keystrokes reach felis in the order they were typed.
+- Keystrokes reach felis in the order they were typed, through bounded
+  queues: a stalled connection must not grow memory without limit.
+- Drawing, mouse input and IME share one coordinate system per pane, so what
+  the user points at is the cell felis drew there.
 
 ## Considered Options
 
@@ -59,6 +62,17 @@ adds only its application layer.
 - The local embedding patch must be audited on every felis update.
 - Shared code reduces duplication but does not guarantee faster rendering on
   every GPU adapter.
+
+## Decision–Implementation Gap
+
+Two pieces of terminal client policy are still nekomata's own copies:
+
+- **SSH connection and reconnection.** nekomata runs its own SSH relay and
+  retry loop instead of felis's carrier and redial, because it must keep
+  ownership of the `ssh` child process across cancellation and reconnects.
+- **Scrollback search navigation.** nekomata keeps its own result list,
+  limits and viewport projection, mirroring the standalone felis GUI, because
+  felis's client libraries do not expose a search model.
 
 ## Related Decisions
 
