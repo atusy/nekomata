@@ -39,11 +39,14 @@ it.
 
 ### Font size precedence
 
-- At GUI startup, the configured terminal font size takes precedence over a
-  workspace's saved size.
+The resolved terminal font size is the configured size, or felis's default
+when none is configured.
+
+- At GUI startup, the resolved size replaces the restored workspace's saved
+  size, so configuration edits are never hidden by a saved zoom.
 - Switching to an existing workspace after startup restores that workspace's
   saved size.
-- New workspaces and font-size reset use the configured size.
+- New workspaces and font-size reset use the resolved size.
 
 ### Errors
 
@@ -74,9 +77,10 @@ dialogs. It never affects terminal text.
 - The default UI font is `/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc` on
   macOS and `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (the
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
-  built-in font. A configured family leads UI text and the default faces
-  remain its fallbacks.
-- `size_px`: integer or float. Defaults to felis's default `font.size_px`.
+  built-in font. A configured family leads proportional UI text and the
+  default faces remain its fallbacks.
+- `size_px`: integer or float. Defaults to felis's built-in default terminal
+  font size (14 px), regardless of the configured terminal size.
   Values outside 4–72 are clamped into range; zero, negative and non-finite
   values use the default.
 
