@@ -13,8 +13,9 @@ clients, with `[client.<id>]` overlays. Its vocabulary describes a terminal
 client; it has no concept of tabs or panes, and its binding actions form a
 closed set. felis's own design note
 (`docs/explanation/architecture/control-surfaces.md`, "One config document, no
-per-client file") names per-client documents as the answer once a client needs
-sections that other clients must not read.
+per-client file") rejects per-client files for shared settings, but lists a
+client whose vocabulary other clients must not read as the condition to
+revisit that, with per-client drop-in files as the answer.
 
 ## Decision
 
