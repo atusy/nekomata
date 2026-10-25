@@ -73,7 +73,7 @@ impl CommandPalette {
         let viewport = ctx.content_rect();
         let top = (viewport.height() * 0.12).min(64.0);
         let width = (viewport.width() - 48.0).clamp(100.0, theme::PALETTE_WIDTH);
-        let list_height = (viewport.height() - top - 120.0).clamp(32.0, theme::PALETTE_LIST_HEIGHT);
+        let list_height = (viewport.height() - top - 88.0).clamp(32.0, theme::PALETTE_LIST_HEIGHT);
         let mut chosen = None;
         let id = egui::Id::unique("command_palette");
         let response = egui::Modal::new(id)
@@ -156,16 +156,6 @@ impl CommandPalette {
                             }
                         }
                     });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{} results", matches.len()))
-                                .size(12.0)
-                                .color(theme::TAB_INACTIVE_FG),
-                        );
-                    });
-                });
             });
         let dismissed = response.should_close();
         (if dismissed { None } else { chosen }, dismissed)
