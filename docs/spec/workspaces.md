@@ -36,8 +36,10 @@ one pane.
 ## Saving
 
 - The GUI sends layout snapshots to the daemon as the layout changes.
-- Closing a window saves its layout and detaches the workspace; the GUI exits
-  after the daemon acknowledges the detach.
+- Closing a window saves its layout and detaches the workspace, waiting up to
+  6 seconds for the daemon to acknowledge. If saving fails or times out, the
+  GUI reports it on standard error and exits anyway. A window closed during a
+  workspace switch detaches without saving.
 - After a GUI crash, the workspace restores up to the last snapshot the daemon
   received.
 
