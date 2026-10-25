@@ -350,11 +350,13 @@ mod tests {
 
     #[test]
     fn unknown_keys_warn_and_the_rest_applies() {
-        let (config, warnings) = parse(
+        let (config, mut warnings) = parse(
             "top = 1\n[appearance]\ntheme = \"x\"\n[appearance.tab_bar]\n[appearance.base]\ncolors = {}\n[appearance.base.font]\nsize_px = 16\nweight = 400",
         )
         .unwrap();
         assert_eq!(config.font.size_px, Some(16.0));
+        // The order follows toml's map, which is not part of the contract.
+        warnings.sort();
         assert_eq!(
             warnings,
             [
