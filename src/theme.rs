@@ -85,7 +85,11 @@ pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Respo
         let side = ui_size(ui.style(), 20.0).min(rect.height());
         ui.painter().image(
             texture.id(),
-            egui::Rect::from_center_size(rect.center(), egui::vec2(side, side)),
+            // Optically align the cat silhouette with the adjacent tab text.
+            egui::Rect::from_center_size(
+                rect.center() + egui::vec2(0.0, ui_size(ui.style(), 2.0)),
+                egui::vec2(side, side),
+            ),
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             if open { FG } else { TAB_INACTIVE_FG },
         );
@@ -242,8 +246,8 @@ mod tests {
                     })
                     .unwrap();
                 assert!(
-                    (icon_rect.center().y - title_center).abs() <= 0.5 / density,
-                    "menu icon and tab title must share their visible vertical center"
+                    (icon_rect.center().y - title_center - 2.0).abs() <= 0.5 / density,
+                    "menu silhouette needs a small optical offset below the tab title center"
                 );
                 assert!((icon_rect.center().x - menu_rect.center().x).abs() <= 0.5 / density);
                 let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
