@@ -23,7 +23,8 @@ With [Nix](https://nixos.org/) and flakes enabled:
 nix run github:atusy/nekomata
 ```
 
-The felis daemon ships with nekomata and starts when it opens a new shell.
+The felis daemon ships with nekomata and starts when nekomata opens a new
+shell.
 nekomata is developed on macOS (Apple silicon); the flake also builds for
 Linux (x86_64, aarch64), which is less tested. See
 [installation](docs/manual/installation.md) for requirements.
