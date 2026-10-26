@@ -11,8 +11,8 @@ pub struct CommandPalette {
     selected: usize,
 }
 
-/// The closed set of label prefixes; see the naming ADR
-/// (docs/ADR/20261026-230753-name-palette-commands-by-category-and-verb-phrase.md).
+/// The closed set of label prefixes; see the ADR
+/// name-palette-commands-by-category-and-verb-phrase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Category {
     Workspace,
