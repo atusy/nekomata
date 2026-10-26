@@ -64,7 +64,7 @@ Keys for tabs and panes, and the UI font, go in nekomata's own
 # ~/Library/Application Support/nekomata/config.toml (macOS)
 # ~/.config/nekomata/config.toml (Linux)
 [keymap]
-"ctrl+a s" = { kind = "split", direction = "down" }
+"ctrl+a s" = { kind = "split", direction = "below" }
 "ctrl+a v" = { kind = "split", direction = "right" }
 ```
 
