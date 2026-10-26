@@ -130,7 +130,7 @@ pub fn tab_button(
         color,
     );
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response
         .widget_info(|| WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, title));
     if ui.is_rect_visible(rect) {

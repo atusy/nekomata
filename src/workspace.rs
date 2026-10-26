@@ -35,6 +35,23 @@ impl Tab {
     }
 }
 
+/// Moves `tabs[from]` into the gap before `tabs[to]` (`to == tabs.len()` means
+/// the end) and returns the index of the tab that was at `active`.
+pub fn move_tab(tabs: &mut Vec<Tab>, active: usize, from: usize, to: usize) -> usize {
+    let dest = if to > from { to - 1 } else { to };
+    let tab = tabs.remove(from);
+    tabs.insert(dest, tab);
+    if active == from {
+        dest
+    } else if from < active && active <= dest {
+        active - 1
+    } else if dest <= active && active < from {
+        active + 1
+    } else {
+        active
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaneSpec {
     pub target: crate::session::Target,
@@ -131,5 +148,62 @@ impl Snapshot {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tabs(names: &[&str]) -> Vec<Tab> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(id, name)| Tab {
+                name: (*name).into(),
+                layout: Layout::Pane(id as u64),
+                focused: id as u64,
+                focus_history: vec![id as u64],
+            })
+            .collect()
+    }
+
+    fn names(tabs: &[Tab]) -> Vec<&str> {
+        tabs.iter().map(|tab| tab.name.as_str()).collect()
+    }
+
+    #[test]
+    fn moving_a_tab_inserts_it_before_the_target_slot() {
+        let mut list = tabs(&["a", "b", "c", "d"]);
+        move_tab(&mut list, 0, 0, 3);
+        assert_eq!(names(&list), ["b", "c", "a", "d"]);
+        move_tab(&mut list, 0, 3, 0);
+        assert_eq!(names(&list), ["d", "b", "c", "a"]);
+        move_tab(&mut list, 0, 1, 4);
+        assert_eq!(names(&list), ["d", "c", "a", "b"]);
+    }
+
+    #[test]
+    fn dropping_a_tab_beside_itself_keeps_the_order() {
+        let mut list = tabs(&["a", "b", "c"]);
+        assert_eq!(move_tab(&mut list, 2, 1, 1), 2);
+        assert_eq!(move_tab(&mut list, 2, 1, 2), 2);
+        assert_eq!(names(&list), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn moving_tabs_keeps_the_same_tab_active() {
+        // Active tab is the one moved.
+        let mut list = tabs(&["a", "b", "c"]);
+        assert_eq!(move_tab(&mut list, 0, 0, 3), 2);
+        // Active tab shifts left when a tab before it moves past it.
+        let mut list = tabs(&["a", "b", "c"]);
+        assert_eq!(move_tab(&mut list, 1, 0, 3), 0);
+        // Active tab shifts right when a tab after it moves before it.
+        let mut list = tabs(&["a", "b", "c"]);
+        assert_eq!(move_tab(&mut list, 1, 2, 0), 2);
+        // Active tab outside the moved range stays put.
+        let mut list = tabs(&["a", "b", "c", "d"]);
+        assert_eq!(move_tab(&mut list, 3, 0, 2), 3);
     }
 }
