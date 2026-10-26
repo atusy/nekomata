@@ -209,19 +209,7 @@ impl CommandPalette {
                 egui::Modal::default_area(id)
                     .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top)),
             )
-            .frame(
-                egui::Frame::new()
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, 8],
-                        blur: 24,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(100),
-                    })
-                    .fill(theme::TAB_BAR_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::MENU_BORDER))
-                    .corner_radius(10)
-                    .inner_margin(12),
-            )
+            .frame(theme::overlay_frame())
             .show(ctx, |ui| {
                 theme::menu_style(ui.style_mut());
                 ui.visuals_mut().weak_text_color = Some(theme::TAB_INACTIVE_FG);

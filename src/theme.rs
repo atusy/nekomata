@@ -68,6 +68,22 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
+/// The floating panel behind the command palette and the controls it opens.
+pub fn overlay_frame() -> eframe::egui::Frame {
+    use eframe::egui;
+    egui::Frame::new()
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 8],
+            blur: 24,
+            spread: 0,
+            color: Color32::from_black_alpha(100),
+        })
+        .fill(TAB_BAR_BG)
+        .stroke(egui::Stroke::new(1.0, MENU_BORDER))
+        .corner_radius(10)
+        .inner_margin(12)
+}
+
 pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let size = (egui::vec2(
