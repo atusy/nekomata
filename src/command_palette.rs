@@ -22,7 +22,6 @@ enum Category {
     Scrollback,
     Clipboard,
     Font,
-    Window,
 }
 
 impl Category {
@@ -35,7 +34,6 @@ impl Category {
             Self::Scrollback => "Scrollback",
             Self::Clipboard => "Clipboard",
             Self::Font => "Font",
-            Self::Window => "Window",
         }
     }
 }
@@ -130,7 +128,9 @@ fn commands() -> Vec<Command> {
         command(Pane, "Close", Action::ClosePane)
             .detail("Detaches its session; the shell keeps running")
             .keywords(&["detach"]),
-        command(Session, "Attach…", Action::AttachSession).keywords(&["picker", "open"]),
+        command(Session, "Attach…", Action::AttachSession)
+            .detail("Opens a local daemon session in a new tab")
+            .keywords(&["picker", "open"]),
         command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
         command(
             Scrollback,
@@ -160,22 +160,7 @@ fn commands() -> Vec<Command> {
         command(Clipboard, "Paste", Action::Paste),
         command(Font, "Change size…", Action::ChangeFontSize)
             .keywords(&["zoom", "larger", "smaller", "reset", "text"]),
-        command(Window, "Show keyboard shortcuts", Action::ShowShortcuts)
-            .keywords(&["help", "keymap"]),
     ]
-}
-
-/// `(keys, label)` for each palette command that nekomata's own keymap
-/// binds, so that help spells commands as the palette does. Opening the
-/// palette itself is not a palette command and is left out.
-pub(crate) fn bound_commands(hints: &crate::shortcuts::Hints) -> Vec<(String, String)> {
-    commands()
-        .into_iter()
-        .filter_map(|command| match hints.get(&command.action) {
-            "" => None,
-            keys => Some((keys.to_owned(), command.label())),
-        })
-        .collect()
 }
 
 /// Every query word must appear in the label or the keywords, in any
@@ -196,6 +181,7 @@ impl CommandPalette {
         &mut self,
         ctx: &egui::Context,
         hints: &crate::shortcuts::Hints,
+        prompt_unavailable: Option<&'static str>,
     ) -> (Option<Action>, bool) {
         let (up, down, enter) = ctx.input_mut(|input| {
             (
@@ -265,22 +251,37 @@ impl CommandPalette {
                                     .color(theme::TAB_INACTIVE_FG),
                             );
                         }
-                        for (index, command) in matches.iter().enumerate() {
+                        for (index, mut command) in matches.into_iter().enumerate() {
+                            let unavailable = if matches!(
+                                command.action,
+                                Action::Terminal(felis_client_core::Action::ScrollToPrompt(_))
+                            ) {
+                                prompt_unavailable
+                            } else {
+                                None
+                            };
+                            if let Some(reason) = unavailable {
+                                command.detail = Some(reason);
+                            }
                             let selected = index == self.selected;
                             let height = match command.detail {
                                 Some(_) => detail_row_height,
                                 None => row_height,
                             };
-                            let row = ui.add_sized(
-                                [ui.available_width(), height],
-                                egui::Button::new(command.row_text(ui.style()))
-                                    .shortcut_text(hints.get(&command.action))
-                                    .selected(selected),
-                            );
+                            let row = ui
+                                .add_enabled_ui(unavailable.is_none(), |ui| {
+                                    ui.add_sized(
+                                        [ui.available_width(), height],
+                                        egui::Button::new(command.row_text(ui.style()))
+                                            .shortcut_text(hints.get(&command.action))
+                                            .selected(selected),
+                                    )
+                                })
+                                .inner;
                             if selected && (up || down || search.changed()) {
                                 row.scroll_to_me(Some(egui::Align::Center));
                             }
-                            if row.clicked() || (enter && selected) {
+                            if unavailable.is_none() && (row.clicked() || (enter && selected)) {
                                 chosen = Some(command.action.clone());
                             }
                         }
@@ -318,10 +319,104 @@ mod tests {
         };
         let mut result = (None, false);
         let _ = crate::test_support::run(ctx, input, |ui| {
-            result = palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints())
+            result = palette.show(
+                ui.ctx(),
+                &crate::shortcuts::AppKeymap::default().hints(),
+                None,
+            )
         });
         result
     }
+    #[test]
+    fn unavailable_prompt_jumps_explain_why_and_recover_without_reopening() {
+        use felis_client_core::Action::ScrollToPrompt;
+        use felis_protocol::messages::PromptJump;
+        for (query, direction) in [
+            ("previous prompt", PromptJump::Previous),
+            ("next prompt", PromptJump::Next),
+        ] {
+            for reason in [
+                "Unavailable while disconnected",
+                "Unavailable in the alternate screen",
+            ] {
+                let ctx = egui::Context::default();
+                let mut palette = CommandPalette {
+                    query: query.into(),
+                    selected: 0,
+                };
+                frame(&ctx, &mut palette, &[]);
+                let enter = egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                let mut result = (None, false);
+                let output = crate::test_support::run(
+                    &ctx,
+                    egui::RawInput {
+                        events: vec![enter],
+                        ..Default::default()
+                    },
+                    |ui| {
+                        result = palette.show(
+                            ui.ctx(),
+                            &crate::shortcuts::AppKeymap::default().hints(),
+                            Some(reason),
+                        );
+                    },
+                );
+                assert_eq!(result, (None, false));
+                let row = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Text(text) if text.galley.text().contains(reason) => {
+                            Some(text.pos)
+                        }
+                        _ => None,
+                    })
+                    .expect("the disabled row must show its reason");
+                let pos = row + egui::vec2(5.0, 5.0);
+                for pressed in [true, false] {
+                    let _ = crate::test_support::run(
+                        &ctx,
+                        egui::RawInput {
+                            events: vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: egui::Modifiers::NONE,
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            result = palette.show(
+                                ui.ctx(),
+                                &crate::shortcuts::AppKeymap::default().hints(),
+                                Some(reason),
+                            );
+                        },
+                    );
+                    assert_eq!(result, (None, false));
+                }
+                assert_eq!(
+                    frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+                    Some(Action::Terminal(ScrollToPrompt(direction)))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shortcut_help_is_not_a_palette_command() {
+        assert!(matching("keyboard shortcuts").is_empty());
+    }
+
     #[test]
     fn labels_name_a_category_then_an_imperative_verb_phrase() {
         const CATEGORIES: &[&str] = &[
@@ -332,7 +427,6 @@ mod tests {
             "Scrollback",
             "Clipboard",
             "Font",
-            "Window",
         ];
         const VERBS: &[&str] = &[
             "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
@@ -373,7 +467,6 @@ mod tests {
             (Action::Copy, "Clipboard: Copy selection"),
             (Action::Paste, "Clipboard: Paste"),
             (Action::AttachSession, "Session: Attach…"),
-            (Action::ShowShortcuts, "Window: Show keyboard shortcuts"),
             (Action::ChangeFontSize, "Font: Change size…"),
         ] {
             assert!(labels.contains(&(action, label.into())), "{label}");
@@ -381,16 +474,13 @@ mod tests {
     }
 
     #[test]
-    fn key_bound_commands_are_listed_with_their_keys() {
-        let hints = crate::shortcuts::AppKeymap::default().hints();
-        let bound = bound_commands(&hints);
-        assert!(bound.contains(&(hints.get(&Action::NewTab).to_owned(), "Tab: Create".into())));
-        assert!(bound.contains(&(
-            hints.get(&Action::Split(Axis::Vertical)).to_owned(),
-            "Pane: Split below".into()
-        )));
-        assert!(bound.iter().all(|(keys, _)| !keys.is_empty()));
-        assert!(!bound.iter().any(|(_, label)| label == "Workspace: Create"));
+    fn attach_explains_the_local_target_and_new_tab() {
+        let command = commands()
+            .into_iter()
+            .find(|c| c.action == Action::AttachSession)
+            .unwrap();
+        let text = command.row_text(&egui::Style::default()).text;
+        assert!(text.contains("local") && text.contains("new tab"), "{text}");
     }
 
     #[test]
@@ -452,7 +542,11 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints());
+                palette.show(
+                    ui.ctx(),
+                    &crate::shortcuts::AppKeymap::default().hints(),
+                    None,
+                );
             },
         );
         assert_eq!(palette.query, " TAB ");
@@ -511,7 +605,11 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints());
+                        palette.show(
+                            ui.ctx(),
+                            &crate::shortcuts::AppKeymap::default().hints(),
+                            None,
+                        );
                     },
                 );
             }

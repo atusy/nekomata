@@ -6,7 +6,7 @@ The top row holds the command palette button (the cat icon) followed by the
 tabs. The button opens the command palette, as does Alt+Shift+P. The palette
 creates and switches workspaces, adds tabs, splits, focuses and closes panes
 and tabs, attaches sessions, searches and scrolls the scrollback, copies and
-pastes, changes the font size and shows the keyboard shortcuts. Type any words
+pastes and changes the font size. Type any words
 of a command, in any order, to narrow the list; click a command or select it
 with the arrow keys and Enter.
 
@@ -43,7 +43,8 @@ palette shows the current size with buttons to step or reset it. Prompt
 navigation needs a shell that reports prompt boundaries with OSC 133.
 `Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
 `Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
-are also in the command palette.
+are also in the command palette. Prompt jumps are disabled with a reason while
+the active session is disconnected or in the alternate screen.
 
 ## Tabs and panes
 

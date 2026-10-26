@@ -23,3 +23,21 @@ dimmer line under the label.
 A label ending in "…" opens a choice or an input before the command acts.
 Other commands act as soon as they are chosen, though one may still ask for
 confirmation.
+
+Keyboard shortcuts are documented in the manual; the palette has no shortcut
+help action.
+
+`Session: Attach…` states that it opens a local daemon session in a new tab;
+it does not follow the active pane to a remote daemon.
+
+## Prompt navigation availability
+
+Both prompt-jump commands stay visible but are disabled while the active
+session is disconnected or in the alternate screen. Their detail line shows
+the reason (disconnection takes precedence). Clicking a disabled command or
+pressing Enter on it neither executes it nor closes the palette. Availability
+is refreshed each frame.
+
+Otherwise the detail explains the OSC 133 requirement. The client cannot
+infer whether the daemon has a prompt in the requested direction from the
+current screen; an enabled command may therefore leave the viewport unchanged.

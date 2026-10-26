@@ -173,7 +173,6 @@ pub struct App {
     next_id: u64,
     font_size: f32,
     picker: SessionPicker,
-    help: bool,
     shortcuts: Shortcuts,
     palette: bool,
     palette_state: crate::command_palette::CommandPalette,
@@ -235,7 +234,6 @@ impl App {
             next_id: 1,
             font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
             picker: SessionPicker::default(),
-            help: false,
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
             palette_state: Default::default(),
@@ -1068,7 +1066,6 @@ impl App {
                 self.palette_state = Default::default();
             }
             Action::AttachSession => self.picker.open(&self.runtime, ctx),
-            Action::ShowShortcuts => self.help = true,
             Action::ChangeFontSize => self.font_size_open = true,
             Action::FontScale(scale) => {
                 self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
@@ -1084,7 +1081,6 @@ impl App {
                 // Keys cannot paste while these are open, so only the palette
                 // gets here, and it means the terminal. Each one blocks terminal
                 // input and would make the delivered clipboard event stale.
-                self.help = false;
                 self.picker.visible = false;
                 self.workspaces_open = false;
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
@@ -1230,7 +1226,6 @@ impl App {
         // Consume application shortcuts before forwarding terminal events.
         if !paste_pending
             && !self.picker.visible
-            && !self.help
             && !self.palette
             && !self.font_size_open
             && !self.workspaces_open
@@ -1247,7 +1242,6 @@ impl App {
         }
         if !paste_pending
             && !self.picker.visible
-            && !self.help
             && !self.palette
             && !self.font_size_open
             && !self.workspaces_open
@@ -1385,7 +1379,6 @@ impl App {
         let modal = paste_pending
             || self.searching()
             || self.picker.visible
-            || self.help
             || self.palette
             || self.font_size_open
             || self.workspaces_open
@@ -1476,30 +1469,24 @@ impl App {
         if let Some(id) = self.picker.show(&self.runtime, ctx) {
             self.add_tab(ctx, Some(id));
         }
-        if self.help {
-            let hints = self.shortcuts.hints();
-            egui::Window::new("About nekomata").open(&mut self.help).show(ctx, |ui| {
-                // Two spaces separate a sequence's chords; "—" is unbound.
-                let key = |action| match hints.get(&action) {
-                    "" => "—",
-                    text => text,
-                };
-                for (keys, label) in crate::command_palette::bound_commands(hints) {
-                    ui.label(format!("{keys}: {label}"));
-                }
-                ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
-                ui.label("Shift+PageUp / PageDown: scroll half a page · Ctrl+Shift+Home / End: oldest / live output");
-                ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");
-                ui.label(format!("{}: command palette", key(Action::Palette)));
-                ui.label("Drag a tab to reorder it.");
-                ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
-                ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
-                ui.label("Hover an OSC 8 link to preview its URL; Cmd+click (macOS) or Ctrl+click (Linux) opens it.");
-                ui.label("Pastes containing control characters ask for confirmation when bracketed paste is off.");
-            });
-        }
         if self.palette {
-            let (chosen, dismissed) = self.palette_state.show(ctx, self.shortcuts.hints());
+            let prompt_unavailable = {
+                let state = self.panes[&self.tabs[self.active].focused]
+                    .session
+                    .state
+                    .lock()
+                    .unwrap();
+                if !state.connected {
+                    Some("Unavailable while disconnected")
+                } else if state.screen.alt_screen() {
+                    Some("Unavailable in the alternate screen")
+                } else {
+                    None
+                }
+            };
+            let (chosen, dismissed) =
+                self.palette_state
+                    .show(ctx, self.shortcuts.hints(), prompt_unavailable);
             if dismissed || chosen.is_some() {
                 self.palette = false;
             }
@@ -2603,12 +2590,11 @@ mod tests {
         // Pasting from the palette must reach the terminal, whose paste any
         // window that blocks terminal input would otherwise discard.
         app.open_search();
-        app.help = true;
         app.picker.visible = true;
         app.workspaces_open = true;
         app.action(&ctx, Action::Paste);
         assert!(!app.searching());
-        assert!(!app.help && !app.picker.visible && !app.workspaces_open);
+        assert!(!app.picker.visible && !app.workspaces_open);
         assert!(app.paste_requested.take().is_some());
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
@@ -2878,7 +2864,6 @@ mod tests {
             next_id: 1,
             font_size: 15.0,
             picker: SessionPicker::default(),
-            help: false,
             shortcuts: Shortcuts::default(),
             palette: false,
             palette_state: Default::default(),
