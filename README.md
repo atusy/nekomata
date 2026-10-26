@@ -35,14 +35,15 @@ Linux (x86_64, aarch64), which is less tested. See
 | --- | --- |
 | New tab | Alt+C |
 | Next / previous tab | Alt+T / Alt+Shift+T |
-| Split down | Alt+W → Alt+S |
+| Split below | Alt+W → Alt+S |
 | Split right | Alt+W → Alt+V |
 | Move between panes | Alt+W → H / J / K / L |
 | Close pane (the shell keeps running) | Alt+W → C |
 | Command palette | Alt+Shift+P |
 | Search scrollback | Ctrl+Shift+F, or Cmd+F on macOS |
 
-Everything else is in the `≡` menu at the left of the tab bar.
+Everything else is in the command palette, which the cat button at the left
+of the tab bar also opens.
 
 ## Make it yours
 

@@ -3,7 +3,7 @@
 ## Context
 
 nekomata listed its window commands in three hand-written places: the command
-palette, the `≡` menu and the help window. Each place named the same action
+palette, the tab bar's menu and the help window. Each place named the same action
 differently (the palette's "Split top / bottom" was the menu's "Split below"),
 and each new command had to be added to every place by hand. Some commands
 existed in only one of them: attaching a session and showing the keyboard
@@ -18,8 +18,8 @@ reachable from the window. A second menu would grow with it.
 A single command registry in nekomata owns the list of window commands: for
 each command, its action, its category, its label and any search keywords and
 description. The command palette is the only surface that lists these
-commands. The `≡` button opens the command palette rather than a menu of its
-own.
+commands. The button at the left of the tab bar, which opened the menu, opens
+the command palette instead and is named the command palette button.
 
 A command that needs further input opens its own UI from the palette rather
 than being split into several palette entries. Font size is one such command:
@@ -35,14 +35,14 @@ from the registry rather than spelling their own.
 > deliberately unspecified.
 
 - Every command reachable from a window menu is reachable from the command
-  palette, so removing the `≡` menu removes no capability.
-- The palette stays operable with the pointer alone, because the `≡` button
-  is the mouse user's entry to every command.
+  palette, so removing the menu removes no capability.
+- The palette stays operable with the pointer alone, because the command
+  palette button is the mouse user's entry to every command.
 - A command's label is written once, in the registry.
 
 ## Considered Options
 
-1. **Palette only; `≡` opens it.** Chosen. One list and one vocabulary, and
+1. **Palette only; the tab bar button opens it.** Chosen. One list and one vocabulary, and
    the menu's mouse entry point is kept.
 2. **Keep the menu and the palette, both reading the registry.** Removes the
    duplicated lists, but the menu needs its own layout decisions (grouping,
@@ -60,7 +60,7 @@ from the registry rather than spelling their own.
   size control, which is one more click away.
 - The menu's visual grouping by separators is lost; categories in the label
   take its place.
-- The manual can no longer describe commands as "`≡` → item" and refers to the
+- The manual can no longer describe commands as menu paths and refers to the
   palette instead.
 
 ## Related Decisions

@@ -2,8 +2,8 @@
 
 ## The window
 
-The top row reads `≡ | tab1 | tab2 | …`. `≡` opens the command palette, as
-does Alt+Shift+P. The palette lists every window command: creating and
+The top row holds the command palette button (the cat icon) followed by the
+tabs. The button opens the command palette, as does Alt+Shift+P. The palette lists every window command: creating and
 switching workspaces, adding tabs, splitting, focusing and closing panes and
 tabs, attaching sessions, searching and scrolling, the clipboard, the font
 size and the keyboard shortcuts. Type any words of a command, in any order, to
@@ -25,8 +25,8 @@ Default keys are below. `→` means "then press".
 | Search scrollback | Ctrl+Shift+F, or Cmd+F (with or without Shift) on macOS |
 | Copy selection | Ctrl+Shift+C, or Cmd+C on macOS |
 | Paste | Ctrl+Shift+V, or Cmd+V on macOS |
-| Larger / smaller text | Ctrl+Shift+= / Ctrl+Shift+- (also Cmd+= / Cmd+- on macOS) |
-| Reset text size | Ctrl+Shift+0, or Cmd+0 on macOS |
+| Larger / smaller font | Ctrl+Shift+= / Ctrl+Shift+- (also Cmd+= / Cmd+- on macOS) |
+| Reset font size | Ctrl+Shift+0, or Cmd+0 on macOS |
 | Scroll half a page up / down | Shift+PageUp / Shift+PageDown |
 | Jump to oldest / live output | Ctrl+Shift+Home / Ctrl+Shift+End |
 | Previous / next prompt | Ctrl+Shift+Z / Ctrl+Shift+X |
@@ -37,10 +37,12 @@ and the other terminal keys are set in felis's (see
 cannot be rebound; on Linux, plain Ctrl+C always goes to the program, and so
 does Ctrl+V while the clipboard holds text.
 
-Each text size step scales by 1.1. Prompt navigation needs a shell that
-reports prompt boundaries with OSC 133. `Scroll to oldest output`,
-`Scroll to live output`, `Previous prompt` and `Next prompt` are also in the
-command palette.
+Each font size step scales by 1.1; `Font: Change size…` in the command
+palette shows the current size with buttons to step or reset it. Prompt
+navigation needs a shell that reports prompt boundaries with OSC 133.
+`Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
+`Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
+are also in the command palette.
 
 ## Tabs and panes
 
