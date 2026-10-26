@@ -7,8 +7,13 @@ pub struct CommandPalette {
     selected: usize,
 }
 
-fn commands() -> Vec<(&'static str, Action)> {
-    vec![
+struct Command {
+    label: &'static str,
+    action: Action,
+}
+
+fn commands() -> Vec<Command> {
+    [
         ("Find in scrollback", Action::Search),
         ("New workspace", Action::NewWorkspace),
         ("Switch workspace", Action::OpenWorkspaces),
@@ -45,6 +50,9 @@ fn commands() -> Vec<(&'static str, Action)> {
             )),
         ),
     ]
+    .into_iter()
+    .map(|(label, action)| Command { label, action })
+    .collect()
 }
 
 impl CommandPalette {
@@ -111,7 +119,7 @@ impl CommandPalette {
                 let query = self.query.trim().to_lowercase();
                 let matches: Vec<_> = commands()
                     .into_iter()
-                    .filter(|(label, _)| label.to_lowercase().contains(&query))
+                    .filter(|command| command.label.to_lowercase().contains(&query))
                     .collect();
                 if search.changed() {
                     self.selected = 0;
@@ -138,19 +146,19 @@ impl CommandPalette {
                                     .color(theme::TAB_INACTIVE_FG),
                             );
                         }
-                        for (index, (label, action)) in matches.iter().enumerate() {
+                        for (index, command) in matches.iter().enumerate() {
                             let selected = index == self.selected;
                             let row = ui.add_sized(
                                 [ui.available_width(), row_height],
-                                egui::Button::new(*label)
-                                    .shortcut_text(hints.get(action))
+                                egui::Button::new(command.label)
+                                    .shortcut_text(hints.get(&command.action))
                                     .selected(selected),
                             );
                             if selected && (up || down || search.changed()) {
                                 row.scroll_to_me(Some(egui::Align::Center));
                             }
                             if row.clicked() || (enter && selected) {
-                                chosen = Some(action.clone());
+                                chosen = Some(command.action.clone());
                             }
                         }
                     });
@@ -261,7 +269,7 @@ mod tests {
         frame(&ctx, &mut palette, &[egui::Key::ArrowUp]);
         assert_eq!(
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
-            commands().pop().map(|(_, action)| action)
+            commands().pop().map(|command| command.action)
         );
     }
 
