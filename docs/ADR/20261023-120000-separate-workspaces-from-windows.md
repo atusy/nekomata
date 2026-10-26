@@ -1,98 +1,70 @@
 # Keep workspaces in a daemon independent of GUI windows
 
-| | |
-| --- | --- |
-| Status | accepted |
-| Date | 2026-10-23 |
-| Decision-makers | atusy |
+## Context
 
-## Context and Problem Statement
+A UI release requires restarting the GUI. felis keeps shells alive across that
+restart, but a GUI that owns its tab and pane layout loses the working
+environment around them. Users also need to switch between several groups of
+tabs and panes, and must not end up with two windows driving the same group.
 
-> Terminology: this record originally called the retained layout a
-> "nekomata session". It was renamed to "workspace" on 2026-10-25 so that
-> "session" only means a felis session (one shell in the felis daemon).
+felis already owns shells, PTYs, terminal state and scrollback. Whatever keeps
+the layout must not take that ownership over.
 
-A UI release currently requires restarting a GUI that owns its tab and pane
-layout. Felis keeps shells alive, but the working environment is lost. Users
-also need to switch between multiple groups of tabs and panes.
+## Decision
 
-## Decision Drivers
+A workspace — tabs, split geometry, focus and the felis session each pane
+presents — is retained by a dedicated nekomata daemon, not by a GUI window.
 
-- Restart an updated GUI and resume the latest working environment.
-- Preserve felis ownership of shells, PTYs, terminal state and scrollback.
-- Avoid assigning one workspace to multiple windows accidentally.
-- Keep the current environment usable if a switch cannot connect.
+- **The daemon owns workspaces.** It is the single arbiter of which window a
+  workspace belongs to. A window holds a workspace through a lease; losing
+  the window releases the lease, not the workspace.
+- **GUI windows own presentation.** A window publishes its layout to the
+  daemon and restores layouts it receives from it.
+- **Terminal traffic bypasses the nekomata daemon.** Each pane connects to its
+  felis daemon directly, local or over SSH. The nekomata daemon stores only
+  references to felis sessions.
+- **felis owns shells.** Closing a window, tab or pane detaches from a shell
+  but never ends it; nekomata never ends shells.
+
+## Invariants
+
+> The invariants below are normative; the mechanisms that satisfy them are
+> deliberately unspecified.
+
+- A workspace is leased by at most one window at a time, including while
+  several GUIs start simultaneously. Two windows driving one layout would
+  publish conflicting snapshots.
+- A window that fails to reach a destination workspace keeps its current one.
+  A switch that has released the source before the destination is usable
+  leaves the user with no working environment.
+- An incompatible client and daemon refuse to talk rather than replace each
+  other. Replacing a running daemon discards every retained workspace.
 
 ## Considered Options
 
-1. Save window layouts to disk and restore them in each GUI.
-2. Retain workspaces in a dedicated daemon; connect GUI panes directly to felis.
-3. Proxy all felis terminal traffic through a nekomata daemon.
+1. **Save layouts to disk and restore them in each GUI.** A simple process
+   model, but independent GUIs still need shared locking and ownership
+   arbitration, and nothing holds a live roster of workspaces.
+2. **Retain workspaces in a dedicated daemon; connect panes directly to
+   felis.** Chosen. Centralizes ownership while keeping the existing terminal
+   data path, at the cost of a second daemon lifecycle and a small control
+   protocol.
+3. **Proxy all terminal traffic through the nekomata daemon.** Adds a hop to
+   every keystroke and frame and couples UI upgrades to a terminal-facing
+   protocol. Unnecessary, because felis already owns terminal state.
 
-## Decision Outcome
+## Consequences
 
-Choose option 2. A workspace contains tabs, split geometry, focused panes,
-font size and felis session references, including local or SSH targets. The
-GUI publishes layout snapshots to the daemon over a versioned Unix socket.
-Each window holds a connection lease. The daemon atomically claims the most
-recently used unclaimed workspace at startup, creating one when none is available.
-A dropped connection releases the lease without deleting the workspace. Normal
-shutdown saves and waits for an explicit detach acknowledgement before exiting.
+- Replacing the GUI keeps tab layouts and running commands.
+- One process arbitrates simultaneous startup and workspace switches.
+- The direct felis transport and rendering stay unchanged.
+- Clients and the daemon need a versioned protocol, and a protocol change
+  requires users to retire the running daemon.
+- Layout changes travel to the daemon asynchronously, so a GUI crash can lose
+  the latest changes that had not reached it.
+- Retained layouts last only as long as the daemon unless it also persists
+  them, which this decision leaves open.
 
-Switching first waits for the source snapshot to be accepted, then reserves the
-destination while retaining the source lease. The GUI
-connects destination panes before committing the switch; failure cancels the
-reservation. Explicit pane/tab closure still detaches shells in felis.
+## Related Decisions
 
-### Consequences
-
-Positive:
-
-- GUI replacement retains tab layouts and running commands.
-- One daemon arbitrates simultaneous GUI startup and workspace switches.
-- Existing direct felis transport and rendering stay reusable.
-
-Negative:
-
-- Clients and daemon need a compatible protocol. Incompatible versions report
-  an error without replacing a running daemon.
-- Layout changes require asynchronous snapshots; a hard client crash may lose
-  the last changes that have not reached the daemon.
-- This first implementation retains workspaces in daemon memory. Daemon restart
-  does not restore layouts; disk persistence is deferred.
-
-### Confirmation
-
-Use unit/socket tests for latest-unclaimed selection, exclusive leases,
-disconnect cleanup, snapshot restoration, version rejection and switch rollback.
-Use isolated felis integration tests to verify that a replacement client restores
-multiple tabs and split panes with the same live shells. Run Rust formatting,
-tests, Clippy and Nix checks. Report native GUI validation separately.
-
-## Pros and Cons of the Options
-
-### Disk-only layouts
-
-Simple process model, but independent clients still need shared locking and
-ownership arbitration. It does not provide a central live workspace roster.
-
-### Workspace daemon with direct felis connections
-
-Centralizes workspace ownership while keeping the existing terminal data path.
-Requires a second lifecycle and a small control protocol.
-
-### Full terminal proxy
-
-Keeps every terminal connection in the nekomata daemon, but adds another hop and
-couples UI upgrades to a larger terminal-facing protocol. It is unnecessary for
-retaining layouts because felis already owns terminal state.
-
-## Validation
-
-Implemented on 2026-10-23. Socket tests cover lease arbitration, EOF cleanup,
-acknowledged detach, snapshot validation, source-save rejection and protocol
-version rejection. The isolated integration runner verifies GUI replacement,
-CLI routing from a restored shell, workspace switches and rollback while retaining
-shared source connections. A macOS native GUI check also verified workspace
-creation/switching and a full process restart with the same two felis shell IDs
-and split layout. Linux native GUI validation remains outstanding.
+- [Each input layer owns consumption and forwarding](20261025-004911-own-input-consumption-at-each-layer.md)
