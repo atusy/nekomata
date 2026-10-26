@@ -17,7 +17,7 @@ Default keys are below. `→` means "then press".
 | --- | --- |
 | New tab | Alt+C |
 | Next / previous tab | Alt+T / Alt+Shift+T |
-| Split down | Alt+W → Alt+S |
+| Split below | Alt+W → Alt+S |
 | Split right | Alt+W → Alt+V |
 | Close pane | Alt+W → C |
 | Focus left / down / up / right pane | Alt+W → H / J / K / L |

@@ -30,7 +30,7 @@ Application keymap:
 | --- | --- |
 | `alt+c` | `new_tab` |
 | `alt+t` / `alt+shift+t` | `switch_tab` next / previous |
-| `alt+w alt+s` | `split` down |
+| `alt+w alt+s` | `split` below |
 | `alt+w alt+v` | `split` right |
 | `alt+w c` | `close_pane` |
 | `alt+w h` / `j` / `k` / `l` | `focus_pane` left / down / up / right |
@@ -52,7 +52,7 @@ means Alt+W followed by C.
 | `new_tab` | — | Open a tab |
 | `close_tab` | — | Close the active tab |
 | `switch_tab` | `to = "next" \| "previous"` | Activate the next / previous tab |
-| `split` | `direction = "down" \| "right"` | Open a pane below / right of the active pane |
+| `split` | `direction = "below" \| "right"` | Open a pane below / right of the active pane |
 | `close_pane` | — | Close the active pane (detaches its session) |
 | `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` or `to = "next"` | Focus a neighboring / the next pane |
 | `command_palette` | — | Open the command palette |

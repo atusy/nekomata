@@ -300,7 +300,7 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
         ),
         "split" => (
             Some(match field("direction")? {
-                "down" => Action::Split(Axis::Vertical),
+                "below" => Action::Split(Axis::Vertical),
                 "right" => Action::Split(Axis::Horizontal),
                 other => return Err(invalid("direction", other)),
             }),
@@ -607,7 +607,7 @@ mod tests {
             "f2" = { kind = "close_tab" }
             "f3" = { kind = "switch_tab", to = "next" }
             "f4" = { kind = "switch_tab", to = "previous" }
-            "f5" = { kind = "split", direction = "down" }
+            "f5" = { kind = "split", direction = "below" }
             "f6" = { kind = "split", direction = "right" }
             "f7" = { kind = "close_pane" }
             "f8" = { kind = "focus_pane", direction = "left" }
@@ -679,7 +679,7 @@ mod tests {
         let text = r#"[keymap]
             "alt+c" = { kind = "unbind" }
             "alt+w" = { kind = "unbind" }
-            "ctrl+a s" = { kind = "split", direction = "down" }
+            "ctrl+a s" = { kind = "split", direction = "below" }
             "ctrl+a ctrl+a" = { kind = "close_pane" }
             "alt+t" = { kind = "new_tab" }
         "#;
