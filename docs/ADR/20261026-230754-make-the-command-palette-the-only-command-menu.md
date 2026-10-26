@@ -3,11 +3,12 @@
 ## Context
 
 nekomata listed its window commands in three hand-written places: the command
-palette, the tab bar's menu and the help window. Each place named the same action
-differently (the palette's "Split top / bottom" was the menu's "Split below"),
+palette, the tab bar's menu and the help window. Each place named the same
+action differently (the palette's "Split top / bottom" was the menu's "Split below"),
 and each new command had to be added to every place by hand. Some commands
-existed in only one of them: attaching a session and showing the keyboard
-shortcuts were menu-only, and moving focus between panes was in neither.
+existed in only one of them: attaching a session, showing the keyboard
+shortcuts and focusing the next pane were menu-only, and moving focus in a
+direction was in neither.
 
 The command list is expected to grow from about fifteen entries to thirty or
 forty as felis actions such as session switching, fullscreen and piping become
