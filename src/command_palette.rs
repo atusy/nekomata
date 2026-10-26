@@ -399,17 +399,18 @@ mod tests {
 
     #[test]
     fn query_words_match_in_any_order_including_keywords() {
-        let first = |query| {
+        let actions = |query| {
             matching(query)
-                .first()
-                .map(|command| command.action.clone())
+                .into_iter()
+                .map(|command| command.action)
+                .collect::<Vec<_>>()
         };
-        assert_eq!(first("new tab"), Some(Action::NewTab));
-        assert_eq!(first("TAB  New"), Some(Action::NewTab));
-        assert_eq!(first("search"), Some(Action::Search));
-        assert_eq!(first("pane detach"), Some(Action::ClosePane));
-        assert_eq!(first("tab next"), Some(Action::NextTab));
-        assert!(matching("tab zzz").is_empty());
+        assert_eq!(actions("new tab"), [Action::NewTab]);
+        assert_eq!(actions("TAB  New"), [Action::NewTab]);
+        assert_eq!(actions("search"), [Action::Search]);
+        assert_eq!(actions("pane detach"), [Action::ClosePane]);
+        assert_eq!(actions("tab next"), [Action::NextTab]);
+        assert!(actions("tab zzz").is_empty());
         assert_eq!(matching("  ").len(), commands().len());
     }
 
@@ -421,7 +422,7 @@ mod tests {
         frame(&ctx, &mut palette, &[egui::Key::ArrowDown]);
         assert_eq!(
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
-            Some(Action::OpenWorkspaces)
+            commands().into_iter().nth(1).map(|command| command.action)
         );
     }
     #[test]
