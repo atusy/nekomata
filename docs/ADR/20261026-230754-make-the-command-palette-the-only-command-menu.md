@@ -40,3 +40,10 @@ changing the font size, opens its own UI from the palette.
 
 - [Name palette commands by category and verb phrase](20261026-230753-name-palette-commands-by-category-and-verb-phrase.md)
 - [Split configuration into a terminal layer and an application layer](20261024-220000-split-configuration-into-two-layers.md)
+
+## Decision–Implementation Gap
+
+The keyboard-shortcut help action has been removed explicitly: its fixed
+terminal-key descriptions could disagree with the configured bindings. The
+manual documents shortcuts instead, so the former menu capability is no
+longer preserved.

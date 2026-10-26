@@ -14,7 +14,7 @@ the terminal program.
 
 Neither keymap is consulted, and no keyboard input reaches the terminal, while
 the search field, the command palette, the font size control, the workspace
-list, the session picker, help or a paste confirmation is open, or while a
+list, the session picker or a paste confirmation is open, or while a
 workspace switch is in progress. A pending sequence survives these conditions;
 losing window focus cancels it only while key dispatch is active.
 

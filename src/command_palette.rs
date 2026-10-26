@@ -22,7 +22,6 @@ enum Category {
     Scrollback,
     Clipboard,
     Font,
-    Window,
 }
 
 impl Category {
@@ -35,7 +34,6 @@ impl Category {
             Self::Scrollback => "Scrollback",
             Self::Clipboard => "Clipboard",
             Self::Font => "Font",
-            Self::Window => "Window",
         }
     }
 }
@@ -160,22 +158,7 @@ fn commands() -> Vec<Command> {
         command(Clipboard, "Paste", Action::Paste),
         command(Font, "Change size…", Action::ChangeFontSize)
             .keywords(&["zoom", "larger", "smaller", "reset", "text"]),
-        command(Window, "Show keyboard shortcuts", Action::ShowShortcuts)
-            .keywords(&["help", "keymap"]),
     ]
-}
-
-/// `(keys, label)` for each palette command that nekomata's own keymap
-/// binds, so that help spells commands as the palette does. Opening the
-/// palette itself is not a palette command and is left out.
-pub(crate) fn bound_commands(hints: &crate::shortcuts::Hints) -> Vec<(String, String)> {
-    commands()
-        .into_iter()
-        .filter_map(|command| match hints.get(&command.action) {
-            "" => None,
-            keys => Some((keys.to_owned(), command.label())),
-        })
-        .collect()
 }
 
 /// Every query word must appear in the label or the keywords, in any
@@ -323,6 +306,11 @@ mod tests {
         result
     }
     #[test]
+    fn shortcut_help_is_not_a_palette_command() {
+        assert!(matching("keyboard shortcuts").is_empty());
+    }
+
+    #[test]
     fn labels_name_a_category_then_an_imperative_verb_phrase() {
         const CATEGORIES: &[&str] = &[
             "Workspace",
@@ -332,7 +320,6 @@ mod tests {
             "Scrollback",
             "Clipboard",
             "Font",
-            "Window",
         ];
         const VERBS: &[&str] = &[
             "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
@@ -373,24 +360,10 @@ mod tests {
             (Action::Copy, "Clipboard: Copy selection"),
             (Action::Paste, "Clipboard: Paste"),
             (Action::AttachSession, "Session: Attach…"),
-            (Action::ShowShortcuts, "Window: Show keyboard shortcuts"),
             (Action::ChangeFontSize, "Font: Change size…"),
         ] {
             assert!(labels.contains(&(action, label.into())), "{label}");
         }
-    }
-
-    #[test]
-    fn key_bound_commands_are_listed_with_their_keys() {
-        let hints = crate::shortcuts::AppKeymap::default().hints();
-        let bound = bound_commands(&hints);
-        assert!(bound.contains(&(hints.get(&Action::NewTab).to_owned(), "Tab: Create".into())));
-        assert!(bound.contains(&(
-            hints.get(&Action::Split(Axis::Vertical)).to_owned(),
-            "Pane: Split below".into()
-        )));
-        assert!(bound.iter().all(|(keys, _)| !keys.is_empty()));
-        assert!(!bound.iter().any(|(_, label)| label == "Workspace: Create"));
     }
 
     #[test]

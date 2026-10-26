@@ -6,7 +6,7 @@ The top row holds the command palette button (the cat icon) followed by the
 tabs. The button opens the command palette, as does Alt+Shift+P. The palette
 creates and switches workspaces, adds tabs, splits, focuses and closes panes
 and tabs, attaches sessions, searches and scrolls the scrollback, copies and
-pastes, changes the font size and shows the keyboard shortcuts. Type any words
+pastes and changes the font size. Type any words
 of a command, in any order, to narrow the list; click a command or select it
 with the arrow keys and Enter.
 

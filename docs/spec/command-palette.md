@@ -23,3 +23,6 @@ dimmer line under the label.
 A label ending in "…" opens a choice or an input before the command acts.
 Other commands act as soon as they are chosen, though one may still ask for
 confirmation.
+
+Keyboard shortcuts are documented in the manual; the palette has no shortcut
+help action.
