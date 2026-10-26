@@ -285,7 +285,15 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
             .as_str()
             .ok_or_else(|| format!("`{name}` must be a string"))
     };
-    let invalid = |name: &str, value: &str| format!("`{value}` is not a `{name}` for `{kind}`");
+    let invalid = |name: &str, value: &str, accepted: &[&str]| {
+        let quoted: Vec<_> = accepted.iter().map(|value| format!("`{value}`")).collect();
+        let (last, rest) = quoted.split_last().expect("every field accepts a value");
+        let choices = match rest {
+            [] => last.clone(),
+            rest => format!("{} or {last}", rest.join(", ")),
+        };
+        format!("`{value}` is not a `{name}` for `{kind}`; use {choices}")
+    };
     let (action, fields): (_, &[&str]) = match kind {
         "unbind" => (None, &[]),
         "new_tab" => (Some(Action::NewTab), &[]),
@@ -294,15 +302,15 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
             Some(match field("to")? {
                 "next" => Action::NextTab,
                 "previous" => Action::PreviousTab,
-                other => return Err(invalid("to", other)),
+                other => return Err(invalid("to", other, &["next", "previous"])),
             }),
             &["to"],
         ),
         "split" => (
             Some(match field("direction")? {
-                "down" => Action::Split(Axis::Vertical),
+                "below" => Action::Split(Axis::Vertical),
                 "right" => Action::Split(Axis::Horizontal),
-                other => return Err(invalid("direction", other)),
+                other => return Err(invalid("direction", other, &["below", "right"])),
             }),
             &["direction"],
         ),
@@ -318,14 +326,20 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
                     }
                     (false, true) => match field("to")? {
                         "next" => Action::NextPane,
-                        other => return Err(invalid("to", other)),
+                        other => return Err(invalid("to", other, &["next"])),
                     },
                     _ => Action::Focus(match field("direction")? {
                         "left" => Direction::Left,
                         "down" => Direction::Down,
                         "up" => Direction::Up,
                         "right" => Direction::Right,
-                        other => return Err(invalid("direction", other)),
+                        other => {
+                            return Err(invalid(
+                                "direction",
+                                other,
+                                &["left", "down", "up", "right"],
+                            ));
+                        }
                     }),
                 },
             ),
@@ -607,7 +621,7 @@ mod tests {
             "f2" = { kind = "close_tab" }
             "f3" = { kind = "switch_tab", to = "next" }
             "f4" = { kind = "switch_tab", to = "previous" }
-            "f5" = { kind = "split", direction = "down" }
+            "f5" = { kind = "split", direction = "below" }
             "f6" = { kind = "split", direction = "right" }
             "f7" = { kind = "close_pane" }
             "f8" = { kind = "focus_pane", direction = "left" }
@@ -679,7 +693,7 @@ mod tests {
         let text = r#"[keymap]
             "alt+c" = { kind = "unbind" }
             "alt+w" = { kind = "unbind" }
-            "ctrl+a s" = { kind = "split", direction = "down" }
+            "ctrl+a s" = { kind = "split", direction = "below" }
             "ctrl+a ctrl+a" = { kind = "close_pane" }
             "alt+t" = { kind = "new_tab" }
         "#;
@@ -751,6 +765,23 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("felis's config.toml")),
             "{warnings:#?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_value_is_reported_with_the_accepted_ones() {
+        let (config, warnings) = parse(
+            r#"[keymap]
+            "alt+y" = { kind = "split", direction = "down" }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(config.keymap, AppKeymap::default());
+        assert_eq!(
+            warnings,
+            [
+                "`keymap.\"alt+y\"` is dropped: `down` is not a `direction` for `split`; use `below` or `right`"
+            ]
         );
     }
 

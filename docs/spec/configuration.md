@@ -71,7 +71,7 @@ family = "UDEV Gothic NF"
 size_px = 15
 
 [keymap]
-"ctrl+a s" = { kind = "split", direction = "down" }
+"ctrl+a s" = { kind = "split", direction = "below" }
 ```
 
 ### `[appearance.base.font]`

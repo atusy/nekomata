@@ -2,10 +2,13 @@
 
 ## The window
 
-The top row reads `≡ | tab1 | tab2 | …`. The `≡` menu creates and switches
-workspaces, adds tabs, splits and closes panes and tabs, attaches sessions,
-changes the font size and shows help. Most of these are also in the command
-palette (Alt+Shift+P).
+The top row holds the command palette button (the cat icon) followed by the
+tabs. The button opens the command palette, as does Alt+Shift+P. The palette
+creates and switches workspaces, adds tabs, splits, focuses and closes panes
+and tabs, attaches sessions, searches and scrolls the scrollback, copies and
+pastes, changes the font size and shows the keyboard shortcuts. Type any words
+of a command, in any order, to narrow the list; click a command or select it
+with the arrow keys and Enter.
 
 ## Keys
 
@@ -15,7 +18,7 @@ Default keys are below. `→` means "then press".
 | --- | --- |
 | New tab | Alt+C |
 | Next / previous tab | Alt+T / Alt+Shift+T |
-| Split down | Alt+W → Alt+S |
+| Split below | Alt+W → Alt+S |
 | Split right | Alt+W → Alt+V |
 | Close pane | Alt+W → C |
 | Focus left / down / up / right pane | Alt+W → H / J / K / L |
@@ -23,8 +26,8 @@ Default keys are below. `→` means "then press".
 | Search scrollback | Ctrl+Shift+F, or Cmd+F (with or without Shift) on macOS |
 | Copy selection | Ctrl+Shift+C, or Cmd+C on macOS |
 | Paste | Ctrl+Shift+V, or Cmd+V on macOS |
-| Larger / smaller text | Ctrl+Shift+= / Ctrl+Shift+- (also Cmd+= / Cmd+- on macOS) |
-| Reset text size | Ctrl+Shift+0, or Cmd+0 on macOS |
+| Larger / smaller font | Ctrl+Shift+= / Ctrl+Shift+- (also Cmd+= / Cmd+- on macOS) |
+| Reset font size | Ctrl+Shift+0, or Cmd+0 on macOS |
 | Scroll half a page up / down | Shift+PageUp / Shift+PageDown |
 | Jump to oldest / live output | Ctrl+Shift+Home / Ctrl+Shift+End |
 | Previous / next prompt | Ctrl+Shift+Z / Ctrl+Shift+X |
@@ -35,10 +38,12 @@ and the other terminal keys are set in felis's (see
 cannot be rebound; on Linux, plain Ctrl+C always goes to the program, and so
 does Ctrl+V while the clipboard holds text.
 
-Each text size step scales by 1.1. Prompt navigation needs a shell that
-reports prompt boundaries with OSC 133. `Scroll to oldest output`,
-`Scroll to live output`, `Previous prompt` and `Next prompt` are also in the
-command palette.
+Each font size step scales by 1.1; `Font: Change size…` in the command
+palette shows the current size with buttons to step or reset it. Prompt
+navigation needs a shell that reports prompt boundaries with OSC 133.
+`Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
+`Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
+are also in the command palette.
 
 ## Tabs and panes
 
@@ -83,7 +88,7 @@ bracketed paste asks for confirmation first. See the
 ## Searching scrollback
 
 Open the search field at the right of the tab bar with the search keys,
-`≡` → `Find in scrollback`, or the command palette.
+or `Scrollback: Find…` in the command palette.
 
 - Type a query and press Enter or the down-arrow button (`⌄`); press again for
   the next result. The up-arrow button (`⌃`) or Shift+Enter goes back.

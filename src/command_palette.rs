@@ -1,4 +1,8 @@
-use crate::{layout::Axis, shortcuts::Action, theme};
+use crate::{
+    layout::{Axis, Direction},
+    shortcuts::Action,
+    theme,
+};
 use eframe::egui;
 
 #[derive(Default)]
@@ -7,44 +11,182 @@ pub struct CommandPalette {
     selected: usize,
 }
 
-fn commands() -> Vec<(&'static str, Action)> {
+/// The closed set of label prefixes; see the ADR
+/// name-palette-commands-by-category-and-verb-phrase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Category {
+    Workspace,
+    Tab,
+    Pane,
+    Session,
+    Scrollback,
+    Clipboard,
+    Font,
+    Window,
+}
+
+impl Category {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Workspace => "Workspace",
+            Self::Tab => "Tab",
+            Self::Pane => "Pane",
+            Self::Session => "Session",
+            Self::Scrollback => "Scrollback",
+            Self::Clipboard => "Clipboard",
+            Self::Font => "Font",
+            Self::Window => "Window",
+        }
+    }
+}
+
+struct Command {
+    category: Category,
+    phrase: &'static str,
+    action: Action,
+    detail: Option<&'static str>,
+    /// Words that find the command without appearing in it.
+    keywords: &'static [&'static str],
+}
+
+impl Command {
+    fn new(category: Category, phrase: &'static str, action: Action) -> Self {
+        Self {
+            category,
+            phrase,
+            action,
+            detail: None,
+            keywords: &[],
+        }
+    }
+
+    fn keywords(self, keywords: &'static [&'static str]) -> Self {
+        Self { keywords, ..self }
+    }
+
+    fn matches(&self, words: &[String]) -> bool {
+        let text = format!("{} {}", self.label(), self.keywords.join(" ")).to_lowercase();
+        words.iter().all(|word| text.contains(word.as_str()))
+    }
+
+    fn detail(self, detail: &'static str) -> Self {
+        Self {
+            detail: Some(detail),
+            ..self
+        }
+    }
+
+    fn label(&self) -> String {
+        format!("{}: {}", self.category.name(), self.phrase)
+    }
+
+    /// The label, with any detail on a dimmer second line.
+    fn row_text(&self, style: &egui::Style) -> egui::text::LayoutJob {
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &self.label(),
+            0.0,
+            egui::TextFormat::simple(
+                egui::FontId::proportional(theme::ui_size(style, 14.0)),
+                theme::FG,
+            ),
+        );
+        if let Some(detail) = self.detail {
+            job.append(
+                &format!("\n{detail}"),
+                0.0,
+                egui::TextFormat::simple(
+                    egui::FontId::proportional(theme::ui_size(style, 12.0)),
+                    theme::TAB_INACTIVE_FG,
+                ),
+            );
+        }
+        job
+    }
+}
+
+fn commands() -> Vec<Command> {
+    use Category::*;
+    use felis_client_core::{Action::Scroll, Action::ScrollToPrompt, ScrollStep};
+    use felis_protocol::messages::PromptJump;
+    let command = Command::new;
+    let terminal = Action::Terminal;
     vec![
-        ("Find in scrollback", Action::Search),
-        ("New workspace", Action::NewWorkspace),
-        ("Switch workspace", Action::OpenWorkspaces),
-        ("New tab", Action::NewTab),
-        ("Split left / right", Action::Split(Axis::Horizontal)),
-        ("Split top / bottom", Action::Split(Axis::Vertical)),
-        ("Next tab", Action::NextTab),
-        ("Previous tab", Action::PreviousTab),
-        ("Close pane (detach)", Action::ClosePane),
-        ("Close tab (detach)", Action::CloseTab),
-        ("Reset font size", Action::FontReset),
-        (
-            "Previous prompt",
-            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
-                felis_protocol::messages::PromptJump::Previous,
-            )),
-        ),
-        (
-            "Next prompt",
-            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
-                felis_protocol::messages::PromptJump::Next,
-            )),
-        ),
-        (
-            "Scroll to oldest output",
-            Action::Terminal(felis_client_core::Action::Scroll(
-                felis_client_core::ScrollStep::Home,
-            )),
-        ),
-        (
-            "Scroll to live output",
-            Action::Terminal(felis_client_core::Action::Scroll(
-                felis_client_core::ScrollStep::End,
-            )),
-        ),
+        command(Workspace, "Create", Action::NewWorkspace).keywords(&["new"]),
+        command(Workspace, "Switch…", Action::OpenWorkspaces).keywords(&["open", "list"]),
+        command(Tab, "Create", Action::NewTab).keywords(&["new"]),
+        command(Tab, "Switch to next", Action::NextTab),
+        command(Tab, "Switch to previous", Action::PreviousTab),
+        command(Tab, "Close", Action::CloseTab)
+            .detail("Detaches its sessions; the shells keep running")
+            .keywords(&["detach"]),
+        command(Pane, "Split right", Action::Split(Axis::Horizontal)).keywords(&["side by side"]),
+        command(Pane, "Split below", Action::Split(Axis::Vertical)).keywords(&["down"]),
+        command(Pane, "Focus next", Action::NextPane),
+        command(Pane, "Focus left", Action::Focus(Direction::Left)),
+        command(Pane, "Focus down", Action::Focus(Direction::Down)),
+        command(Pane, "Focus up", Action::Focus(Direction::Up)),
+        command(Pane, "Focus right", Action::Focus(Direction::Right)),
+        command(Pane, "Close", Action::ClosePane)
+            .detail("Detaches its session; the shell keeps running")
+            .keywords(&["detach"]),
+        command(Session, "Attach…", Action::AttachSession).keywords(&["picker", "open"]),
+        command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
+        command(
+            Scrollback,
+            "Jump to next prompt",
+            terminal(ScrollToPrompt(PromptJump::Next)),
+        )
+        .detail("Needs a shell that marks prompts with OSC 133"),
+        command(
+            Scrollback,
+            "Jump to previous prompt",
+            terminal(ScrollToPrompt(PromptJump::Previous)),
+        )
+        .detail("Needs a shell that marks prompts with OSC 133"),
+        command(
+            Scrollback,
+            "Scroll to top",
+            terminal(Scroll(ScrollStep::Home)),
+        )
+        .keywords(&["oldest", "home"]),
+        command(
+            Scrollback,
+            "Scroll to bottom",
+            terminal(Scroll(ScrollStep::End)),
+        )
+        .keywords(&["live", "end"]),
+        command(Clipboard, "Copy selection", Action::Copy),
+        command(Clipboard, "Paste", Action::Paste),
+        command(Font, "Change size…", Action::ChangeFontSize)
+            .keywords(&["zoom", "larger", "smaller", "reset", "text"]),
+        command(Window, "Show keyboard shortcuts", Action::ShowShortcuts)
+            .keywords(&["help", "keymap"]),
     ]
+}
+
+/// `(keys, label)` for each palette command that nekomata's own keymap
+/// binds, so that help spells commands as the palette does. Opening the
+/// palette itself is not a palette command and is left out.
+pub(crate) fn bound_commands(hints: &crate::shortcuts::Hints) -> Vec<(String, String)> {
+    commands()
+        .into_iter()
+        .filter_map(|command| match hints.get(&command.action) {
+            "" => None,
+            keys => Some((keys.to_owned(), command.label())),
+        })
+        .collect()
+}
+
+/// Every query word must appear in the label or the keywords, in any
+/// order, because the `Category: verb` form fixes an order users may not
+/// type.
+fn matching(query: &str) -> Vec<Command> {
+    let words: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
+    commands()
+        .into_iter()
+        .filter(|command| command.matches(&words))
+        .collect()
 }
 
 impl CommandPalette {
@@ -63,11 +205,12 @@ impl CommandPalette {
             )
         });
         let viewport = ctx.content_rect();
-        let top = (viewport.height() * 0.12).min(64.0);
+        let top = theme::overlay_top(viewport.height());
         let style = ctx.global_style();
         let width =
             (viewport.width() - 48.0).clamp(100.0, theme::ui_extent(&style, theme::PALETTE_WIDTH));
         let row_height = theme::ui_extent(&style, theme::PALETTE_ROW_HEIGHT);
+        let detail_row_height = theme::ui_extent(&style, theme::PALETTE_DETAIL_ROW_HEIGHT);
         let list_height = (viewport.height() - top - theme::ui_extent(&style, 88.0)).clamp(
             row_height,
             theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT),
@@ -79,19 +222,7 @@ impl CommandPalette {
                 egui::Modal::default_area(id)
                     .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top)),
             )
-            .frame(
-                egui::Frame::new()
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, 8],
-                        blur: 24,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(100),
-                    })
-                    .fill(theme::TAB_BAR_BG)
-                    .stroke(egui::Stroke::new(1.0, theme::MENU_BORDER))
-                    .corner_radius(10)
-                    .inner_margin(12),
-            )
+            .frame(theme::overlay_frame())
             .show(ctx, |ui| {
                 theme::menu_style(ui.style_mut());
                 ui.visuals_mut().weak_text_color = Some(theme::TAB_INACTIVE_FG);
@@ -108,11 +239,7 @@ impl CommandPalette {
                 if !search.has_focus() {
                     search.request_focus();
                 }
-                let query = self.query.trim().to_lowercase();
-                let matches: Vec<_> = commands()
-                    .into_iter()
-                    .filter(|(label, _)| label.to_lowercase().contains(&query))
-                    .collect();
+                let matches = matching(&self.query);
                 if search.changed() {
                     self.selected = 0;
                 }
@@ -138,19 +265,23 @@ impl CommandPalette {
                                     .color(theme::TAB_INACTIVE_FG),
                             );
                         }
-                        for (index, (label, action)) in matches.iter().enumerate() {
+                        for (index, command) in matches.iter().enumerate() {
                             let selected = index == self.selected;
+                            let height = match command.detail {
+                                Some(_) => detail_row_height,
+                                None => row_height,
+                            };
                             let row = ui.add_sized(
-                                [ui.available_width(), row_height],
-                                egui::Button::new(*label)
-                                    .shortcut_text(hints.get(action))
+                                [ui.available_width(), height],
+                                egui::Button::new(command.row_text(ui.style()))
+                                    .shortcut_text(hints.get(&command.action))
                                     .selected(selected),
                             );
                             if selected && (up || down || search.changed()) {
                                 row.scroll_to_me(Some(egui::Align::Center));
                             }
                             if row.clicked() || (enter && selected) {
-                                chosen = Some(action.clone());
+                                chosen = Some(command.action.clone());
                             }
                         }
                     });
@@ -192,6 +323,107 @@ mod tests {
         result
     }
     #[test]
+    fn labels_name_a_category_then_an_imperative_verb_phrase() {
+        const CATEGORIES: &[&str] = &[
+            "Workspace",
+            "Tab",
+            "Pane",
+            "Session",
+            "Scrollback",
+            "Clipboard",
+            "Font",
+            "Window",
+        ];
+        const VERBS: &[&str] = &[
+            "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
+            "Scroll", "Show", "Split", "Switch",
+        ];
+        for command in commands() {
+            let label = command.label();
+            let (category, phrase) = label.split_once(": ").expect(&label);
+            assert!(CATEGORIES.contains(&category), "{label}");
+            let verb = phrase.split([' ', '…']).next().unwrap();
+            assert!(VERBS.contains(&verb), "{label} does not start with a verb");
+        }
+        let label = |action| {
+            commands()
+                .into_iter()
+                .find(|command| command.action == action)
+                .unwrap()
+                .label()
+        };
+        assert_eq!(label(Action::NewTab), "Tab: Create");
+        assert_eq!(label(Action::NextTab), "Tab: Switch to next");
+        assert_eq!(label(Action::Split(Axis::Vertical)), "Pane: Split below");
+        assert_eq!(label(Action::OpenWorkspaces), "Workspace: Switch…");
+    }
+
+    #[test]
+    fn commands_once_outside_the_palette_are_listed() {
+        let labels: Vec<_> = commands()
+            .into_iter()
+            .map(|command| (command.action.clone(), command.label()))
+            .collect();
+        for (action, label) in [
+            (Action::NextPane, "Pane: Focus next"),
+            (Action::Focus(Direction::Left), "Pane: Focus left"),
+            (Action::Focus(Direction::Down), "Pane: Focus down"),
+            (Action::Focus(Direction::Up), "Pane: Focus up"),
+            (Action::Focus(Direction::Right), "Pane: Focus right"),
+            (Action::Copy, "Clipboard: Copy selection"),
+            (Action::Paste, "Clipboard: Paste"),
+            (Action::AttachSession, "Session: Attach…"),
+            (Action::ShowShortcuts, "Window: Show keyboard shortcuts"),
+            (Action::ChangeFontSize, "Font: Change size…"),
+        ] {
+            assert!(labels.contains(&(action, label.into())), "{label}");
+        }
+    }
+
+    #[test]
+    fn key_bound_commands_are_listed_with_their_keys() {
+        let hints = crate::shortcuts::AppKeymap::default().hints();
+        let bound = bound_commands(&hints);
+        assert!(bound.contains(&(hints.get(&Action::NewTab).to_owned(), "Tab: Create".into())));
+        assert!(bound.contains(&(
+            hints.get(&Action::Split(Axis::Vertical)).to_owned(),
+            "Pane: Split below".into()
+        )));
+        assert!(bound.iter().all(|(keys, _)| !keys.is_empty()));
+        assert!(!bound.iter().any(|(_, label)| label == "Workspace: Create"));
+    }
+
+    #[test]
+    fn closing_rows_say_that_the_shell_keeps_running() {
+        for action in [Action::ClosePane, Action::CloseTab] {
+            let command = commands()
+                .into_iter()
+                .find(|command| command.action == action)
+                .unwrap();
+            let text = command.row_text(&egui::Style::default()).text;
+            assert!(text.starts_with(&command.label()), "{text}");
+            assert!(text.contains("keep"), "{text}");
+        }
+    }
+
+    #[test]
+    fn query_words_match_in_any_order_including_keywords() {
+        let actions = |query| {
+            matching(query)
+                .into_iter()
+                .map(|command| command.action)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(actions("new tab"), [Action::NewTab]);
+        assert_eq!(actions("TAB  New"), [Action::NewTab]);
+        assert_eq!(actions("search"), [Action::Search]);
+        assert_eq!(actions("pane detach"), [Action::ClosePane]);
+        assert_eq!(actions("tab next"), [Action::NextTab]);
+        assert!(actions("tab zzz").is_empty());
+        assert_eq!(matching("  ").len(), commands().len());
+    }
+
+    #[test]
     fn arrow_selection_is_activated_by_enter() {
         let ctx = egui::Context::default();
         let mut palette = CommandPalette::default();
@@ -199,7 +431,7 @@ mod tests {
         frame(&ctx, &mut palette, &[egui::Key::ArrowDown]);
         assert_eq!(
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
-            Some(Action::NewWorkspace)
+            commands().into_iter().nth(1).map(|command| command.action)
         );
     }
     #[test]
@@ -261,7 +493,7 @@ mod tests {
         frame(&ctx, &mut palette, &[egui::Key::ArrowUp]);
         assert_eq!(
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
-            commands().pop().map(|(_, action)| action)
+            commands().pop().map(|command| command.action)
         );
     }
 

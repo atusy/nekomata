@@ -5,6 +5,7 @@ mod colors;
 mod command_palette;
 mod control;
 mod daemon;
+mod font_size;
 mod layout;
 mod links;
 #[cfg(test)]

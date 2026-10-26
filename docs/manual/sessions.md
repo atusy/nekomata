@@ -5,8 +5,8 @@ Closing the pane leaves the session running, so you can attach to it later.
 
 ## Reattaching a session
 
-`≡` → `Attach terminal…` lists the sessions of the local daemon and opens the
-one you pick in a new tab. To list them from a shell:
+`Session: Attach…` in the command palette lists the sessions of the local
+daemon and opens the one you pick in a new tab. To list them from a shell:
 
 ```sh
 nekomata felis sessions list

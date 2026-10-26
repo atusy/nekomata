@@ -35,14 +35,15 @@ Linux (x86_64, aarch64), which is less tested. See
 | --- | --- |
 | New tab | Alt+C |
 | Next / previous tab | Alt+T / Alt+Shift+T |
-| Split down | Alt+W → Alt+S |
+| Split below | Alt+W → Alt+S |
 | Split right | Alt+W → Alt+V |
 | Move between panes | Alt+W → H / J / K / L |
 | Close pane (the shell keeps running) | Alt+W → C |
 | Command palette | Alt+Shift+P |
 | Search scrollback | Ctrl+Shift+F, or Cmd+F on macOS |
 
-Everything else is in the `≡` menu at the left of the tab bar.
+Most other commands are in the command palette, which the cat button at the
+left of the tab bar also opens.
 
 ## Make it yours
 
@@ -63,7 +64,7 @@ Keys for tabs and panes, and the UI font, go in nekomata's own
 # ~/Library/Application Support/nekomata/config.toml (macOS)
 # ~/.config/nekomata/config.toml (Linux)
 [keymap]
-"ctrl+a s" = { kind = "split", direction = "down" }
+"ctrl+a s" = { kind = "split", direction = "below" }
 "ctrl+a v" = { kind = "split", direction = "right" }
 ```
 

@@ -18,10 +18,12 @@ away from another window.
 
 ## Switching
 
-- `≡` → `New workspace` switches to a fresh workspace.
-- `≡` → `Switch workspace…` picks an existing one.
+In the command palette (the cat button or Alt+Shift+P):
 
-Both are also in the command palette. If nekomata cannot connect the panes of
+- `Workspace: Create` switches to a fresh workspace.
+- `Workspace: Switch…` picks an existing one.
+
+If nekomata cannot connect the panes of
 the workspace you switch to, you stay in the current one.
 
 ## From the command line
@@ -42,7 +44,7 @@ The nekomata daemon starts on first use and keeps running after the last
 window closes. It holds workspaces in memory only.
 
 - GUI restart, UI-only update or crash: workspaces are restored (after a
-  crash, up to the last state the daemon received), except the text size,
+  crash, up to the last state the daemon received), except the font size,
   which starts at your configured size. An update that changes
   the daemon protocol requires
   [retiring the old daemon](troubleshooting.md#nekomata-reports-an-incompatible-daemon),

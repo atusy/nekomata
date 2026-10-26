@@ -12,11 +12,11 @@ A layer that does not consume the key forwards it to the next. A terminal
 keymap entry bound to an action nekomata does not implement is forwarded to
 the terminal program.
 
-Neither keymap is consulted, and no keyboard input reaches the terminal,
-while the search field, the command palette, the workspace list, the session
-picker, help or a paste confirmation is open, or while a workspace switch is in
-progress. A pending sequence survives these conditions; losing window focus
-cancels it only while key dispatch is active.
+Neither keymap is consulted, and no keyboard input reaches the terminal, while
+the search field, the command palette, the font size control, the workspace
+list, the session picker, help or a paste confirmation is open, or while a
+workspace switch is in progress. A pending sequence survives these conditions;
+losing window focus cancels it only while key dispatch is active.
 
 A key that ends a pending application sequence without completing it skips
 the terminal keymap: the keys already pressed are discarded, and this key goes
@@ -30,7 +30,7 @@ Application keymap:
 | --- | --- |
 | `alt+c` | `new_tab` |
 | `alt+t` / `alt+shift+t` | `switch_tab` next / previous |
-| `alt+w alt+s` | `split` down |
+| `alt+w alt+s` | `split` below |
 | `alt+w alt+v` | `split` right |
 | `alt+w c` | `close_pane` |
 | `alt+w h` / `j` / `k` / `l` | `focus_pane` left / down / up / right |
@@ -52,7 +52,7 @@ means Alt+W followed by C.
 | `new_tab` | — | Open a tab |
 | `close_tab` | — | Close the active tab |
 | `switch_tab` | `to = "next" \| "previous"` | Activate the next / previous tab |
-| `split` | `direction = "down" \| "right"` | Open a pane below / right of the active pane |
+| `split` | `direction = "below" \| "right"` | Open a pane below / right of the active pane |
 | `close_pane` | — | Close the active pane (detaches its session) |
 | `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` or `to = "next"` | Focus a neighboring / the next pane |
 | `command_palette` | — | Open the command palette |

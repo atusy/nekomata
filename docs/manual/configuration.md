@@ -50,7 +50,7 @@ size_px = 15                # default: 14, felis's default terminal size
 [keymap]
 "alt+n"    = { kind = "new_tab" }
 "alt+c"    = { kind = "unbind" }
-"ctrl+a s" = { kind = "split", direction = "down" }
+"ctrl+a s" = { kind = "split", direction = "below" }
 "ctrl+a v" = { kind = "split", direction = "right" }
 ```
 
@@ -65,7 +65,7 @@ program.
 | `new_tab` | — | New tab |
 | `close_tab` | — | Close tab |
 | `switch_tab` | `to = "next" \| "previous"` | Next / previous tab |
-| `split` | `direction = "down" \| "right"` | New pane below / to the right |
+| `split` | `direction = "below" \| "right"` | New pane below / to the right |
 | `close_pane` | — | Close pane (its shell keeps running) |
 | `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` or `to = "next"` | Focus a neighboring / the next pane |
 | `command_palette` | — | Command palette |
