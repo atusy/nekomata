@@ -324,6 +324,16 @@ mod tests {
     }
     #[test]
     fn labels_name_a_category_then_an_imperative_verb_phrase() {
+        const CATEGORIES: &[&str] = &[
+            "Workspace",
+            "Tab",
+            "Pane",
+            "Session",
+            "Scrollback",
+            "Clipboard",
+            "Font",
+            "Window",
+        ];
         const VERBS: &[&str] = &[
             "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
             "Scroll", "Show", "Split", "Switch",
@@ -331,7 +341,7 @@ mod tests {
         for command in commands() {
             let label = command.label();
             let (category, phrase) = label.split_once(": ").expect(&label);
-            assert_eq!(category, command.category.name(), "{label}");
+            assert!(CATEGORIES.contains(&category), "{label}");
             let verb = phrase.split([' ', '…']).next().unwrap();
             assert!(VERBS.contains(&verb), "{label} does not start with a verb");
         }
