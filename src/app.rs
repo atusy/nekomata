@@ -14,7 +14,7 @@ use crate::{
     session::{Session, Target},
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
-    workspace::{PaneSpec, Snapshot, Tab},
+    workspace::{PaneSpec, Snapshot, Tab, move_tab},
     workspace_client::{Client as WorkspaceClient, Operation},
 };
 
@@ -1271,6 +1271,8 @@ impl App {
                                 ] {
                                     state.corner_radius = egui::CornerRadius::same(5);
                                 }
+                                let mut rects = Vec::with_capacity(self.tabs.len());
+                                let mut dragged = None;
                                 for (i, tab) in self.tabs.iter().enumerate() {
                                     let title = self.panes[&tab.focused]
                                         .session
@@ -1282,8 +1284,38 @@ impl App {
                                         .unwrap_or(&tab.name)
                                         .to_owned();
                                     let selected = self.active == i;
-                                    if crate::theme::tab_button(ui, &title, selected).clicked() {
+                                    let response = crate::theme::tab_button(ui, &title, selected);
+                                    if response.clicked() {
                                         self.active = i;
+                                    }
+                                    if response.dragged() || response.drag_stopped() {
+                                        dragged = Some((i, response.drag_stopped()));
+                                    }
+                                    rects.push(response.rect);
+                                }
+                                if let Some((from, released)) = dragged
+                                    && let Some(pointer) = ui.ctx().pointer_interact_pos()
+                                {
+                                    let to = tab_drop_slot(&rects, pointer.x);
+                                    if released {
+                                        self.active =
+                                            move_tab(&mut self.tabs, self.active, from, to);
+                                    } else {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                                        // Dropping beside the dragged tab changes nothing.
+                                        if to != from && to != from + 1 {
+                                            let x = tab_drop_indicator_x(
+                                                &rects,
+                                                to,
+                                                ui.spacing().item_spacing.x,
+                                                ui.clip_rect().x_range(),
+                                            );
+                                            ui.painter().vline(
+                                                x,
+                                                rects[from].y_range(),
+                                                Stroke::new(2.0, ACCENT),
+                                            );
+                                        }
                                     }
                                 }
                             });
@@ -1503,6 +1535,7 @@ impl App {
                 ui.label("Shift+PageUp / PageDown: scroll half a page · Ctrl+Shift+Home / End: oldest / live output");
                 ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");
                 ui.label("Alt+Shift+P: command palette");
+                ui.label("Drag a tab to reorder it.");
                 ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
                 ui.label("Hover an OSC 8 link to preview its URL; Cmd+click (macOS) or Ctrl+click (Linux) opens it.");
@@ -1659,6 +1692,34 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
 
 fn main_menu_id() -> egui::Id {
     egui::Id::unique("main-menu")
+}
+
+/// Returns the insertion gap for a pointer at `x`: the number of tabs whose
+/// centers lie left of it.
+fn tab_drop_slot(rects: &[egui::Rect], x: f32) -> usize {
+    rects.iter().filter(|rect| rect.center().x < x).count()
+}
+
+/// Horizontal position of the drop indicator for `slot`, midway between the
+/// neighboring tabs or just outside the outermost one, kept within `visible`.
+fn tab_drop_indicator_x(
+    rects: &[egui::Rect],
+    slot: usize,
+    spacing: f32,
+    visible: egui::Rangef,
+) -> f32 {
+    // The scroll area clips at the first tab's left edge, so an indicator in
+    // the outer gap would be invisible without clamping.
+    let x = match (
+        slot.checked_sub(1).and_then(|i| rects.get(i)),
+        rects.get(slot),
+    ) {
+        (Some(left), Some(right)) => (left.right() + right.left()) / 2.0,
+        (Some(left), None) => left.right() + spacing / 2.0,
+        (None, Some(right)) => right.left() - spacing / 2.0,
+        (None, None) => visible.min,
+    };
+    x.clamp(visible.min + 1.0, visible.max - 1.0)
 }
 
 fn show_tab_bar_menu<R>(
@@ -2377,6 +2438,31 @@ fn key_character(key: egui::Key) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_drop_slot_is_the_gap_nearest_the_pointer() {
+        let rects = [0.0, 100.0, 200.0]
+            .map(|x| egui::Rect::from_min_size(egui::pos2(x, 0.0), Vec2::new(90.0, 30.0)));
+        assert_eq!(tab_drop_slot(&rects, -20.0), 0);
+        assert_eq!(tab_drop_slot(&rects, 44.0), 0);
+        assert_eq!(tab_drop_slot(&rects, 46.0), 1);
+        assert_eq!(tab_drop_slot(&rects, 150.0), 2);
+        assert_eq!(tab_drop_slot(&rects, 260.0), 3);
+        assert_eq!(tab_drop_slot(&rects, 999.0), 3);
+    }
+
+    #[test]
+    fn tab_drop_indicator_stays_inside_the_visible_tab_bar() {
+        let rects = [0.0, 100.0]
+            .map(|x| egui::Rect::from_min_size(egui::pos2(x, 0.0), Vec2::new(90.0, 30.0)));
+        let visible = egui::Rangef::new(0.0, 190.0);
+        assert_eq!(tab_drop_indicator_x(&rects, 1, 10.0, visible), 95.0);
+        let first = tab_drop_indicator_x(&rects, 0, 10.0, visible);
+        let last = tab_drop_indicator_x(&rects, 2, 10.0, visible);
+        // The 2px line must not be clipped by the scroll area.
+        assert!(first - 1.0 >= visible.min, "{first}");
+        assert!(last + 1.0 <= visible.max, "{last}");
+    }
 
     #[test]
     fn search_navigation_reuses_results_until_query_or_options_change() {
