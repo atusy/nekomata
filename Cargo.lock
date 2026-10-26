@@ -1555,6 +1555,7 @@ name = "nekomata"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "directories",
  "eframe",
  "felis-client-core",
  "felis-grid",
@@ -1563,10 +1564,16 @@ dependencies = [
  "felis-render-wgpu",
  "felis-shaping",
  "felis-transport",
+ "memmap2",
+ "objc2-core-foundation",
+ "objc2-core-text",
  "serde",
  "serde_json",
+ "swash",
  "tempfile",
  "tokio",
+ "toml",
+ "yeslogic-fontconfig-sys",
 ]
 
 [[package]]

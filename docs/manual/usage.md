@@ -29,8 +29,8 @@ Default keys are below. `→` means "then press".
 | Jump to oldest / live output | Ctrl+Shift+Home / Ctrl+Shift+End |
 | Previous / next prompt | Ctrl+Shift+Z / Ctrl+Shift+X |
 
-Tab, pane and palette keys are fixed for now; copy, paste and the other
-terminal keys are set in felis's configuration (see
+Tab, pane and palette keys are set in nekomata's configuration; copy, paste
+and the other terminal keys are set in felis's (see
 [Configuration](configuration.md)). Cmd+C and Cmd+V on macOS are fixed and
 cannot be rebound; on Linux, plain Ctrl+C always goes to the program, and so
 does Ctrl+V while the clipboard holds text.

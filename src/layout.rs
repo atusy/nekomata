@@ -5,6 +5,15 @@ pub enum Axis {
     Vertical,
 }
 
+/// A neighbor's side of the focused pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Direction {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Layout {
     Pane(u64),
@@ -17,8 +26,8 @@ pub enum Layout {
 }
 
 impl Layout {
-    pub fn neighbor(&self, target: u64, direction: eframe::egui::Key) -> Option<u64> {
-        use eframe::egui::{Key, Rect, pos2};
+    pub fn neighbor(&self, target: u64, direction: Direction) -> Option<u64> {
+        use eframe::egui::{Rect, pos2};
         fn collect(layout: &Layout, rect: Rect, out: &mut Vec<(u64, Rect)>) {
             match layout {
                 Layout::Pane(id) => out.push((*id, rect)),
@@ -60,7 +69,7 @@ impl Layout {
                 if *id == target {
                     return false;
                 }
-                let horizontal = matches!(direction, Key::H | Key::L);
+                let horizontal = matches!(direction, Direction::Left | Direction::Right);
                 let overlap = if horizontal {
                     rect.top() < source.bottom() && rect.bottom() > source.top()
                 } else {
@@ -68,11 +77,10 @@ impl Layout {
                 };
                 overlap
                     && match direction {
-                        Key::H => rect.right() <= source.left(),
-                        Key::L => rect.left() >= source.right(),
-                        Key::K => rect.bottom() <= source.top(),
-                        Key::J => rect.top() >= source.bottom(),
-                        _ => false,
+                        Direction::Left => rect.right() <= source.left(),
+                        Direction::Right => rect.left() >= source.right(),
+                        Direction::Up => rect.bottom() <= source.top(),
+                        Direction::Down => rect.top() >= source.bottom(),
                     }
             })
             .min_by(|(_, a), (_, b)| {
@@ -140,15 +148,14 @@ mod tests {
 
     #[test]
     fn neighbors_follow_geometry_in_nested_splits() {
-        use eframe::egui::Key;
         let mut layout = Layout::Pane(1);
         layout.split(1, 2, Axis::Horizontal);
         layout.split(2, 3, Axis::Vertical);
-        assert_eq!(layout.neighbor(1, Key::L), Some(2));
-        assert_eq!(layout.neighbor(2, Key::J), Some(3));
-        assert_eq!(layout.neighbor(3, Key::K), Some(2));
-        assert_eq!(layout.neighbor(3, Key::H), Some(1));
-        assert_eq!(layout.neighbor(1, Key::H), None);
+        assert_eq!(layout.neighbor(1, Direction::Right), Some(2));
+        assert_eq!(layout.neighbor(2, Direction::Down), Some(3));
+        assert_eq!(layout.neighbor(3, Direction::Up), Some(2));
+        assert_eq!(layout.neighbor(3, Direction::Left), Some(1));
+        assert_eq!(layout.neighbor(1, Direction::Left), None);
     }
 
     #[test]

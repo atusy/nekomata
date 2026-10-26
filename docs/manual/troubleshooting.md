@@ -52,12 +52,13 @@ Dock so that nekomata starts the daemon.
 ## A setting has no effect
 
 - Restart the GUI; configuration is read only at startup.
-- Check that the setting is in felis's `config.toml` (see
+- Check that the setting is in the right file. Terminal settings belong in
+  felis's `config.toml`, application settings in nekomata's (see
   [Configuration](configuration.md)).
 - Some felis sections are not honored by nekomata yet: `window`, `shader`,
   `mouse` and `clipboard`.
-- nekomata does not report warnings about felis's file. To check it as
-  nekomata reads it, run:
+- Look for warnings on standard error. Only nekomata's own file reports
+  warnings there; to check felis's file as nekomata reads it, run:
 
   ```sh
   nix develop --command felis config check --client nekomata

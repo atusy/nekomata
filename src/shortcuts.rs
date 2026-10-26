@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use eframe::egui::{Event, InputState, Key};
 use felis_client_core::{
     Action as TerminalAction, Chord, ClipboardScope, IpcAction, KeyCode, Keymap,
     Modifiers as TerminalModifiers, NamedKey,
 };
 
-use crate::layout::Axis;
+use crate::layout::{Axis, Direction};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -18,7 +20,7 @@ pub enum Action {
     NextPane,
     NextTab,
     PreviousTab,
-    Focus(Key),
+    Focus(Direction),
     FontScale(f32),
     FontReset,
     Palette,
@@ -27,15 +29,245 @@ pub enum Action {
     Copy,
 }
 
+/// nekomata's own bindings, keyed by chord sequence: felis binds single
+/// chords only, and splits need a prefix key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppKeymap {
+    bindings: BTreeMap<Vec<Chord>, Action>,
+}
+
+enum Lookup {
+    Action(Action),
+    Prefix,
+    Miss,
+}
+
+impl Default for AppKeymap {
+    fn default() -> Self {
+        let bindings = [
+            ("alt+c", Action::NewTab),
+            ("alt+t", Action::NextTab),
+            ("alt+shift+t", Action::PreviousTab),
+            ("alt+shift+p", Action::Palette),
+            ("alt+w alt+s", Action::Split(Axis::Vertical)),
+            ("alt+w alt+v", Action::Split(Axis::Horizontal)),
+            ("alt+w c", Action::ClosePane),
+            ("alt+w h", Action::Focus(Direction::Left)),
+            ("alt+w j", Action::Focus(Direction::Down)),
+            ("alt+w k", Action::Focus(Direction::Up)),
+            ("alt+w l", Action::Focus(Direction::Right)),
+        ];
+        Self {
+            bindings: bindings
+                .into_iter()
+                .map(|(keys, action)| (parse_sequence(keys).unwrap(), action))
+                .collect(),
+        }
+    }
+}
+
+/// Whitespace separates the chords of a sequence; each chord is spelled
+/// as in felis's `[keymap]`.
+pub fn parse_sequence(spelling: &str) -> Result<Vec<Chord>, String> {
+    let keys = spelling
+        .split_whitespace()
+        .map(|chord| chord.parse::<Chord>().map_err(|error| error.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if keys.is_empty() {
+        return Err("empty key sequence".into());
+    }
+    // `Shortcuts::consume` cancels a pending sequence on any Escape, so a
+    // later Escape chord could never be reached.
+    if keys[1..]
+        .iter()
+        .any(|chord| chord.key == KeyCode::Named(NamedKey::Escape))
+    {
+        return Err("Escape cancels a pending sequence, so it can only start one".into());
+    }
+    if !keys.iter().all(is_deliverable) {
+        return Err("the window cannot report this chord, so it never arrives as a key".into());
+    }
+    if keys.iter().any(is_clipboard_chord) {
+        return Err(
+            "the window turns this chord into a clipboard event, so it never arrives as a key"
+                .into(),
+        );
+    }
+    Ok(keys)
+}
+
+/// egui reports Super only as macOS's Cmd, and only keys it has a
+/// [`Key`] for; any other chord parses but can never be pressed.
+fn is_deliverable(chord: &Chord) -> bool {
+    if !cfg!(target_os = "macos") && chord.mods.contains(TerminalModifiers::SUPER) {
+        return false;
+    }
+    Key::ALL.iter().any(|&key| terminal_key(key) == chord.key)
+}
+
+/// Mirrors egui-winit's clipboard shortcuts (`is_cut_command` and siblings):
+/// with Alt and Shift up, Command (Cmd on macOS, Ctrl elsewhere) plus X, C
+/// or V becomes `Event::Cut`/`Copy`/`Paste` instead of `Event::Key`.
+fn is_clipboard_chord(chord: &Chord) -> bool {
+    let command = if cfg!(target_os = "macos") {
+        TerminalModifiers::SUPER
+    } else {
+        TerminalModifiers::CONTROL
+    };
+    chord.mods.contains(command)
+        && !chord
+            .mods
+            .intersects(TerminalModifiers::ALT | TerminalModifiers::SHIFT)
+        && matches!(&chord.key, KeyCode::Character(c) if matches!(c.as_str(), "x" | "c" | "v"))
+}
+
+impl AppKeymap {
+    /// Applies user entries over the defaults. `None` unbinds a sequence and
+    /// every longer one it begins. A sequence whose leading chords are bound
+    /// on their own could never complete, so it is dropped.
+    pub fn apply(
+        &mut self,
+        entries: Vec<(String, Vec<Chord>, Option<Action>)>,
+        warnings: &mut Vec<String>,
+    ) {
+        let mut configured = BTreeMap::new();
+        for (spelling, keys, action) in entries {
+            match action {
+                None => {
+                    self.bindings.retain(|bound, _| !bound.starts_with(&keys));
+                    // Entries apply in spelling order, so an unbind can undo
+                    // a binding the user wrote under another spelling.
+                    configured.retain(|bound: &Vec<Chord>, removed: &mut String| {
+                        let keep = !bound.starts_with(&keys);
+                        if !keep {
+                            warnings.push(format!(
+                                "`keymap.\"{removed}\"` is removed by the unbind `keymap.\"{spelling}\"`"
+                            ));
+                        }
+                        keep
+                    });
+                }
+                Some(action) => {
+                    self.bindings.insert(keys.clone(), action);
+                    configured.insert(keys, spelling);
+                }
+            }
+        }
+        let unreachable: Vec<_> = self
+            .bindings
+            .keys()
+            .filter(|keys| (1..keys.len()).any(|len| self.bindings.contains_key(&keys[..len])))
+            .cloned()
+            .collect();
+        for keys in unreachable {
+            self.bindings.remove(&keys);
+            // Defaults yield silently to a chord the user bound on its own.
+            if let Some(spelling) = configured.get(&keys) {
+                warnings.push(format!(
+                    "`keymap.\"{spelling}\"` is dropped because its leading keys are bound on their own"
+                ));
+            }
+        }
+    }
+
+    /// The text menus show for each bound action: its shortest sequence,
+    /// the first in key order among equals.
+    pub fn hints(&self) -> Hints {
+        let mut hints: Vec<(Action, &[Chord])> = vec![];
+        for (keys, action) in &self.bindings {
+            match hints.iter_mut().find(|(bound, _)| bound == action) {
+                Some((_, shortest)) if keys.len() < shortest.len() => *shortest = keys,
+                Some(_) => {}
+                None => hints.push((action.clone(), keys)),
+            }
+        }
+        Hints(
+            hints
+                .into_iter()
+                .map(|(action, keys)| {
+                    let text = keys.iter().map(chord_label).collect::<Vec<_>>();
+                    // Two spaces read as "then", as the menus always showed.
+                    (action, text.join("  "))
+                })
+                .collect(),
+        )
+    }
+
+    fn lookup(&self, keys: &[Chord]) -> Lookup {
+        use std::ops::Bound;
+        // Sequences sort directly after their prefixes, so the first entry
+        // from `keys` on is either `keys` itself or the nearest longer one.
+        match self
+            .bindings
+            .range::<[Chord], _>((Bound::Included(keys), Bound::Unbounded))
+            .next()
+        {
+            Some((bound, action)) if bound[..] == *keys => Lookup::Action(action.clone()),
+            Some((bound, _)) if bound.starts_with(keys) => Lookup::Prefix,
+            _ => Lookup::Miss,
+        }
+    }
+}
+
+/// Labels for the actions nekomata's keymap binds, built once per keymap.
+#[derive(Debug)]
+pub struct Hints(Vec<(Action, String)>);
+
+impl Hints {
+    /// Empty for an unbound action.
+    pub fn get(&self, action: &Action) -> &str {
+        self.0
+            .iter()
+            .find(|(bound, _)| bound == action)
+            .map_or("", |(_, text)| text)
+    }
+}
+
+/// `alt+shift+t` as menus show it: `Alt+Shift+T`.
+fn chord_label(chord: &Chord) -> String {
+    let mut label = String::new();
+    for (modifier, name) in [
+        (TerminalModifiers::CONTROL, "Ctrl"),
+        (TerminalModifiers::ALT, "Alt"),
+        (TerminalModifiers::SHIFT, "Shift"),
+        (
+            TerminalModifiers::SUPER,
+            if cfg!(target_os = "macos") {
+                "Cmd"
+            } else {
+                "Super"
+            },
+        ),
+    ] {
+        if chord.mods.contains(modifier) {
+            label.push_str(name);
+            label.push('+');
+        }
+    }
+    // felis spells named keys in snake case (`page_up`).
+    let key = Chord::bare(chord.key.clone()).to_string();
+    for word in key.split('_') {
+        let mut chars = word.chars();
+        label.extend(chars.next().map(|first| first.to_ascii_uppercase()));
+        label.push_str(chars.as_str());
+    }
+    label
+}
+
 pub struct Shortcuts {
-    prefix: bool,
+    pending: Vec<Chord>,
+    keymap: AppKeymap,
+    hints: Hints,
     terminal: Keymap,
 }
 
 impl Default for Shortcuts {
     fn default() -> Self {
+        let keymap = AppKeymap::default();
         Self {
-            prefix: false,
+            pending: Vec::new(),
+            hints: keymap.hints(),
+            keymap,
             // Preserve bare End for terminal editors unless explicitly bound.
             terminal: Keymap::default_for_platform().with_overrides([(
                 Chord::bare(KeyCode::Named(NamedKey::End)),
@@ -69,7 +301,11 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
     mods.set(TerminalModifiers::ALT, modifiers.alt);
     // egui's `command` is also true for Ctrl on Linux; it is not SUPER.
     mods.set(TerminalModifiers::SUPER, modifiers.mac_cmd);
-    let key = match key {
+    Chord::with_mods(mods, terminal_key(key))
+}
+
+fn terminal_key(key: Key) -> KeyCode {
+    match key {
         Key::ArrowUp => KeyCode::Named(NamedKey::ArrowUp),
         Key::ArrowDown => KeyCode::Named(NamedKey::ArrowDown),
         Key::ArrowLeft => KeyCode::Named(NamedKey::ArrowLeft),
@@ -81,30 +317,44 @@ fn terminal_chord(key: Key, modifiers: eframe::egui::Modifiers) -> Chord {
         Key::Insert => KeyCode::Named(NamedKey::Insert),
         // egui displays this key as U+2212; bindings name the ASCII key.
         Key::Minus => KeyCode::Character("-".into()),
+        // egui has no symbol for this key and names it "Quote".
+        Key::Quote => KeyCode::Character("'".into()),
         _ => {
             let name = key.symbol_or_name().to_ascii_lowercase();
             name.parse::<Chord>()
                 .map(|chord| chord.key)
                 .unwrap_or(KeyCode::Character(name))
         }
-    };
-    Chord::with_mods(mods, key)
+    }
 }
 
 impl Shortcuts {
-    pub fn from_config(config: &felis_client_core::config::EffectiveConfig) -> Self {
-        let mut shortcuts = Self::default();
+    /// nekomata's own `keymap` resolves first; felis's shared `config`
+    /// supplies the terminal bindings behind it.
+    pub fn from_config(
+        config: &felis_client_core::config::EffectiveConfig,
+        keymap: AppKeymap,
+    ) -> Self {
+        let mut shortcuts = Self {
+            hints: keymap.hints(),
+            keymap,
+            ..Self::default()
+        };
         shortcuts
             .terminal
             .apply_overrides(config.keymap.compile(None));
         shortcuts
     }
 
+    pub fn hints(&self) -> &Hints {
+        &self.hints
+    }
+
     pub fn consume(&mut self, input: &mut InputState) -> Vec<Action> {
         let mut actions = Vec::new();
         let mut suppress_text = false;
         if !input.focused {
-            self.prefix = false;
+            self.pending.clear();
             return actions;
         }
         input.events.retain(|event| {
@@ -121,47 +371,32 @@ impl Shortcuts {
                 return true;
             };
             suppress_text = false;
-            let alt = mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd;
-            let plain = !mods.alt && !mods.ctrl && !mods.command && !mods.mac_cmd && !mods.shift;
-            let prefix = std::mem::take(&mut self.prefix);
-            let action = if prefix {
-                match (*key, alt && !mods.shift, plain) {
-                    (Key::S, true, _) => Some(Action::Split(Axis::Vertical)),
-                    (Key::V, true, _) => Some(Action::Split(Axis::Horizontal)),
-                    (Key::C, _, true) => Some(Action::ClosePane),
-                    (Key::H | Key::J | Key::K | Key::L, _, true) => Some(Action::Focus(*key)),
-                    (Key::Escape, _, _) => {
-                        suppress_text = true;
-                        return false;
-                    }
-                    _ => None,
+            let pending = !self.pending.is_empty();
+            if pending && *key == Key::Escape {
+                self.pending.clear();
+                suppress_text = true;
+                return false;
+            }
+            // `pending` is cleared rather than replaced, so its allocation
+            // is reused across key presses.
+            self.pending.push(terminal_chord(*key, *mods));
+            let action = match self.keymap.lookup(&self.pending) {
+                Lookup::Prefix => {
+                    suppress_text = true;
+                    return false;
                 }
-            } else if alt {
-                match (*key, mods.shift) {
-                    (Key::W, false) => {
-                        self.prefix = true;
-                        suppress_text = true;
-                        return false;
-                    }
-                    (Key::C, false) => Some(Action::NewTab),
-                    (Key::T, false) => Some(Action::NextTab),
-                    (Key::T, true) => Some(Action::PreviousTab),
-                    (Key::P, true) => Some(Action::Palette),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            let action = action.or_else(|| {
-                if prefix {
-                    return None;
-                }
-                self.terminal
-                    .resolve(&terminal_chord(*key, *mods))
+                Lookup::Action(action) => Some(action),
+                // An unfinished sequence gives the key to the program, not
+                // to a terminal binding it happens to match.
+                Lookup::Miss if pending => None,
+                Lookup::Miss => self
+                    .terminal
+                    .resolve(&self.pending[0])
                     .filter(|action| supported_terminal_action(action))
                     .cloned()
-                    .map(Action::Terminal)
-            });
+                    .map(Action::Terminal),
+            };
+            self.pending.clear();
             if let Some(action) = action {
                 actions.push(action);
                 suppress_text = true;
@@ -188,7 +423,7 @@ mod tests {
         .unwrap();
         let (config, diagnostics) = document.resolve("nekomata");
         assert!(!diagnostics.has_errors());
-        let mut shortcuts = Shortcuts::from_config(&config);
+        let mut shortcuts = Shortcuts::from_config(&config, AppKeymap::default());
         let ctx = eframe::egui::Context::default();
         let _ = crate::test_support::run(
             &ctx,
@@ -223,7 +458,7 @@ mod tests {
             let (config, diagnostics) = document.resolve("nekomata");
             assert!(!diagnostics.has_errors());
             assert_eq!(config.keymap.compile(None).len(), 1);
-            let mut shortcuts = Shortcuts::from_config(&config);
+            let mut shortcuts = Shortcuts::from_config(&config, AppKeymap::default());
             let ctx = eframe::egui::Context::default();
             let _ = crate::test_support::run(
                 &ctx,
@@ -364,6 +599,145 @@ mod tests {
                 },
             );
         }
+    }
+
+    #[test]
+    fn configured_spellings_match_the_chords_egui_keys_produce() {
+        for (spelling, key, modifiers) in [
+            ("alt+shift+t", Key::T, Modifiers::ALT | Modifiers::SHIFT),
+            ("alt+T", Key::T, Modifiers::ALT | Modifiers::SHIFT),
+            ("shift+alt+t", Key::T, Modifiers::ALT | Modifiers::SHIFT),
+            ("alt+w", Key::W, Modifiers::ALT),
+            ("c", Key::C, Modifiers::NONE),
+            ("ctrl+a", Key::A, Modifiers::CTRL),
+            ("alt+left", Key::ArrowLeft, Modifiers::ALT),
+            ("f5", Key::F5, Modifiers::NONE),
+            ("'", Key::Quote, Modifiers::NONE),
+            ("ctrl+'", Key::Quote, Modifiers::CTRL),
+            (";", Key::Semicolon, Modifiers::NONE),
+            ("`", Key::Backtick, Modifiers::NONE),
+            ("[", Key::OpenBracket, Modifiers::NONE),
+            ("\\", Key::Backslash, Modifiers::NONE),
+            ("ctrl++", Key::Plus, Modifiers::CTRL),
+            ("-", Key::Minus, Modifiers::NONE),
+            ("space", Key::Space, Modifiers::NONE),
+        ] {
+            assert_eq!(
+                spelling.parse::<Chord>().unwrap(),
+                terminal_chord(key, modifiers),
+                "{spelling}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pending_sequence_swallows_escape_and_gives_misses_to_the_program() {
+        let ctrl_shift = Modifiers {
+            ctrl: true,
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let (actions, remaining) = consume_events(vec![
+            press(Key::W, Modifiers::ALT),
+            press(Key::Escape, Modifiers::NONE),
+            Event::Text("x".into()),
+            press(Key::C, Modifiers::NONE),
+            press(Key::W, Modifiers::ALT),
+            press(Key::PageUp, Modifiers::SHIFT),
+            press(Key::PageUp, Modifiers::SHIFT),
+            press(Key::W, Modifiers::ALT),
+            press(Key::F, ctrl_shift),
+        ]);
+        assert_eq!(
+            actions,
+            vec![Action::Terminal(TerminalAction::Scroll(
+                felis_client_core::ScrollStep::HalfPageUp
+            ))]
+        );
+        assert_eq!(
+            remaining,
+            vec![
+                press(Key::C, Modifiers::NONE),
+                press(Key::PageUp, Modifiers::SHIFT),
+                press(Key::F, ctrl_shift),
+            ]
+        );
+    }
+
+    #[test]
+    fn default_alt_w_sequences_split_close_and_focus() {
+        let mut events = vec![];
+        for (key, modifiers) in [
+            (Key::S, Modifiers::ALT),
+            (Key::V, Modifiers::ALT),
+            (Key::C, Modifiers::NONE),
+            (Key::H, Modifiers::NONE),
+            (Key::J, Modifiers::NONE),
+            (Key::K, Modifiers::NONE),
+            (Key::L, Modifiers::NONE),
+        ] {
+            events.extend([press(Key::W, Modifiers::ALT), press(key, modifiers)]);
+        }
+        let (actions, remaining) = consume_events(events);
+        assert_eq!(
+            actions,
+            vec![
+                Action::Split(Axis::Vertical),
+                Action::Split(Axis::Horizontal),
+                Action::ClosePane,
+                Action::Focus(Direction::Left),
+                Action::Focus(Direction::Down),
+                Action::Focus(Direction::Up),
+                Action::Focus(Direction::Right),
+            ]
+        );
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn hints_name_the_active_bindings() {
+        let hints = AppKeymap::default().hints();
+        assert_eq!(hints.get(&Action::NewTab), "Alt+C");
+        assert_eq!(hints.get(&Action::PreviousTab), "Alt+Shift+T");
+        assert_eq!(hints.get(&Action::Split(Axis::Horizontal)), "Alt+W  Alt+V");
+        assert_eq!(hints.get(&Action::ClosePane), "Alt+W  C");
+        assert_eq!(hints.get(&Action::CloseTab), "");
+
+        let mut keymap = AppKeymap::default();
+        keymap.apply(
+            vec![
+                ("alt+c".into(), parse_sequence("alt+c").unwrap(), None),
+                (
+                    "ctrl+shift+page_up".into(),
+                    parse_sequence("ctrl+shift+page_up").unwrap(),
+                    Some(Action::NewTab),
+                ),
+                (
+                    "ctrl+a '".into(),
+                    parse_sequence("ctrl+a '").unwrap(),
+                    Some(Action::CloseTab),
+                ),
+            ],
+            &mut vec![],
+        );
+        let hints = keymap.hints();
+        assert_eq!(hints.get(&Action::NewTab), "Ctrl+Shift+PageUp");
+        assert_eq!(hints.get(&Action::CloseTab), "Ctrl+A  '");
+    }
+
+    #[test]
+    fn a_hint_prefers_the_shortest_binding() {
+        let mut keymap = AppKeymap::default();
+        keymap.apply(
+            vec![(
+                "alt+w n".into(),
+                parse_sequence("alt+w n").unwrap(),
+                Some(Action::NewTab),
+            )],
+            &mut vec![],
+        );
+        assert_eq!(keymap.hints().get(&Action::NewTab), "Alt+C");
     }
 
     #[test]

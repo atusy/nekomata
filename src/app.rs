@@ -177,6 +177,11 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
         crate::terminal_config::load(&cc.egui_ctx)?;
+        let crate::app_config::Settings {
+            ui_size,
+            ui_face,
+            keymap,
+        } = crate::app_config::load()?;
 
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
@@ -186,20 +191,24 @@ impl App {
         style.spacing.button_padding = Vec2::new(12.0, 7.0);
         style
             .text_styles
-            .insert(egui::TextStyle::Body, FontId::proportional(14.0));
+            .insert(egui::TextStyle::Body, FontId::proportional(ui_size));
         style
             .text_styles
-            .insert(egui::TextStyle::Button, FontId::proportional(14.0));
+            .insert(egui::TextStyle::Button, FontId::proportional(ui_size));
         style.visuals.window_fill = TAB_BAR_BG;
         style.visuals.window_stroke = Stroke::new(1.0_f32, crate::theme::MENU_BORDER);
         style.visuals.window_corner_radius = egui::CornerRadius::same(8);
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
-        cc.egui_ctx.set_fonts(crate::theme::chrome_fonts());
+        cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
-        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx)
+        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, keymap)
     }
 
-    fn connect(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> anyhow::Result<Self> {
+    fn connect(
+        runtime: tokio::runtime::Runtime,
+        ctx: &egui::Context,
+        keymap: crate::shortcuts::AppKeymap,
+    ) -> anyhow::Result<Self> {
         let control = control::Server::bind(&runtime, ctx.clone())?;
         let workspace = WorkspaceClient::start(&runtime, ctx.clone(), control.window);
         let app = Self {
@@ -221,7 +230,7 @@ impl App {
             font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
             picker: SessionPicker::default(),
             help: false,
-            shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx)),
+            shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
             palette_state: Default::default(),
         };
@@ -847,13 +856,16 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
+            // Leave room for the icons and the result count after the entry.
+            let entry_width =
+                (ui.available_width() - crate::theme::ui_extent(ui.style(), 132.0)).max(48.0);
             let entry = ui.add_sized(
-                [(ui.available_width() - 132.0).max(48.0), 30.0],
+                [entry_width, crate::theme::ui_extent(ui.style(), 30.0)],
                 egui::TextEdit::singleline(&mut pane.search_query)
                     .id_salt(("scrollback-query", tab.focused))
                     .hint_text("Search scrollback")
                     .align(egui::Align2::LEFT_CENTER)
-                    .desired_width((ui.available_width() - 132.0).max(48.0))
+                    .desired_width(entry_width)
                     .char_limit(1024),
             );
             if std::mem::take(&mut pane.search_focus) {
@@ -882,7 +894,10 @@ impl App {
             {
                 let search = pane.session.search.search.lock().unwrap();
                 let response = ui.add_sized(
-                    [40.0, 30.0],
+                    [
+                        crate::theme::ui_extent(ui.style(), 40.0),
+                        crate::theme::ui_extent(ui.style(), 30.0),
+                    ],
                     egui::Label::new(if search.error.is_some() {
                         egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
                     } else if search.running {
@@ -980,7 +995,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 12.0;
                     ui.label(
                         egui::RichText::new("Paste into terminal?")
-                            .size(20.0)
+                            .size(theme::ui_size(ui.style(), 20.0))
                             .strong()
                             .color(theme::FG),
                     );
@@ -988,7 +1003,7 @@ impl App {
                         egui::RichText::new(
                             "This text contains line breaks or control characters that may run commands immediately.",
                         )
-                        .size(14.0)
+                        .size(theme::ui_size(ui.style(), 14.0))
                         .color(theme::FG),
                     );
                     ui.add_space(8.0);
@@ -1235,7 +1250,7 @@ impl App {
                 }
                 ui.spacing_mut().button_padding = Vec2::new(15.0, 6.0);
                 // Reserve the full button height before either nested horizontal layout.
-                ui.spacing_mut().interact_size.y = crate::theme::ui_size(ui.style(), 30.0).max(
+                ui.spacing_mut().interact_size.y = crate::theme::ui_extent(ui.style(), 30.0).max(
                     ui.text_style_height(&egui::TextStyle::Button)
                         + 2.0 * ui.spacing().button_padding.y,
                 );
@@ -1243,7 +1258,8 @@ impl App {
                     let menu_open = egui::Popup::is_id_open(ui.ctx(), main_menu_id());
                     let menu_button = crate::theme::menu_button(ui, menu_open);
                     let search_width = if self.searching() {
-                        ui.available_width().min(360.0)
+                        ui.available_width()
+                            .min(crate::theme::ui_extent(ui.style(), 360.0))
                     } else {
                         0.0
                     };
@@ -1324,7 +1340,7 @@ impl App {
                         });
                     if self.searching() {
                         ui.allocate_ui_with_layout(
-                            Vec2::new(search_width, 30.0),
+                            Vec2::new(search_width, crate::theme::ui_extent(ui.style(), 30.0)),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| self.search_bar(ui),
                         );
@@ -1333,30 +1349,30 @@ impl App {
                 })
                 .inner
             });
+        let hints = self.shortcuts.hints();
         let menu_open = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
-            ui.set_width(crate::theme::MENU_WIDTH);
+            ui.set_width(crate::theme::ui_extent(
+                ui.style(),
+                crate::theme::MENU_WIDTH,
+            ));
             for (label, command) in [
                 ("Find in scrollback", Action::Search),
                 ("New workspace", Action::NewWorkspace),
                 ("Switch workspace…", Action::OpenWorkspaces),
             ] {
-                if menu_item(ui, label, "").clicked() {
+                if menu_item(ui, label, hints.get(&command)).clicked() {
                     action = Some(command);
                     ui.close();
                 }
             }
             menu_separator(ui);
-            for (label, shortcut, command) in [
-                ("New tab", "Alt+C", Action::NewTab),
-                (
-                    "Split right",
-                    "Alt+W  Alt+V",
-                    Action::Split(Axis::Horizontal),
-                ),
-                ("Split below", "Alt+W  Alt+S", Action::Split(Axis::Vertical)),
-                ("Next pane", "", Action::NextPane),
+            for (label, command) in [
+                ("New tab", Action::NewTab),
+                ("Split right", Action::Split(Axis::Horizontal)),
+                ("Split below", Action::Split(Axis::Vertical)),
+                ("Next pane", Action::NextPane),
             ] {
-                if menu_item(ui, label, shortcut).clicked() {
+                if menu_item(ui, label, hints.get(&command)).clicked() {
                     action = Some(command);
                     ui.close();
                 }
@@ -1366,11 +1382,11 @@ impl App {
                 ui.close();
             }
             menu_separator(ui);
-            for (label, shortcut, command) in [
-                ("Close pane", "Alt+W  C", Action::ClosePane),
-                ("Close tab", "", Action::CloseTab),
+            for (label, command) in [
+                ("Close pane", Action::ClosePane),
+                ("Close tab", Action::CloseTab),
             ] {
-                if menu_item(ui, label, shortcut)
+                if menu_item(ui, label, hints.get(&command))
                     .on_hover_text("Detach; keep the shell running")
                     .clicked()
                 {
@@ -1384,11 +1400,14 @@ impl App {
                 ui.label(
                     egui::RichText::new("Text size")
                         .color(TAB_INACTIVE_FG)
-                        .size(12.0),
+                        .size(crate::theme::ui_size(ui.style(), 12.0)),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let row = crate::theme::ui_extent(ui.style(), 28.0);
+                    let narrow = crate::theme::ui_extent(ui.style(), 30.0);
+                    let wide = crate::theme::ui_extent(ui.style(), 52.0);
                     if ui
-                        .add_sized([30.0, 28.0], egui::Button::new("+").fill(TAB_HOVER_BG))
+                        .add_sized([narrow, row], egui::Button::new("+").fill(TAB_HOVER_BG))
                         .on_hover_text("Larger text")
                         .clicked()
                     {
@@ -1399,7 +1418,7 @@ impl App {
                     }
                     if ui
                         .add_sized(
-                            [52.0, 28.0],
+                            [wide, row],
                             egui::Button::new(format!("{:.0} pt", self.font_size))
                                 .fill(TAB_HOVER_BG),
                         )
@@ -1410,7 +1429,7 @@ impl App {
                             crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
                     }
                     if ui
-                        .add_sized([30.0, 28.0], egui::Button::new("−").fill(TAB_HOVER_BG))
+                        .add_sized([narrow, row], egui::Button::new("−").fill(TAB_HOVER_BG))
                         .on_hover_text("Smaller text")
                         .clicked()
                     {
@@ -1529,14 +1548,36 @@ impl App {
             self.add_tab(ctx, Some(id));
         }
         if self.help {
+            let hints = self.shortcuts.hints();
             egui::Window::new("About nekomata").open(&mut self.help).show(ctx, |ui| {
-                ui.label("Alt+C: new tab · Alt+T / Alt+Shift+T: next / previous tab");
-                ui.label("Alt+W, then Alt+S / Alt+V: split top/bottom / left/right");
-                ui.label("Alt+W, then C: close pane · H/J/K/L: focus left/down/up/right");
+                // Two spaces separate a sequence's chords; "—" is unbound.
+                let key = |action| match hints.get(&action) {
+                    "" => "—",
+                    text => text,
+                };
+                ui.label(format!(
+                    "{}: new tab · {} / {}: next / previous tab",
+                    key(Action::NewTab),
+                    key(Action::NextTab),
+                    key(Action::PreviousTab)
+                ));
+                ui.label(format!(
+                    "{} / {}: split top/bottom / left/right",
+                    key(Action::Split(Axis::Vertical)),
+                    key(Action::Split(Axis::Horizontal))
+                ));
+                ui.label(format!(
+                    "{}: close pane · {} / {} / {} / {}: focus left/down/up/right",
+                    key(Action::ClosePane),
+                    key(Action::Focus(crate::layout::Direction::Left)),
+                    key(Action::Focus(crate::layout::Direction::Down)),
+                    key(Action::Focus(crate::layout::Direction::Up)),
+                    key(Action::Focus(crate::layout::Direction::Right))
+                ));
                 ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
                 ui.label("Shift+PageUp / PageDown: scroll half a page · Ctrl+Shift+Home / End: oldest / live output");
                 ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");
-                ui.label("Alt+Shift+P: command palette");
+                ui.label(format!("{}: command palette", key(Action::Palette)));
                 ui.label("Drag a tab to reorder it.");
                 ui.label("Drag a divider to resize. Alt+drag selects a rectangle; hold Shift to override terminal mouse reporting.");
                 ui.label("Initial text frontend: Kitty images, OSC 66 sizing and ligatures are not rendered.");
@@ -1545,7 +1586,7 @@ impl App {
             });
         }
         if self.palette {
-            let (chosen, dismissed) = self.palette_state.show(ctx);
+            let (chosen, dismissed) = self.palette_state.show(ctx, self.shortcuts.hints());
             if dismissed || chosen.is_some() {
                 self.palette = false;
             }
@@ -1754,10 +1795,13 @@ fn show_tab_bar_menu<R>(
 
 fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
     ui.add_sized(
-        [ui.available_width(), crate::theme::MENU_ROW_HEIGHT],
+        [
+            ui.available_width(),
+            crate::theme::ui_extent(ui.style(), crate::theme::MENU_ROW_HEIGHT),
+        ],
         egui::Button::new(label).shortcut_text(
             egui::RichText::new(shortcut)
-                .size(11.0)
+                .size(crate::theme::ui_size(ui.style(), 11.0))
                 .color(TAB_INACTIVE_FG),
         ),
     )
@@ -1999,7 +2043,7 @@ fn draw_pane(
             text_rect.min,
             egui::Align2::LEFT_TOP,
             "Input could not be delivered. Reattach this session before continuing.",
-            FontId::proportional(14.0),
+            FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             Color32::LIGHT_RED,
         );
     } else if let Some(error) = &state.error {
@@ -2007,7 +2051,7 @@ fn draw_pane(
             text_rect.min,
             egui::Align2::LEFT_TOP,
             error,
-            FontId::proportional(14.0),
+            FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             Color32::LIGHT_RED,
         );
     } else if !state.connected {
@@ -2024,16 +2068,17 @@ fn draw_pane(
         );
     }
     if let Some(error) = &pane.links.error {
+        let height = crate::theme::ui_extent(ui.style(), 32.0);
         let overlay = Rect::from_min_size(
-            text_rect.left_bottom() - Vec2::new(0.0, 32.0),
-            Vec2::new(text_rect.width(), 32.0),
+            text_rect.left_bottom() - Vec2::new(0.0, height),
+            Vec2::new(text_rect.width(), height),
         );
         painter.rect_filled(overlay, 0, BG);
         painter.text(
             overlay.left_center(),
             egui::Align2::LEFT_CENTER,
             error,
-            FontId::proportional(12.0),
+            FontId::proportional(crate::theme::ui_size(ui.style(), 12.0)),
             Color32::LIGHT_RED,
         );
     }
@@ -2668,7 +2713,12 @@ mod tests {
         let mut config = felis_client_core::config::EffectiveConfig::default();
         config.font.size_px = Some(21.0);
         crate::terminal_config::install(&ctx, config);
-        let mut app = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
+        let mut app = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
         pump(&mut app, &connected);
         assert_eq!(app.font_size, 21.0);
         app.font_size = 30.0;
@@ -2694,7 +2744,12 @@ mod tests {
         let mut config = felis_client_core::config::EffectiveConfig::default();
         config.font.size_px = Some(30.0);
         crate::terminal_config::install(&ctx, config);
-        let mut replacement = App::connect(tokio::runtime::Runtime::new().unwrap(), &ctx).unwrap();
+        let mut replacement = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
         pump(&mut replacement, &connected);
         assert_eq!(replacement.font_size, 30.0);
         before.font_size = 30.0;

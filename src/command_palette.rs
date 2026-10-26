@@ -47,22 +47,14 @@ fn commands() -> Vec<(&'static str, Action)> {
     ]
 }
 
-// Terminal bindings can be overridden in felis configuration. Only display
-// the workspace shortcuts whose bindings are owned by nekomata.
-fn shortcut(action: &Action) -> &'static str {
-    match action {
-        Action::NewTab => "Alt+C",
-        Action::Split(Axis::Horizontal) => "Alt+W  Alt+V",
-        Action::Split(Axis::Vertical) => "Alt+W  Alt+S",
-        Action::NextTab => "Alt+T",
-        Action::PreviousTab => "Alt+Shift+T",
-        Action::ClosePane => "Alt+W  C",
-        _ => "",
-    }
-}
-
 impl CommandPalette {
-    pub fn show(&mut self, ctx: &egui::Context) -> (Option<Action>, bool) {
+    /// Terminal bindings belong to felis's document, so `hints` covers only
+    /// the shortcuts nekomata's own keymap binds.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        hints: &crate::shortcuts::Hints,
+    ) -> (Option<Action>, bool) {
         let (up, down, enter) = ctx.input_mut(|input| {
             (
                 input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
@@ -72,8 +64,14 @@ impl CommandPalette {
         });
         let viewport = ctx.content_rect();
         let top = (viewport.height() * 0.12).min(64.0);
-        let width = (viewport.width() - 48.0).clamp(100.0, theme::PALETTE_WIDTH);
-        let list_height = (viewport.height() - top - 88.0).clamp(32.0, theme::PALETTE_LIST_HEIGHT);
+        let style = ctx.global_style();
+        let width =
+            (viewport.width() - 48.0).clamp(100.0, theme::ui_extent(&style, theme::PALETTE_WIDTH));
+        let row_height = theme::ui_extent(&style, theme::PALETTE_ROW_HEIGHT);
+        let list_height = (viewport.height() - top - theme::ui_extent(&style, 88.0)).clamp(
+            row_height,
+            theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT),
+        );
         let mut chosen = None;
         let id = egui::Id::unique("command_palette");
         let response = egui::Modal::new(id)
@@ -101,10 +99,10 @@ impl CommandPalette {
                 ui.style_mut().visuals.selection.stroke = egui::Stroke::new(1.0, theme::FG);
                 ui.set_width(width);
                 let search = ui.add_sized(
-                    [width, 32.0],
+                    [width, row_height],
                     egui::TextEdit::singleline(&mut self.query)
                         .hint_text("Search commands…")
-                        .font(egui::FontId::proportional(14.0))
+                        .font(egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)))
                         .margin(egui::vec2(10.0, 7.0)),
                 );
                 if !search.has_focus() {
@@ -143,9 +141,9 @@ impl CommandPalette {
                         for (index, (label, action)) in matches.iter().enumerate() {
                             let selected = index == self.selected;
                             let row = ui.add_sized(
-                                [ui.available_width(), theme::PALETTE_ROW_HEIGHT],
+                                [ui.available_width(), row_height],
                                 egui::Button::new(*label)
-                                    .shortcut_text(shortcut(action))
+                                    .shortcut_text(hints.get(action))
                                     .selected(selected),
                             );
                             if selected && (up || down || search.changed()) {
@@ -188,7 +186,9 @@ mod tests {
             ..Default::default()
         };
         let mut result = (None, false);
-        let _ = crate::test_support::run(ctx, input, |ui| result = palette.show(ui.ctx()));
+        let _ = crate::test_support::run(ctx, input, |ui| {
+            result = palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints())
+        });
         result
     }
     #[test]
@@ -220,7 +220,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                palette.show(ui.ctx());
+                palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints());
             },
         );
         assert_eq!(palette.query, " TAB ");
@@ -279,7 +279,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        palette.show(ui.ctx());
+                        palette.show(ui.ctx(), &crate::shortcuts::AppKeymap::default().hints());
                     },
                 );
             }
