@@ -34,65 +34,98 @@ struct Command {
     category: Category,
     phrase: &'static str,
     action: Action,
+    detail: Option<&'static str>,
 }
 
 impl Command {
+    fn new(category: Category, phrase: &'static str, action: Action) -> Self {
+        Self {
+            category,
+            phrase,
+            action,
+            detail: None,
+        }
+    }
+
+    fn detail(self, detail: &'static str) -> Self {
+        Self {
+            detail: Some(detail),
+            ..self
+        }
+    }
+
     fn label(&self) -> String {
         format!("{}: {}", self.category.name(), self.phrase)
+    }
+
+    /// The label, with any detail on a dimmer second line.
+    fn row_text(&self, style: &egui::Style) -> egui::text::LayoutJob {
+        let mut job = egui::text::LayoutJob::default();
+        job.append(
+            &self.label(),
+            0.0,
+            egui::TextFormat::simple(
+                egui::FontId::proportional(theme::ui_size(style, 14.0)),
+                theme::FG,
+            ),
+        );
+        if let Some(detail) = self.detail {
+            job.append(
+                &format!("\n{detail}"),
+                0.0,
+                egui::TextFormat::simple(
+                    egui::FontId::proportional(theme::ui_size(style, 12.0)),
+                    theme::TAB_INACTIVE_FG,
+                ),
+            );
+        }
+        job
     }
 }
 
 fn commands() -> Vec<Command> {
     use Category::*;
+    use felis_client_core::{Action::Scroll, Action::ScrollToPrompt, ScrollStep};
+    use felis_protocol::messages::PromptJump;
+    let command = Command::new;
     let terminal = Action::Terminal;
-    [
-        (Workspace, "Create", Action::NewWorkspace),
-        (Workspace, "Switch…", Action::OpenWorkspaces),
-        (Tab, "Create", Action::NewTab),
-        (Tab, "Switch to next", Action::NextTab),
-        (Tab, "Switch to previous", Action::PreviousTab),
-        (Tab, "Close", Action::CloseTab),
-        (Pane, "Split right", Action::Split(Axis::Horizontal)),
-        (Pane, "Split below", Action::Split(Axis::Vertical)),
-        (Pane, "Close", Action::ClosePane),
-        (Scrollback, "Find…", Action::Search),
-        (
+    vec![
+        command(Workspace, "Create", Action::NewWorkspace),
+        command(Workspace, "Switch…", Action::OpenWorkspaces),
+        command(Tab, "Create", Action::NewTab),
+        command(Tab, "Switch to next", Action::NextTab),
+        command(Tab, "Switch to previous", Action::PreviousTab),
+        command(Tab, "Close", Action::CloseTab)
+            .detail("Detach its sessions; the shells keep running"),
+        command(Pane, "Split right", Action::Split(Axis::Horizontal)),
+        command(Pane, "Split below", Action::Split(Axis::Vertical)),
+        command(Pane, "Close", Action::ClosePane)
+            .detail("Detach its session; the shell keeps running"),
+        command(Scrollback, "Find…", Action::Search),
+        command(
             Scrollback,
             "Jump to previous prompt",
-            terminal(felis_client_core::Action::ScrollToPrompt(
-                felis_protocol::messages::PromptJump::Previous,
-            )),
-        ),
-        (
+            terminal(ScrollToPrompt(PromptJump::Previous)),
+        )
+        .detail("Requires shell integration"),
+        command(
             Scrollback,
             "Jump to next prompt",
-            terminal(felis_client_core::Action::ScrollToPrompt(
-                felis_protocol::messages::PromptJump::Next,
-            )),
-        ),
-        (
+            terminal(ScrollToPrompt(PromptJump::Next)),
+        )
+        .detail("Requires shell integration"),
+        command(
             Scrollback,
             "Scroll to top",
-            terminal(felis_client_core::Action::Scroll(
-                felis_client_core::ScrollStep::Home,
-            )),
+            terminal(Scroll(ScrollStep::Home)),
         ),
-        (
+        command(
             Scrollback,
             "Scroll to bottom",
-            terminal(felis_client_core::Action::Scroll(
-                felis_client_core::ScrollStep::End,
-            )),
+            terminal(Scroll(ScrollStep::End)),
         ),
-        (Font, "Reset size", Action::FontReset),
+        command(Font, "Reset size", Action::FontReset),
     ]
-    .into_iter()
-    .map(|(category, phrase, action)| Command {
-        category,
-        phrase,
-        action,
-    })
-    .collect()
 }
 
 impl CommandPalette {
@@ -188,9 +221,13 @@ impl CommandPalette {
                         }
                         for (index, command) in matches.iter().enumerate() {
                             let selected = index == self.selected;
+                            let height = match command.detail {
+                                Some(_) => row_height * 1.5,
+                                None => row_height,
+                            };
                             let row = ui.add_sized(
-                                [ui.available_width(), row_height],
-                                egui::Button::new(command.label())
+                                [ui.available_width(), height],
+                                egui::Button::new(command.row_text(ui.style()))
                                     .shortcut_text(hints.get(&command.action))
                                     .selected(selected),
                             );
@@ -263,6 +300,19 @@ mod tests {
         assert_eq!(label(Action::NextTab), "Tab: Switch to next");
         assert_eq!(label(Action::Split(Axis::Vertical)), "Pane: Split below");
         assert_eq!(label(Action::OpenWorkspaces), "Workspace: Switch…");
+    }
+
+    #[test]
+    fn closing_rows_say_that_the_shell_keeps_running() {
+        for action in [Action::ClosePane, Action::CloseTab] {
+            let command = commands()
+                .into_iter()
+                .find(|command| command.action == action)
+                .unwrap();
+            let text = command.row_text(&egui::Style::default()).text;
+            assert!(text.starts_with(&command.label()), "{text}");
+            assert!(text.contains("keep"), "{text}");
+        }
     }
 
     #[test]
