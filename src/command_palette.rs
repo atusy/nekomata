@@ -7,51 +7,91 @@ pub struct CommandPalette {
     selected: usize,
 }
 
+/// The closed set of label prefixes; see the naming ADR
+/// (docs/ADR/20261026-230753-name-palette-commands-by-category-and-verb-phrase.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Category {
+    Workspace,
+    Tab,
+    Pane,
+    Scrollback,
+    Font,
+}
+
+impl Category {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Workspace => "Workspace",
+            Self::Tab => "Tab",
+            Self::Pane => "Pane",
+            Self::Scrollback => "Scrollback",
+            Self::Font => "Font",
+        }
+    }
+}
+
 struct Command {
-    label: &'static str,
+    category: Category,
+    phrase: &'static str,
     action: Action,
 }
 
+impl Command {
+    fn label(&self) -> String {
+        format!("{}: {}", self.category.name(), self.phrase)
+    }
+}
+
 fn commands() -> Vec<Command> {
+    use Category::*;
+    let terminal = Action::Terminal;
     [
-        ("Find in scrollback", Action::Search),
-        ("New workspace", Action::NewWorkspace),
-        ("Switch workspace", Action::OpenWorkspaces),
-        ("New tab", Action::NewTab),
-        ("Split left / right", Action::Split(Axis::Horizontal)),
-        ("Split top / bottom", Action::Split(Axis::Vertical)),
-        ("Next tab", Action::NextTab),
-        ("Previous tab", Action::PreviousTab),
-        ("Close pane (detach)", Action::ClosePane),
-        ("Close tab (detach)", Action::CloseTab),
-        ("Reset font size", Action::FontReset),
+        (Workspace, "Create", Action::NewWorkspace),
+        (Workspace, "Switch…", Action::OpenWorkspaces),
+        (Tab, "Create", Action::NewTab),
+        (Tab, "Switch to next", Action::NextTab),
+        (Tab, "Switch to previous", Action::PreviousTab),
+        (Tab, "Close", Action::CloseTab),
+        (Pane, "Split right", Action::Split(Axis::Horizontal)),
+        (Pane, "Split below", Action::Split(Axis::Vertical)),
+        (Pane, "Close", Action::ClosePane),
+        (Scrollback, "Find…", Action::Search),
         (
-            "Previous prompt",
-            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
+            Scrollback,
+            "Jump to previous prompt",
+            terminal(felis_client_core::Action::ScrollToPrompt(
                 felis_protocol::messages::PromptJump::Previous,
             )),
         ),
         (
-            "Next prompt",
-            Action::Terminal(felis_client_core::Action::ScrollToPrompt(
+            Scrollback,
+            "Jump to next prompt",
+            terminal(felis_client_core::Action::ScrollToPrompt(
                 felis_protocol::messages::PromptJump::Next,
             )),
         ),
         (
-            "Scroll to oldest output",
-            Action::Terminal(felis_client_core::Action::Scroll(
+            Scrollback,
+            "Scroll to top",
+            terminal(felis_client_core::Action::Scroll(
                 felis_client_core::ScrollStep::Home,
             )),
         ),
         (
-            "Scroll to live output",
-            Action::Terminal(felis_client_core::Action::Scroll(
+            Scrollback,
+            "Scroll to bottom",
+            terminal(felis_client_core::Action::Scroll(
                 felis_client_core::ScrollStep::End,
             )),
         ),
+        (Font, "Reset size", Action::FontReset),
     ]
     .into_iter()
-    .map(|(label, action)| Command { label, action })
+    .map(|(category, phrase, action)| Command {
+        category,
+        phrase,
+        action,
+    })
     .collect()
 }
 
@@ -119,7 +159,7 @@ impl CommandPalette {
                 let query = self.query.trim().to_lowercase();
                 let matches: Vec<_> = commands()
                     .into_iter()
-                    .filter(|command| command.label.to_lowercase().contains(&query))
+                    .filter(|command| command.label().to_lowercase().contains(&query))
                     .collect();
                 if search.changed() {
                     self.selected = 0;
@@ -150,7 +190,7 @@ impl CommandPalette {
                             let selected = index == self.selected;
                             let row = ui.add_sized(
                                 [ui.available_width(), row_height],
-                                egui::Button::new(command.label)
+                                egui::Button::new(command.label())
                                     .shortcut_text(hints.get(&command.action))
                                     .selected(selected),
                             );
@@ -200,6 +240,32 @@ mod tests {
         result
     }
     #[test]
+    fn labels_name_a_category_then_an_imperative_verb_phrase() {
+        const VERBS: &[&str] = &[
+            "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
+            "Reset", "Scroll", "Show", "Split", "Switch",
+        ];
+        for command in commands() {
+            let label = command.label();
+            let (category, phrase) = label.split_once(": ").expect(&label);
+            assert_eq!(category, command.category.name(), "{label}");
+            let verb = phrase.split([' ', '…']).next().unwrap();
+            assert!(VERBS.contains(&verb), "{label} does not start with a verb");
+        }
+        let label = |action| {
+            commands()
+                .into_iter()
+                .find(|command| command.action == action)
+                .unwrap()
+                .label()
+        };
+        assert_eq!(label(Action::NewTab), "Tab: Create");
+        assert_eq!(label(Action::NextTab), "Tab: Switch to next");
+        assert_eq!(label(Action::Split(Axis::Vertical)), "Pane: Split below");
+        assert_eq!(label(Action::OpenWorkspaces), "Workspace: Switch…");
+    }
+
+    #[test]
     fn arrow_selection_is_activated_by_enter() {
         let ctx = egui::Context::default();
         let mut palette = CommandPalette::default();
@@ -207,7 +273,7 @@ mod tests {
         frame(&ctx, &mut palette, &[egui::Key::ArrowDown]);
         assert_eq!(
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
-            Some(Action::NewWorkspace)
+            Some(Action::OpenWorkspaces)
         );
     }
     #[test]
