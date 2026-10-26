@@ -9,7 +9,6 @@ pub const TAB_HOVER_BG: Color32 = Color32::from_rgb(36, 43, 54);
 pub const TAB_INACTIVE_FG: Color32 = Color32::from_rgb(140, 149, 167);
 
 pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
-pub const MENU_WIDTH: f32 = 256.0;
 pub const MENU_ROW_HEIGHT: f32 = 30.0;
 pub const PALETTE_WIDTH: f32 = 520.0;
 pub const PALETTE_ROW_HEIGHT: f32 = 32.0;
@@ -93,7 +92,7 @@ pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Respo
         .max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     response.widget_info(|| {
-        WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), open, "Main menu")
+        WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), open, "Command palette")
     });
     if ui.is_rect_visible(rect) {
         let fill = if open {

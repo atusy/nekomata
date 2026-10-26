@@ -2,10 +2,12 @@
 
 ## The window
 
-The top row reads `≡ | tab1 | tab2 | …`. The `≡` menu creates and switches
-workspaces, adds tabs, splits and closes panes and tabs, attaches sessions,
-changes the font size and shows help. Most of these are also in the command
-palette (Alt+Shift+P).
+The top row reads `≡ | tab1 | tab2 | …`. `≡` opens the command palette, as
+does Alt+Shift+P. The palette lists every window command: creating and
+switching workspaces, adding tabs, splitting, focusing and closing panes and
+tabs, attaching sessions, searching and scrolling, the clipboard, the font
+size and the keyboard shortcuts. Type any words of a command, in any order, to
+narrow the list; click a command or select it with the arrow keys and Enter.
 
 ## Keys
 
@@ -83,7 +85,7 @@ bracketed paste asks for confirmation first. See the
 ## Searching scrollback
 
 Open the search field at the right of the tab bar with the search keys,
-`≡` → `Find in scrollback`, or the command palette.
+or `Scrollback: Find…` in the command palette.
 
 - Type a query and press Enter or the down-arrow button (`⌄`); press again for
   the next result. The up-arrow button (`⌃`) or Shift+Enter goes back.

@@ -18,10 +18,12 @@ away from another window.
 
 ## Switching
 
-- `≡` → `New workspace` switches to a fresh workspace.
-- `≡` → `Switch workspace…` picks an existing one.
+In the command palette (`≡` or Alt+Shift+P):
 
-Both are also in the command palette. If nekomata cannot connect the panes of
+- `Workspace: Create` switches to a fresh workspace.
+- `Workspace: Switch…` picks an existing one.
+
+If nekomata cannot connect the panes of
 the workspace you switch to, you stay in the current one.
 
 ## From the command line

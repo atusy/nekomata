@@ -1262,8 +1262,7 @@ impl App {
                         + 2.0 * ui.spacing().button_padding.y,
                 );
                 ui.horizontal(|ui| {
-                    let menu_open = egui::Popup::is_id_open(ui.ctx(), main_menu_id());
-                    let menu_button = crate::theme::menu_button(ui, menu_open);
+                    let menu_button = crate::theme::menu_button(ui, self.palette);
                     let search_width = if self.searching() {
                         ui.available_width()
                             .min(crate::theme::ui_extent(ui.style(), 360.0))
@@ -1356,104 +1355,14 @@ impl App {
                 })
                 .inner
             });
-        let hints = self.shortcuts.hints();
-        let menu_open = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
-            ui.set_width(crate::theme::ui_extent(
-                ui.style(),
-                crate::theme::MENU_WIDTH,
-            ));
-            for (label, command) in [
-                ("Find in scrollback", Action::Search),
-                ("New workspace", Action::NewWorkspace),
-                ("Switch workspace…", Action::OpenWorkspaces),
-            ] {
-                if menu_item(ui, label, hints.get(&command)).clicked() {
-                    action = Some(command);
-                    ui.close();
-                }
-            }
-            menu_separator(ui);
-            for (label, command) in [
-                ("New tab", Action::NewTab),
-                ("Split right", Action::Split(Axis::Horizontal)),
-                ("Split below", Action::Split(Axis::Vertical)),
-                ("Next pane", Action::NextPane),
-            ] {
-                if menu_item(ui, label, hints.get(&command)).clicked() {
-                    action = Some(command);
-                    ui.close();
-                }
-            }
-            if menu_item(ui, "Attach terminal…", "").clicked() {
-                action = Some(Action::AttachSession);
-                ui.close();
-            }
-            menu_separator(ui);
-            for (label, command) in [
-                ("Close pane", Action::ClosePane),
-                ("Close tab", Action::CloseTab),
-            ] {
-                if menu_item(ui, label, hints.get(&command))
-                    .on_hover_text("Detach; keep the shell running")
-                    .clicked()
-                {
-                    action = Some(command);
-                    ui.close();
-                }
-            }
-            menu_separator(ui);
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new("Text size")
-                        .color(TAB_INACTIVE_FG)
-                        .size(crate::theme::ui_size(ui.style(), 12.0)),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let row = crate::theme::ui_extent(ui.style(), 28.0);
-                    let narrow = crate::theme::ui_extent(ui.style(), 30.0);
-                    let wide = crate::theme::ui_extent(ui.style(), 52.0);
-                    if ui
-                        .add_sized([narrow, row], egui::Button::new("+").fill(TAB_HOVER_BG))
-                        .on_hover_text("Larger text")
-                        .clicked()
-                    {
-                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
-                            self.font_size * 1.1,
-                            0.0,
-                        );
-                    }
-                    if ui
-                        .add_sized(
-                            [wide, row],
-                            egui::Button::new(format!("{:.0} pt", self.font_size))
-                                .fill(TAB_HOVER_BG),
-                        )
-                        .on_hover_text("Reset text size")
-                        .clicked()
-                    {
-                        self.font_size =
-                            crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
-                    }
-                    if ui
-                        .add_sized([narrow, row], egui::Button::new("−").fill(TAB_HOVER_BG))
-                        .on_hover_text("Smaller text")
-                        .clicked()
-                    {
-                        self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
-                            self.font_size / 1.1,
-                            0.0,
-                        );
-                    }
-                });
-            });
-            menu_separator(ui);
-            if menu_item(ui, "Keyboard shortcuts", "").clicked() {
-                action = Some(Action::ShowShortcuts);
-                ui.close();
-            }
-        })
-        .is_some();
+        let palette_key = self.shortcuts.hints().get(&Action::Palette).to_owned();
+        let palette_hint = match palette_key.as_str() {
+            "" => "Command palette".to_owned(),
+            key => format!("Command palette · {key}"),
+        };
+        if tabs.inner.on_hover_text(palette_hint).clicked() {
+            action = Some(Action::Palette);
+        }
         if let Some(action) = action {
             self.action(ctx, action);
         }
@@ -1467,8 +1376,7 @@ impl App {
             || self.palette
             || self.font_size_open
             || self.workspaces_open
-            || self.pending_workspace.is_some()
-            || menu_open;
+            || self.pending_workspace.is_some();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(root_ui, |ui| {
@@ -1748,10 +1656,6 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
     response.on_hover_text(label)
 }
 
-fn main_menu_id() -> egui::Id {
-    egui::Id::unique("main-menu")
-}
-
 /// Returns the insertion gap for a pointer at `x`: the number of tabs whose
 /// centers lie left of it.
 fn tab_drop_slot(rects: &[egui::Rect], x: f32) -> usize {
@@ -1778,54 +1682,6 @@ fn tab_drop_indicator_x(
         (None, None) => visible.min,
     };
     x.clamp(visible.min + 1.0, visible.max - 1.0)
-}
-
-fn show_tab_bar_menu<R>(
-    button: &egui::Response,
-    tab_bar: Rect,
-    content: impl FnOnce(&mut egui::Ui) -> R,
-) -> Option<egui::InnerResponse<R>> {
-    let anchor = Rect::from_min_max(
-        button.rect.min,
-        egui::pos2(button.rect.right(), tab_bar.bottom()),
-    );
-    egui::Popup::menu(button)
-        .id(main_menu_id())
-        .anchor(anchor)
-        .align(egui::RectAlign::BOTTOM_START)
-        .align_alternatives(&[])
-        .style(crate::theme::menu_style)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            let frame_margin = egui::Frame::popup(ui.style()).total_margin().sum().y;
-            let available_height =
-                (ui.ctx().content_rect().bottom() - tab_bar.bottom() - frame_margin).max(0.0);
-            egui::ScrollArea::vertical()
-                .max_height(available_height)
-                .min_scrolled_height(available_height)
-                .show(ui, content)
-                .inner
-        })
-}
-
-fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: &str) -> egui::Response {
-    ui.add_sized(
-        [
-            ui.available_width(),
-            crate::theme::ui_extent(ui.style(), crate::theme::MENU_ROW_HEIGHT),
-        ],
-        egui::Button::new(label).shortcut_text(
-            egui::RichText::new(shortcut)
-                .size(crate::theme::ui_size(ui.style(), 11.0))
-                .color(TAB_INACTIVE_FG),
-        ),
-    )
-}
-
-fn menu_separator(ui: &mut egui::Ui) {
-    ui.add_space(5.0);
-    ui.separator();
-    ui.add_space(5.0);
 }
 
 fn draw_layout(
@@ -3249,51 +3105,6 @@ mod tests {
                 .await
                 .unwrap();
         });
-    }
-
-    #[test]
-    fn main_menu_opens_below_the_complete_tab_bar() {
-        for (tab_height, window_height) in [(30.0, 700.0), (48.0, 700.0), (48.0, 320.0)] {
-            let ctx = egui::Context::default();
-            for frame in 0..3 {
-                let _ = crate::test_support::run(
-                    &ctx,
-                    egui::RawInput {
-                        screen_rect: Some(Rect::from_min_size(
-                            Pos2::ZERO,
-                            Vec2::new(900.0, window_height),
-                        )),
-                        ..Default::default()
-                    },
-                    |root_ui| {
-                        let tabs = egui::Panel::top("tabs")
-                            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 6)))
-                            .show(root_ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    let button = ui.add_sized([30.0, 30.0], egui::Button::new("≡"));
-                                    ui.allocate_space(Vec2::new(100.0, tab_height));
-                                    button
-                                })
-                                .inner
-                            });
-                        egui::Popup::open_id(&ctx, main_menu_id());
-                        let menu = show_tab_bar_menu(&tabs.inner, tabs.response.rect, |ui| {
-                            ui.set_min_size(Vec2::new(256.0, 450.0));
-                        })
-                        .unwrap();
-                        // The first popup frame is an invisible sizing pass.
-                        assert!(
-                            frame == 0
-                                || (menu.response.rect.top() >= tabs.response.rect.bottom()
-                                    && menu.response.rect.bottom() <= window_height),
-                            "menu {:?} overlaps tab bar {:?}",
-                            menu.response.rect,
-                            tabs.response.rect
-                        );
-                    },
-                );
-            }
-        }
     }
 
     #[test]
