@@ -6,10 +6,10 @@ nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The fel
 
 - `src/app.rs`: window UI and terminal rendering.
 - `src/session.rs`: asynchronous felis connections, input, and terminal state.
-- `src/daemon.rs`, `src/workspace.rs`, `src/workspace_client.rs`: retained nekomata sessions, versioned leases, and asynchronous layout synchronization.
-- `src/control.rs`: per-window CLI commands and session-aware window discovery.
+- `src/daemon.rs`, `src/workspace.rs`, `src/workspace_client.rs`: retained workspaces, versioned leases, and asynchronous layout synchronization.
+- `src/control.rs`: per-window CLI commands and workspace-aware window discovery.
 - `src/layout.rs`, `src/shortcuts.rs`: pane layout, navigation, and keyboard actions.
-- `src/cli.rs`, `src/picker.rs`, `src/theme.rs`: session commands, selection UI, and shared colors.
+- `src/cli.rs`, `src/picker.rs`, `src/theme.rs`: workspace and pane commands, felis session picker, and shared colors.
 - `share/`: fish integration and macOS bundle metadata/native launcher.
 - `scripts/`: isolated integration tests and macOS installation.
 - `flake.nix`: packages, development environments, runtime fonts, and checks.

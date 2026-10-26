@@ -27,6 +27,9 @@ mod workspace_client;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if cli::is_deprecated(&args) {
+        eprintln!("nekomata: `sessions` is deprecated; use `workspaces`");
+    }
     let command = cli::parse(&args).unwrap_or_else(|err| {
         eprintln!("{err}\n\n{}", cli::HELP);
         std::process::exit(2);
@@ -40,7 +43,7 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
-        cli::Command::DaemonStop | cli::Command::SessionsList => {
+        cli::Command::DaemonStop | cli::Command::WorkspacesList => {
             match daemon::command(matches!(command, cli::Command::DaemonStop)) {
                 Ok(output) => println!("{output}"),
                 Err(error) => {
@@ -50,8 +53,8 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
-        cli::Command::Session { window, session } => {
-            match control::run_request(window, control::Request::Switch { session }) {
+        cli::Command::Workspace { window, workspace } => {
+            match control::run_request(window, control::Request::Switch { workspace }) {
                 Ok(output) => println!("{output}"),
                 Err(error) => {
                     eprintln!("{error:#}");

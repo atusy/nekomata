@@ -10,8 +10,8 @@ pub struct CommandPalette {
 fn commands() -> Vec<(&'static str, Action)> {
     vec![
         ("Find in scrollback", Action::Search),
-        ("New session", Action::NewSession),
-        ("Switch session", Action::Sessions),
+        ("New workspace", Action::NewWorkspace),
+        ("Switch workspace", Action::OpenWorkspaces),
         ("New tab", Action::NewTab),
         ("Split left / right", Action::Split(Axis::Horizontal)),
         ("Split top / bottom", Action::Split(Axis::Vertical)),
@@ -199,7 +199,7 @@ mod tests {
         frame(&ctx, &mut palette, &[egui::Key::ArrowDown]);
         assert_eq!(
             frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
-            Some(Action::NewSession)
+            Some(Action::NewWorkspace)
         );
     }
     #[test]

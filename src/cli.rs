@@ -3,10 +3,10 @@ pub enum Command {
     Gui,
     DaemonRun,
     DaemonStop,
-    SessionsList,
-    Session {
+    WorkspacesList,
+    Workspace {
         window: Option<u32>,
-        session: Option<u64>,
+        workspace: Option<u64>,
     },
     List(Vec<String>),
     Help,
@@ -28,30 +28,38 @@ pub enum PaneAction {
 }
 
 pub const HELP: &str = "nekomata\n\
-nekomata sessions list\n\
-nekomata sessions new [--window WINDOW_ID]\n\
-nekomata sessions attach SESSION_ID [--window WINDOW_ID]\n\
+nekomata workspaces list\n\
+nekomata workspaces new [--window WINDOW_ID]\n\
+nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]\n\
 nekomata daemon stop\n\
 nekomata felis sessions list [--format human|json]\n\
 nekomata panes list [--window WINDOW_ID]\n\
 nekomata panes attach [PANE_ID] --session SESSION [--ssh HOST] [--daemon SOCKET] [--window WINDOW_ID]";
 
+/// Former name of `workspaces`, kept for scripts written before the rename.
+const DEPRECATED_WORKSPACES: &str = "sessions";
+
+pub(crate) fn is_deprecated(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == DEPRECATED_WORKSPACES)
+}
+
 pub fn parse(args: &[String]) -> Result<Command, &'static str> {
-    match args
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .as_slice()
+    let mut args: Vec<_> = args.iter().map(String::as_str).collect();
+    if let Some(first) = args.first_mut()
+        && *first == DEPRECATED_WORKSPACES
     {
+        *first = "workspaces";
+    }
+    match args.as_slice() {
         [] => Ok(Command::Gui),
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
-        ["sessions", "list"] => Ok(Command::SessionsList),
-        ["sessions", "--help" | "-h"]
-        | ["sessions", "list" | "new" | "attach", "--help" | "-h"]
+        ["workspaces", "list"] => Ok(Command::WorkspacesList),
+        ["workspaces", "--help" | "-h"]
+        | ["workspaces", "list" | "new" | "attach", "--help" | "-h"]
         | ["daemon", "--help" | "-h"]
         | ["daemon", "run" | "stop", "--help" | "-h"] => Ok(Command::Help),
-        ["sessions", verb @ ("new" | "attach"), options @ ..] => parse_session(verb, options),
+        ["workspaces", verb @ ("new" | "attach"), options @ ..] => parse_workspace(verb, options),
         ["--help" | "-h"]
         | ["felis", "--help" | "-h"]
         | ["felis", "sessions", "--help" | "-h"]
@@ -67,9 +75,9 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
     }
 }
 
-fn parse_session(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
+fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
     let mut window = None;
-    let mut session = None;
+    let mut workspace = None;
     let mut args = options.iter().copied();
     while let Some(arg) = args.next() {
         match arg {
@@ -81,16 +89,16 @@ fn parse_session(verb: &str, options: &[&str]) -> Result<Command, &'static str> 
                         .map_err(|_| "invalid window ID")?,
                 );
             }
-            id if verb == "attach" && session.is_none() && !id.starts_with('-') => {
-                session = Some(id.parse().map_err(|_| "invalid nekomata session ID")?);
+            id if verb == "attach" && workspace.is_none() && !id.starts_with('-') => {
+                workspace = Some(id.parse().map_err(|_| "invalid workspace ID")?);
             }
-            _ => return Err("unknown or repeated session argument"),
+            _ => return Err("unknown or repeated workspace argument"),
         }
     }
-    if verb == "attach" && session.is_none() {
-        return Err("session ID is required");
+    if verb == "attach" && workspace.is_none() {
+        return Err("workspace ID is required");
     }
-    Ok(Command::Session { window, session })
+    Ok(Command::Workspace { window, workspace })
 }
 
 fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
@@ -186,38 +194,65 @@ mod tests {
     }
 
     #[test]
-    fn session_switch_commands_select_the_destination_and_window() {
+    fn workspace_switch_commands_select_the_destination_and_window() {
         assert_eq!(
-            parse(&["sessions", "new"].map(String::from)),
-            Ok(Command::Session {
+            parse(&["workspaces", "list"].map(String::from)),
+            Ok(Command::WorkspacesList)
+        );
+        assert_eq!(
+            parse(&["workspaces", "new"].map(String::from)),
+            Ok(Command::Workspace {
                 window: None,
-                session: None
+                workspace: None
             })
         );
         assert_eq!(
-            parse(&["sessions", "attach", "7", "--window", "42"].map(String::from)),
-            Ok(Command::Session {
+            parse(&["workspaces", "attach", "7", "--window", "42"].map(String::from)),
+            Ok(Command::Workspace {
                 window: Some(42),
-                session: Some(7)
+                workspace: Some(7)
             })
         );
         for args in [
-            vec!["sessions", "attach"],
-            vec!["sessions", "attach", "bad"],
-            vec!["sessions", "attach", "1", "2"],
-            vec!["sessions", "new", "2"],
-            vec!["sessions", "new", "--window"],
-            vec!["sessions", "new", "--window", "1", "--window", "2"],
+            vec!["workspaces", "attach"],
+            vec!["workspaces", "attach", "bad"],
+            vec!["workspaces", "attach", "1", "2"],
+            vec!["workspaces", "new", "2"],
+            vec!["workspaces", "new", "--window"],
+            vec!["workspaces", "new", "--window", "1", "--window", "2"],
         ] {
             let args: Vec<_> = args.into_iter().map(String::from).collect();
             assert!(parse(&args).is_err(), "{args:?}");
         }
         for command in ["list", "new", "attach"] {
             assert_eq!(
-                parse(&["sessions", command, "--help"].map(String::from)),
+                parse(&["workspaces", command, "--help"].map(String::from)),
                 Ok(Command::Help)
             );
         }
+        assert!(HELP.contains("nekomata workspaces attach WORKSPACE_ID"));
+        assert!(!HELP.contains("nekomata sessions"));
+    }
+
+    #[test]
+    fn deprecated_sessions_commands_still_manage_workspaces() {
+        let args = |args: &[&str]| args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        for command in [
+            vec!["list"],
+            vec!["new"],
+            vec!["attach", "7", "--window", "42"],
+            vec!["--help"],
+            vec!["attach", "-h"],
+            vec!["attach"],
+            vec!["detach", "7"],
+        ] {
+            let legacy = args(&[&["sessions"], command.as_slice()].concat());
+            let current = args(&[&["workspaces"], command.as_slice()].concat());
+            assert_eq!(parse(&legacy), parse(&current), "{command:?}");
+            assert!(is_deprecated(&legacy));
+            assert!(!is_deprecated(&current));
+        }
+        assert!(!is_deprecated(&args(&["felis", "sessions", "list"])));
     }
 
     #[test]

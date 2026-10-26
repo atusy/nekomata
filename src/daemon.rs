@@ -1,4 +1,4 @@
-//! Versioned session control. Terminal traffic stays between the GUI and felis.
+//! Versioned workspace control. Terminal traffic stays between the GUI and felis.
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
@@ -52,8 +52,13 @@ pub struct Summary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Payload {
-    Session { id: u64, snapshot: Snapshot },
-    Sessions(Vec<Summary>),
+    #[serde(rename = "Session")]
+    Workspace {
+        id: u64,
+        snapshot: Snapshot,
+    },
+    #[serde(rename = "Sessions")]
+    Workspaces(Vec<Summary>),
     Done,
 }
 
@@ -84,7 +89,7 @@ struct Record {
 
 #[derive(Default)]
 struct Registry {
-    sessions: BTreeMap<u64, Record>,
+    workspaces: BTreeMap<u64, Record>,
     next_id: u64,
     clock: u64,
 }
@@ -93,20 +98,17 @@ impl Registry {
     fn claim(&mut self, owner: u64, window: u32, selection: Selection) -> Result<u64> {
         let selected = match selection {
             Selection::Latest => self
-                .sessions
+                .workspaces
                 .iter()
                 .filter(|(_, record)| record.owner.is_none())
                 .max_by_key(|(id, record)| (record.last_used, **id))
                 .map(|(&id, _)| id),
             Selection::New => None,
             Selection::Id(id) => {
-                let record = self
-                    .sessions
-                    .get(&id)
-                    .context("nekomata session not found")?;
+                let record = self.workspaces.get(&id).context("workspace not found")?;
                 ensure!(
                     record.owner.is_none(),
-                    "session is already attached to a window"
+                    "workspace is already attached to a window"
                 );
                 Some(id)
             }
@@ -114,7 +116,7 @@ impl Registry {
         let id = selected.unwrap_or_else(|| {
             self.next_id += 1;
             let id = self.next_id;
-            self.sessions.insert(
+            self.workspaces.insert(
                 id,
                 Record {
                     snapshot: Snapshot::default(),
@@ -124,19 +126,19 @@ impl Registry {
             );
             id
         });
-        self.sessions.get_mut(&id).unwrap().owner = Some((owner, window));
+        self.workspaces.get_mut(&id).unwrap().owner = Some((owner, window));
         Ok(id)
     }
 
     fn touch(&mut self, id: u64) {
         self.clock += 1;
-        self.sessions.get_mut(&id).unwrap().last_used = self.clock;
+        self.workspaces.get_mut(&id).unwrap().last_used = self.clock;
     }
 
     fn snapshot(&self, id: u64) -> Payload {
-        Payload::Session {
+        Payload::Workspace {
             id,
-            snapshot: self.sessions[&id].snapshot.clone(),
+            snapshot: self.workspaces[&id].snapshot.clone(),
         }
     }
 
@@ -144,7 +146,7 @@ impl Registry {
         if let Some(id) = current {
             self.touch(id);
         }
-        for record in self.sessions.values_mut() {
+        for record in self.workspaces.values_mut() {
             if record.owner.is_some_and(|(id, _)| id == owner) {
                 record.owner = None;
             }
@@ -152,8 +154,8 @@ impl Registry {
     }
 
     fn list(&self) -> Vec<Summary> {
-        let mut sessions: Vec<_> = self
-            .sessions
+        let mut workspaces: Vec<_> = self
+            .workspaces
             .iter()
             .map(|(&id, record)| Summary {
                 id,
@@ -163,8 +165,8 @@ impl Registry {
                 last_used: record.last_used,
             })
             .collect();
-        sessions.sort_by_key(|s| std::cmp::Reverse((s.last_used, s.id)));
-        sessions
+        workspaces.sort_by_key(|s| std::cmp::Reverse((s.last_used, s.id)));
+        workspaces
     }
 }
 
@@ -348,39 +350,40 @@ fn handle(
 ) -> Result<Payload> {
     match request {
         Request::Open { window: id } => {
-            ensure!(current.is_none(), "window already has a session");
+            ensure!(current.is_none(), "window already has a workspace");
             ensure!(id != 0, "invalid window ID");
-            let session = registry.claim(owner, id, Selection::Latest)?;
-            registry.touch(session);
-            *current = Some(session);
+            let workspace = registry.claim(owner, id, Selection::Latest)?;
+            registry.touch(workspace);
+            *current = Some(workspace);
             *window = Some(id);
-            Ok(registry.snapshot(session))
+            Ok(registry.snapshot(workspace))
         }
-        Request::List => Ok(Payload::Sessions(registry.list())),
+        Request::List => Ok(Payload::Workspaces(registry.list())),
         Request::Save(snapshot) => {
-            let id = current.context("window has no session")?;
+            let id = current.context("window has no workspace")?;
             snapshot.validate()?;
-            registry.sessions.get_mut(&id).unwrap().snapshot = snapshot;
+            registry.workspaces.get_mut(&id).unwrap().snapshot = snapshot;
             Ok(Payload::Done)
         }
         Request::Prepare(selection) => {
-            ensure!(pending.is_none(), "session switch already in progress");
-            let id = registry.claim(owner, window.context("window has no session")?, selection)?;
+            ensure!(pending.is_none(), "workspace switch already in progress");
+            let id =
+                registry.claim(owner, window.context("window has no workspace")?, selection)?;
             *pending = Some(id);
             Ok(registry.snapshot(id))
         }
         Request::Finish { snapshot } => {
-            let id = pending.context("no session switch in progress")?;
+            let id = pending.context("no workspace switch in progress")?;
             if let Some(snapshot) = snapshot {
                 snapshot.validate()?;
-                let source = current.context("window has no session")?;
-                registry.sessions.get_mut(&source).unwrap().owner = None;
+                let source = current.context("window has no workspace")?;
+                registry.workspaces.get_mut(&source).unwrap().owner = None;
                 registry.touch(source);
-                registry.sessions.get_mut(&id).unwrap().snapshot = snapshot;
+                registry.workspaces.get_mut(&id).unwrap().snapshot = snapshot;
                 registry.touch(id);
                 *current = Some(id);
             } else {
-                registry.sessions.get_mut(&id).unwrap().owner = None;
+                registry.workspaces.get_mut(&id).unwrap().owner = None;
             }
             *pending = None;
             Ok(Payload::Done)
@@ -393,7 +396,7 @@ fn handle(
         }
         Request::Stop => {
             ensure!(
-                registry.sessions.values().all(|s| s.owner.is_none()),
+                registry.workspaces.values().all(|s| s.owner.is_none()),
                 "cannot stop nekomata daemon while windows are attached"
             );
             Ok(Payload::Done)
@@ -415,18 +418,18 @@ pub fn command(stop: bool) -> Result<String> {
         .await?
         {
             Payload::Done => Ok("Stopped nekomata daemon".into()),
-            Payload::Sessions(sessions) => {
-                let mut output = String::from("SESSION\tWINDOW\tTABS\tPANES\n");
-                for session in sessions {
+            Payload::Workspaces(workspaces) => {
+                let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
+                for workspace in workspaces {
                     output.push_str(&format!(
                         "{}\t{}\t{}\t{}\n",
-                        session.id,
-                        session
+                        workspace.id,
+                        workspace
                             .window
                             .map(|w| w.to_string())
                             .unwrap_or_else(|| "-".into()),
-                        session.tabs,
-                        session.panes
+                        workspace.tabs,
+                        workspace.panes
                     ));
                 }
                 Ok(output.trim_end().into())
@@ -441,7 +444,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn startup_resumes_the_latest_unattached_session() {
+    fn workspace_payloads_keep_their_wire_names_for_running_daemons() {
+        let workspace = Payload::Workspace {
+            id: 3,
+            snapshot: Snapshot::default(),
+        };
+        let json = serde_json::to_value(&workspace).unwrap();
+        assert_eq!(json["Session"]["id"], 3);
+        assert_eq!(
+            serde_json::to_value(Payload::Workspaces(vec![])).unwrap(),
+            serde_json::json!({"Sessions": []})
+        );
+    }
+
+    #[test]
+    fn startup_resumes_the_latest_unattached_workspace() {
         let mut registry = Registry::default();
         let older = registry.claim(1, 101, Selection::New).unwrap();
         registry.touch(older);
@@ -467,9 +484,9 @@ mod tests {
         (client, task)
     }
 
-    fn session(payload: Payload) -> (u64, Snapshot) {
-        let Payload::Session { id, snapshot } = payload else {
-            panic!("expected session")
+    fn workspace(payload: Payload) -> (u64, Snapshot) {
+        let Payload::Workspace { id, snapshot } = payload else {
+            panic!("expected workspace")
         };
         (id, snapshot)
     }
@@ -478,7 +495,7 @@ mod tests {
     async fn disconnected_window_restores_its_saved_layout_and_releases_reservations() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut first, task) = connection(&registry, 1);
-        let (id, mut snapshot) = session(
+        let (id, mut snapshot) = workspace(
             exchange(&mut first, Request::Open { window: 11 })
                 .await
                 .unwrap(),
@@ -487,16 +504,20 @@ mod tests {
         exchange(&mut first, Request::Save(snapshot.clone()))
             .await
             .unwrap();
-        let (reserved, _) = session(
+        let (reserved, _) = workspace(
             exchange(&mut first, Request::Prepare(Selection::New))
                 .await
                 .unwrap(),
         );
         drop(first);
         assert!(task.await.unwrap().is_err());
-        assert!(registry.lock().unwrap().sessions[&reserved].owner.is_none());
+        assert!(
+            registry.lock().unwrap().workspaces[&reserved]
+                .owner
+                .is_none()
+        );
         let (mut replacement, task) = connection(&registry, 2);
-        let restored = session(
+        let restored = workspace(
             exchange(&mut replacement, Request::Open { window: 22 })
                 .await
                 .unwrap(),
@@ -510,22 +531,22 @@ mod tests {
     async fn reserved_switch_preserves_source_until_commit_and_cancel_keeps_it_attached() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut client, task) = connection(&registry, 1);
-        let (source, _) = session(
+        let (source, _) = workspace(
             exchange(&mut client, Request::Open { window: 11 })
                 .await
                 .unwrap(),
         );
-        let (target, _) = session(
+        let (target, _) = workspace(
             exchange(&mut client, Request::Prepare(Selection::New))
                 .await
                 .unwrap(),
         );
-        assert!(registry.lock().unwrap().sessions[&source].owner.is_some());
+        assert!(registry.lock().unwrap().workspaces[&source].owner.is_some());
         exchange(&mut client, Request::Finish { snapshot: None })
             .await
             .unwrap();
-        assert!(registry.lock().unwrap().sessions[&source].owner.is_some());
-        assert!(registry.lock().unwrap().sessions[&target].owner.is_none());
+        assert!(registry.lock().unwrap().workspaces[&source].owner.is_some());
+        assert!(registry.lock().unwrap().workspaces[&target].owner.is_none());
         exchange(&mut client, Request::Prepare(Selection::Id(target)))
             .await
             .unwrap();
@@ -541,9 +562,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(registry.lock().unwrap().sessions[&source].owner.is_none());
+        assert!(registry.lock().unwrap().workspaces[&source].owner.is_none());
         assert_eq!(
-            registry.lock().unwrap().sessions[&target].snapshot,
+            registry.lock().unwrap().workspaces[&target].snapshot,
             snapshot
         );
         drop(client);
@@ -551,16 +572,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn occupied_sessions_cannot_be_claimed_or_stopped_by_another_client() {
+    async fn occupied_workspaces_cannot_be_claimed_or_stopped_by_another_client() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut first, first_task) = connection(&registry, 1);
-        let (id, _) = session(
+        let (id, _) = workspace(
             exchange(&mut first, Request::Open { window: 11 })
                 .await
                 .unwrap(),
         );
         let (mut second, second_task) = connection(&registry, 2);
-        let (other, _) = session(
+        let (other, _) = workspace(
             exchange(&mut second, Request::Open { window: 22 })
                 .await
                 .unwrap(),
@@ -581,7 +602,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn incompatible_clients_do_not_claim_a_session() {
+    async fn incompatible_clients_do_not_claim_a_workspace() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut client, task) = connection(&registry, 1);
         write_json(
@@ -599,7 +620,7 @@ mod tests {
                 .unwrap_err()
                 .contains("incompatible nekomata protocol")
         );
-        assert!(registry.lock().unwrap().sessions.is_empty());
+        assert!(registry.lock().unwrap().workspaces.is_empty());
         drop(client);
         let _ = task.await;
     }
@@ -608,7 +629,7 @@ mod tests {
     async fn malformed_snapshots_preserve_the_last_saved_layout() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut client, task) = connection(&registry, 1);
-        let (id, _) = session(
+        let (id, _) = workspace(
             exchange(&mut client, Request::Open { window: 11 })
                 .await
                 .unwrap(),
@@ -619,7 +640,7 @@ mod tests {
         };
         assert!(exchange(&mut client, Request::Save(invalid)).await.is_err());
         assert_eq!(
-            registry.lock().unwrap().sessions[&id].snapshot,
+            registry.lock().unwrap().workspaces[&id].snapshot,
             Snapshot::default()
         );
         drop(client);
@@ -636,20 +657,20 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(result.unwrap_err().to_string().contains("too large"));
-        assert!(registry.lock().unwrap().sessions.is_empty());
+        assert!(registry.lock().unwrap().workspaces.is_empty());
     }
     #[tokio::test]
-    async fn acknowledged_detach_makes_the_session_available_before_the_connection_closes() {
+    async fn acknowledged_detach_makes_the_workspace_available_before_the_connection_closes() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut client, task) = connection(&registry, 1);
-        let (id, _) = session(
+        let (id, _) = workspace(
             exchange(&mut client, Request::Open { window: 11 })
                 .await
                 .unwrap(),
         );
         exchange(&mut client, Request::Detach).await.unwrap();
         let (mut replacement, replacement_task) = connection(&registry, 2);
-        let (restored, _) = session(
+        let (restored, _) = workspace(
             exchange(&mut replacement, Request::Open { window: 22 })
                 .await
                 .unwrap(),
@@ -672,7 +693,7 @@ mod tests {
             ..Default::default()
         };
         assert!(prepare(&mut client, invalid, Selection::New).await.is_err());
-        assert_eq!(registry.lock().unwrap().sessions.len(), 1);
+        assert_eq!(registry.lock().unwrap().workspaces.len(), 1);
         drop(client);
         let _ = task.await;
     }

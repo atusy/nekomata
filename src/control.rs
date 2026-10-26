@@ -22,7 +22,8 @@ use crate::cli::PaneAction;
 pub enum Request {
     List,
     Switch {
-        session: Option<u64>,
+        #[serde(rename = "session")]
+        workspace: Option<u64>,
     },
     Attach {
         pane: Option<u64>,
@@ -169,14 +170,21 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
     run_request(window, request)
 }
 
+/// Exported to local shells so CLI calls follow their workspace across GUI restarts.
+pub(crate) const WORKSPACE_ENV: &str = "NEKOMATA_WORKSPACE_ID";
+/// Name exported by builds before the workspace rename; their shells still carry it.
+const LEGACY_WORKSPACE_ENV: &str = "NEKOMATA_SESSION_ID";
+
+fn workspace_from_env(get: impl Fn(&str) -> Option<String>) -> Option<u64> {
+    [WORKSPACE_ENV, LEGACY_WORKSPACE_ENV]
+        .into_iter()
+        .find_map(|name| get(name)?.parse().ok())
+}
+
 pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
-    let session = window
+    let workspace = window
         .is_none()
-        .then(|| {
-            std::env::var("NEKOMATA_SESSION_ID")
-                .ok()
-                .and_then(|id| id.parse::<u64>().ok())
-        })
+        .then(|| workspace_from_env(|name| std::env::var(name).ok()))
         .flatten();
     let window = window.or_else(|| {
         std::env::var("NEKOMATA_WINDOW_ID")
@@ -184,21 +192,21 @@ pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
             .and_then(|id| id.parse().ok())
     });
     tokio::runtime::Runtime::new()?.block_on(async {
-        let window = if let Some(id) = session {
+        let window = if let Some(id) = workspace {
             let mut stream = UnixStream::connect(crate::daemon::socket()?)
                 .await
-                .context("connect to the shell's nekomata session daemon")?;
-            let crate::daemon::Payload::Sessions(sessions) =
+                .context("connect to the shell's nekomata workspace daemon")?;
+            let crate::daemon::Payload::Workspaces(workspaces) =
                 crate::daemon::exchange(&mut stream, crate::daemon::Request::List).await?
             else {
-                bail!("unexpected session list response");
+                bail!("unexpected workspace list response");
             };
             Some(
-                sessions
+                workspaces
                     .into_iter()
-                    .find(|session| session.id == id)
-                    .and_then(|session| session.window)
-                    .context("the shell's nekomata session is not attached to a window")?,
+                    .find(|workspace| workspace.id == id)
+                    .and_then(|workspace| workspace.window)
+                    .context("the shell's workspace is not attached to a window")?,
             )
         } else {
             window
@@ -277,6 +285,50 @@ mod tests {
             Err("session not found".into())
         );
         task.await.unwrap().unwrap();
+    }
+
+    #[test]
+    fn shells_name_their_workspace_with_a_legacy_fallback() {
+        let env = |vars: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| (*value).to_owned())
+            }
+        };
+        assert_eq!(workspace_from_env(env(&[])), None);
+        assert_eq!(
+            workspace_from_env(env(&[("NEKOMATA_WORKSPACE_ID", "7")])),
+            Some(7)
+        );
+        // Shells started by builds before the rename only carry the old name.
+        assert_eq!(
+            workspace_from_env(env(&[("NEKOMATA_SESSION_ID", "5")])),
+            Some(5)
+        );
+        assert_eq!(
+            workspace_from_env(env(&[
+                ("NEKOMATA_WORKSPACE_ID", "7"),
+                ("NEKOMATA_SESSION_ID", "5")
+            ])),
+            Some(7)
+        );
+        assert_eq!(
+            workspace_from_env(env(&[
+                ("NEKOMATA_WORKSPACE_ID", "bad"),
+                ("NEKOMATA_SESSION_ID", "5")
+            ])),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn workspace_switch_keeps_its_wire_name_for_running_windows() {
+        let request = Request::Switch { workspace: Some(7) };
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({"Switch": {"session": 7}})
+        );
     }
 
     #[tokio::test]

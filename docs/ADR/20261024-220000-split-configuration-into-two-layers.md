@@ -39,7 +39,7 @@ Implement option 3.
   felis-client-core. nekomata adopts felis's vocabulary there and does not
   extend its schema.
 - **Application layer.** Settings that exist only because nekomata manages
-  windows, tabs, panes and nekomata sessions come from a document nekomata owns.
+  windows, tabs, panes and workspaces come from a document nekomata owns.
   It does not redefine terminal-layer settings.
 - **Boundary rule.** A setting belongs to the terminal layer if it would still
   make sense in a single-pane felis client; otherwise it belongs to the
