@@ -189,7 +189,7 @@ impl AppKeymap {
                 .into_iter()
                 .map(|(action, keys)| {
                     let text = keys.iter().map(chord_label).collect::<Vec<_>>();
-                    // Two spaces read as "then", as the menus always showed it.
+                    // Two spaces read as "then" in the palette and help.
                     (action, text.join("  "))
                 })
                 .collect(),
