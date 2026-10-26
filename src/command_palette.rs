@@ -120,10 +120,8 @@ fn commands() -> Vec<Command> {
         command(Tab, "Close", Action::CloseTab)
             .detail("Detach its sessions; the shells keep running")
             .keywords(&["detach"]),
-        command(Pane, "Split right", Action::Split(Axis::Horizontal))
-            .keywords(&["vertical", "side by side"]),
-        command(Pane, "Split below", Action::Split(Axis::Vertical))
-            .keywords(&["horizontal", "down"]),
+        command(Pane, "Split right", Action::Split(Axis::Horizontal)).keywords(&["side by side"]),
+        command(Pane, "Split below", Action::Split(Axis::Vertical)).keywords(&["down"]),
         command(Pane, "Focus next", Action::NextPane),
         command(Pane, "Focus left", Action::Focus(Direction::Left)),
         command(Pane, "Focus down", Action::Focus(Direction::Down)),
