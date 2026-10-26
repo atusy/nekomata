@@ -26,3 +26,6 @@ confirmation.
 
 Keyboard shortcuts are documented in the manual; the palette has no shortcut
 help action.
+
+`Session: Attach…` states that it opens a local daemon session in a new tab;
+it does not follow the active pane to a remote daemon.

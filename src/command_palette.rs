@@ -128,7 +128,9 @@ fn commands() -> Vec<Command> {
         command(Pane, "Close", Action::ClosePane)
             .detail("Detaches its session; the shell keeps running")
             .keywords(&["detach"]),
-        command(Session, "Attach…", Action::AttachSession).keywords(&["picker", "open"]),
+        command(Session, "Attach…", Action::AttachSession)
+            .detail("Opens a local daemon session in a new tab")
+            .keywords(&["picker", "open"]),
         command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
         command(
             Scrollback,
@@ -364,6 +366,16 @@ mod tests {
         ] {
             assert!(labels.contains(&(action, label.into())), "{label}");
         }
+    }
+
+    #[test]
+    fn attach_explains_the_local_target_and_new_tab() {
+        let command = commands()
+            .into_iter()
+            .find(|c| c.action == Action::AttachSession)
+            .unwrap();
+        let text = command.row_text(&egui::Style::default()).text;
+        assert!(text.contains("local") && text.contains("new tab"), "{text}");
     }
 
     #[test]
