@@ -14,6 +14,12 @@ command.
 
 ## Labels
 
+A command whose label names no target acts on the active one: closing a tab
+closes the active tab.
+
+Caveats, such as that closing a pane leaves its shell running, appear on a
+dimmer line under the label.
+
 A label ending in "…" opens a choice or an input before the command acts.
 Other commands act as soon as they are chosen, though one may still ask for
 confirmation.
