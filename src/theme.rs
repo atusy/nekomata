@@ -12,6 +12,8 @@ pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
 pub const MENU_ROW_HEIGHT: f32 = 30.0;
 pub const PALETTE_WIDTH: f32 = 520.0;
 pub const PALETTE_ROW_HEIGHT: f32 = 32.0;
+/// A palette row with a detail line under its label.
+pub const PALETTE_DETAIL_ROW_HEIGHT: f32 = 48.0;
 pub const PALETTE_LIST_HEIGHT: f32 = 270.0;
 
 /// The body size the chrome's other text sizes were drawn against.
@@ -65,6 +67,12 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.hovered.weak_bg_fill = TAB_ACTIVE_BG;
     style.visuals.widgets.active.weak_bg_fill = TAB_HOVER_BG;
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
+}
+
+/// Distance from the window top to the palette and the controls it opens:
+/// a little below the tab bar, closer on short windows.
+pub fn overlay_top(viewport_height: f32) -> f32 {
+    (viewport_height * 0.12).min(64.0)
 }
 
 /// The floating panel behind the command palette and the controls it opens.

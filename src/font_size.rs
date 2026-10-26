@@ -22,7 +22,7 @@ pub(crate) fn show(ctx: &egui::Context, size: f32) -> (Option<Action>, bool) {
         None
     };
     let id = egui::Id::unique("font_size");
-    let top = (ctx.content_rect().height() * 0.12).min(64.0);
+    let top = theme::overlay_top(ctx.content_rect().height());
     let response = egui::Modal::new(id)
         .area(egui::Modal::default_area(id).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top)))
         // The text behind must stay visible while it resizes.
