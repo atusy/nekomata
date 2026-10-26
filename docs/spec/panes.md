@@ -37,7 +37,8 @@ is distinct from the felis session ID.
 nekomata felis sessions list [--format human|json]
 ```
 
-The listing is delegated to the bundled felis CLI. Attaching a session from the command palette opens a session of the startup local daemon in a new tab.
+The listing is delegated to the bundled felis CLI. Attaching a session from the
+command palette opens a session of the startup local daemon in a new tab.
 
 ## Retargeting a pane
 
