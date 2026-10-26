@@ -3131,7 +3131,7 @@ mod tests {
         let ctx = egui::Context::default();
         let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
             egui::CentralPanel::default().show(root_ui, |ui| {
-                ui.menu_button("≡", |_| {}).response.request_focus();
+                ui.menu_button("Options", |_| {}).response.request_focus();
             });
         });
         let _ = crate::test_support::run(
@@ -3154,7 +3154,7 @@ mod tests {
                 let ctx = &context;
                 focus_terminal(ctx);
                 egui::CentralPanel::default().show(root_ui, |ui| {
-                    assert!(ui.menu_button("≡", |_| {}).inner.is_none());
+                    assert!(ui.menu_button("Options", |_| {}).inner.is_none());
                     ui.interact(
                         ui.max_rect(),
                         terminal_focus_id(),

@@ -348,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_and_key_only_actions_are_listed() {
+    fn commands_once_outside_the_palette_are_listed() {
         let labels: Vec<_> = commands()
             .into_iter()
             .map(|command| (command.action.clone(), command.label()))

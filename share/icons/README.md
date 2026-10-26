@@ -11,5 +11,5 @@ Regenerate the committed raster assets from the SVG:
 nix develop -c python3 scripts/generate-icons.py
 ```
 
-The runtime embeds the PNG files and caches the menu texture. The Nix package
+The runtime embeds the PNG files and caches the palette button texture. The Nix package
 also installs the desktop icons and the macOS bundle's ICNS resource.

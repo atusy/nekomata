@@ -359,7 +359,11 @@ mod tests {
                             _ => None,
                         })
                         .collect();
-                    assert_eq!(icons.len(), 1, "menu must show the nekomata image");
+                    assert_eq!(
+                        icons.len(),
+                        1,
+                        "the palette button must show the nekomata image"
+                    );
                     let icon_rect = icons[0].calc_bounds();
                     assert!(icons[0].vertices.iter().all(|vertex| vertex.color
                         == if open {
@@ -387,7 +391,7 @@ mod tests {
                     Shape::Rect(rect) if rect.rect == button_rect && rect.fill == super::TAB_ACTIVE_BG));
                     assert_eq!(
                         highlighted, open,
-                        "menu highlight must follow popup visibility"
+                        "the palette button highlight must follow the palette"
                     );
                 }
             }

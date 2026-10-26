@@ -173,7 +173,7 @@ impl AppKeymap {
         }
     }
 
-    /// The text menus show for each bound action: its shortest sequence,
+    /// The key text the palette and help show for each bound action: its shortest sequence,
     /// the first in key order among equals.
     pub fn hints(&self) -> Hints {
         let mut hints: Vec<(Action, &[Chord])> = vec![];
@@ -189,7 +189,7 @@ impl AppKeymap {
                 .into_iter()
                 .map(|(action, keys)| {
                     let text = keys.iter().map(chord_label).collect::<Vec<_>>();
-                    // Two spaces read as "then", as the menus always showed.
+                    // Two spaces read as "then", as the menus always showed it.
                     (action, text.join("  "))
                 })
                 .collect(),
@@ -226,7 +226,7 @@ impl Hints {
     }
 }
 
-/// `alt+shift+t` as menus show it: `Alt+Shift+T`.
+/// `alt+shift+t` as the palette and help show it: `Alt+Shift+T`.
 fn chord_label(chord: &Chord) -> String {
     let mut label = String::new();
     for (modifier, name) in [
