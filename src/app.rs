@@ -468,6 +468,7 @@ impl App {
                 self.workspaces_open = false;
                 self.picker.visible = false;
                 self.palette = false;
+                self.font_size_open = false;
                 self.pending_workspace = Some(WorkspaceSwitch {
                     id: None,
                     snapshot: None,
