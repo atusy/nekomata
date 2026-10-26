@@ -62,6 +62,12 @@ Configuration has two layers, each read from the document its owner defines.
 - nekomata depends on felis-client-core's configuration API, so felis revision
   updates must check it.
 
+## Decision–Implementation Gap
+
+Only the terminal layer is implemented. nekomata has no application-layer
+document yet, so its tab, pane and workspace keys and its UI font are fixed in
+code.
+
 ## Related Decisions
 
 - [Share felis client policies and the GPU renderer](20261024-180000-share-felis-client-and-gpu.md)

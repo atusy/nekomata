@@ -7,7 +7,7 @@ change them in the same commit as the behavior.
 | Document | Covers |
 | --- | --- |
 | [configuration](configuration.md) | Configuration documents, locations, supported settings and error handling |
-| [keymap](keymap.md) | Key dispatch, default bindings and application keymap rules |
+| [keymap](keymap.md) | Key dispatch and default bindings |
 | [workspaces](workspaces.md) | Workspace contents, leases, startup, switching and the nekomata daemon |
 | [panes](panes.md) | Pane connections, retargeting from the CLI and window resolution |
 | [terminal](terminal.md) | Terminal interactions: selection, links, paste, search, scrolling, reconnection |
