@@ -1308,6 +1308,7 @@ impl App {
                                                 &rects,
                                                 to,
                                                 ui.spacing().item_spacing.x,
+                                                ui.clip_rect().x_range(),
                                             );
                                             ui.painter().vline(
                                                 x,
@@ -1700,17 +1701,25 @@ fn tab_drop_slot(rects: &[egui::Rect], x: f32) -> usize {
 }
 
 /// Horizontal position of the drop indicator for `slot`, midway between the
-/// neighboring tabs or just outside the outermost one.
-fn tab_drop_indicator_x(rects: &[egui::Rect], slot: usize, spacing: f32) -> f32 {
-    match (
+/// neighboring tabs or just outside the outermost one, kept within `visible`.
+fn tab_drop_indicator_x(
+    rects: &[egui::Rect],
+    slot: usize,
+    spacing: f32,
+    visible: egui::Rangef,
+) -> f32 {
+    // The scroll area clips at the first tab's left edge, so an indicator in
+    // the outer gap would be invisible without clamping.
+    let x = match (
         slot.checked_sub(1).and_then(|i| rects.get(i)),
         rects.get(slot),
     ) {
         (Some(left), Some(right)) => (left.right() + right.left()) / 2.0,
         (Some(left), None) => left.right() + spacing / 2.0,
         (None, Some(right)) => right.left() - spacing / 2.0,
-        (None, None) => 0.0,
-    }
+        (None, None) => visible.min,
+    };
+    x.clamp(visible.min + 1.0, visible.max - 1.0)
 }
 
 fn show_tab_bar_menu<R>(
@@ -2440,6 +2449,19 @@ mod tests {
         assert_eq!(tab_drop_slot(&rects, 150.0), 2);
         assert_eq!(tab_drop_slot(&rects, 260.0), 3);
         assert_eq!(tab_drop_slot(&rects, 999.0), 3);
+    }
+
+    #[test]
+    fn tab_drop_indicator_stays_inside_the_visible_tab_bar() {
+        let rects = [0.0, 100.0]
+            .map(|x| egui::Rect::from_min_size(egui::pos2(x, 0.0), Vec2::new(90.0, 30.0)));
+        let visible = egui::Rangef::new(0.0, 190.0);
+        assert_eq!(tab_drop_indicator_x(&rects, 1, 10.0, visible), 95.0);
+        let first = tab_drop_indicator_x(&rects, 0, 10.0, visible);
+        let last = tab_drop_indicator_x(&rects, 2, 10.0, visible);
+        // The 2px line must not be clipped by the scroll area.
+        assert!(first - 1.0 >= visible.min, "{first}");
+        assert!(last + 1.0 <= visible.max, "{last}");
     }
 
     #[test]
