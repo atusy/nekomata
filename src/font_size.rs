@@ -6,7 +6,7 @@ use eframe::egui;
 pub(crate) const STEP: f32 = 1.1;
 
 /// Returns the size change chosen this frame and whether the control was
-/// dismissed. `size` is the current terminal font size in points.
+/// dismissed. `size` is the current terminal font size in logical pixels.
 pub(crate) fn show(ctx: &egui::Context, size: f32) -> (Option<Action>, bool) {
     let (up, down) = ctx.input_mut(|input| {
         (
@@ -44,7 +44,7 @@ pub(crate) fn show(ctx: &egui::Context, size: f32) -> (Option<Action>, bool) {
                 {
                     chosen = Some(Action::FontScale(1.0 / STEP));
                 }
-                ui.add_sized([wide, row], egui::Label::new(format!("{size:.0} pt")));
+                ui.add_sized([wide, row], egui::Label::new(format!("{size:.0} px")));
                 if ui
                     .add_sized([narrow, row], button("+"))
                     .on_hover_text("Larger · ↑")
@@ -104,6 +104,24 @@ mod tests {
             frame(&ctx, &[egui::Key::ArrowDown]),
             (Some(Action::FontScale(1.0 / STEP)), false)
         );
+    }
+
+    #[test]
+    fn shows_the_current_size_in_logical_pixels() {
+        let ctx = egui::Context::default();
+        frame(&ctx, &[]);
+        let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            show(ui.ctx(), 13.0);
+        });
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.iter().any(|text| text == "13 px"), "{texts:?}");
     }
 
     #[test]
