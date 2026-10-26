@@ -1470,7 +1470,23 @@ impl App {
             self.add_tab(ctx, Some(id));
         }
         if self.palette {
-            let (chosen, dismissed) = self.palette_state.show(ctx, self.shortcuts.hints());
+            let prompt_unavailable = {
+                let state = self.panes[&self.tabs[self.active].focused]
+                    .session
+                    .state
+                    .lock()
+                    .unwrap();
+                if !state.connected {
+                    Some("Unavailable while disconnected")
+                } else if state.screen.alt_screen() {
+                    Some("Unavailable in the alternate screen")
+                } else {
+                    None
+                }
+            };
+            let (chosen, dismissed) =
+                self.palette_state
+                    .show(ctx, self.shortcuts.hints(), prompt_unavailable);
             if dismissed || chosen.is_some() {
                 self.palette = false;
             }

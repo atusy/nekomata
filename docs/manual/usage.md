@@ -43,7 +43,8 @@ palette shows the current size with buttons to step or reset it. Prompt
 navigation needs a shell that reports prompt boundaries with OSC 133.
 `Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
 `Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
-are also in the command palette.
+are also in the command palette. Prompt jumps are disabled with a reason while
+the active session is disconnected or in the alternate screen.
 
 ## Tabs and panes
 
