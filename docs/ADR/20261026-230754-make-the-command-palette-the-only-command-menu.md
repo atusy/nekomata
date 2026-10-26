@@ -4,11 +4,11 @@
 
 nekomata listed its window commands in three hand-written places: the command
 palette, the tab bar's menu and the help window. Each place named the same
-action differently (the palette's "Split top / bottom" was the menu's "Split below"),
-and each new command had to be added to every place by hand. Some commands
-existed in only one of them: attaching a session, showing the keyboard
-shortcuts and focusing the next pane were menu-only, and moving focus in a
-direction was in neither.
+action differently (the palette's "Split top / bottom" was the menu's "Split
+below"), and each new command had to be added to every place by hand. Some
+commands existed in only one of them: attaching a session, showing the
+keyboard shortcuts and focusing the next pane were menu-only, and moving focus
+in a direction was in neither.
 
 The command list is expected to grow from about fifteen entries to thirty or
 forty as felis actions such as session switching, fullscreen and piping become
@@ -43,8 +43,8 @@ from the registry rather than spelling their own.
 
 ## Considered Options
 
-1. **Palette only; the tab bar button opens it.** Chosen. One list and one vocabulary, and
-   the menu's mouse entry point is kept.
+1. **Palette only; the tab bar button opens it.** Chosen. One list and one
+   vocabulary, and the menu's mouse entry point is kept.
 2. **Keep the menu and the palette, both reading the registry.** Removes the
    duplicated lists, but the menu needs its own layout decisions (grouping,
    headings or menu-only labels), and a menu-only label would bring back a
