@@ -160,7 +160,8 @@ fn commands() -> Vec<Command> {
         .keywords(&["live", "end"]),
         command(Clipboard, "Copy selection", Action::Copy),
         command(Clipboard, "Paste", Action::Paste),
-        command(Font, "Reset size", Action::FontReset).keywords(&["zoom", "text"]),
+        command(Font, "Change size…", Action::ChangeFontSize)
+            .keywords(&["zoom", "larger", "smaller", "reset", "text"]),
         command(Window, "Show keyboard shortcuts", Action::ShowShortcuts)
             .keywords(&["help", "keymap"]),
     ]
@@ -313,7 +314,7 @@ mod tests {
     fn labels_name_a_category_then_an_imperative_verb_phrase() {
         const VERBS: &[&str] = &[
             "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
-            "Reset", "Scroll", "Show", "Split", "Switch",
+            "Scroll", "Show", "Split", "Switch",
         ];
         for command in commands() {
             let label = command.label();
@@ -351,6 +352,7 @@ mod tests {
             (Action::Paste, "Clipboard: Paste"),
             (Action::AttachSession, "Session: Attach…"),
             (Action::ShowShortcuts, "Window: Show keyboard shortcuts"),
+            (Action::ChangeFontSize, "Font: Change size…"),
         ] {
             assert!(labels.contains(&(action, label.into())), "{label}");
         }

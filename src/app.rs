@@ -172,6 +172,7 @@ pub struct App {
     shortcuts: Shortcuts,
     palette: bool,
     palette_state: crate::command_palette::CommandPalette,
+    font_size_open: bool,
 }
 
 impl App {
@@ -233,6 +234,7 @@ impl App {
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
             palette_state: Default::default(),
+            font_size_open: false,
         };
         Ok(app)
     }
@@ -940,8 +942,8 @@ impl App {
             TerminalAction::FontSize(step) => self.action(
                 ctx,
                 match step {
-                    FontSizeStep::Increase => Action::FontScale(1.1),
-                    FontSizeStep::Decrease => Action::FontScale(1.0 / 1.1),
+                    FontSizeStep::Increase => Action::FontScale(crate::font_size::STEP),
+                    FontSizeStep::Decrease => Action::FontScale(1.0 / crate::font_size::STEP),
                     FontSizeStep::Reset => Action::FontReset,
                 },
             ),
@@ -1063,6 +1065,7 @@ impl App {
             }
             Action::AttachSession => self.picker.open(&self.runtime, ctx),
             Action::ShowShortcuts => self.help = true,
+            Action::ChangeFontSize => self.font_size_open = true,
             Action::FontScale(scale) => {
                 self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
                     self.font_size * scale,
@@ -1216,6 +1219,7 @@ impl App {
             && !self.picker.visible
             && !self.help
             && !self.palette
+            && !self.font_size_open
             && !self.workspaces_open
             && !self.searching()
             && self.pending_workspace.is_none()
@@ -1232,6 +1236,7 @@ impl App {
             && !self.picker.visible
             && !self.help
             && !self.palette
+            && !self.font_size_open
             && !self.workspaces_open
             && !self.searching()
             && self.pending_workspace.is_none()
@@ -1460,6 +1465,7 @@ impl App {
             || self.picker.visible
             || self.help
             || self.palette
+            || self.font_size_open
             || self.workspaces_open
             || self.pending_workspace.is_some()
             || menu_open;
@@ -1592,6 +1598,13 @@ impl App {
             if dismissed || chosen.is_some() {
                 self.palette = false;
             }
+            if let Some(action) = chosen {
+                self.action(ctx, action);
+            }
+        }
+        if self.font_size_open {
+            let (chosen, dismissed) = crate::font_size::show(ctx, self.font_size);
+            self.font_size_open = !dismissed;
             if let Some(action) = chosen {
                 self.action(ctx, action);
             }
@@ -2998,6 +3011,7 @@ mod tests {
             shortcuts: Shortcuts::default(),
             palette: false,
             palette_state: Default::default(),
+            font_size_open: false,
         };
         app.add_tab(&ctx, None);
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {

@@ -26,6 +26,7 @@ pub enum Action {
     Palette,
     AttachSession,
     ShowShortcuts,
+    ChangeFontSize,
     Search,
     Paste,
     Copy,
