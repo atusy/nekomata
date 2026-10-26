@@ -1081,9 +1081,13 @@ impl App {
                     crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
             }
             Action::Paste => {
+                // Keys cannot paste while these are open, so only the palette
+                // gets here, and it means the terminal. Each one blocks terminal
+                // input and would make the delivered clipboard event stale.
+                self.help = false;
+                self.picker.visible = false;
+                self.workspaces_open = false;
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
-                // Only the palette can paste while searching, and it means the
-                // terminal: an open search would discard the clipboard event.
                 if pane.search_open {
                     pane.close_search();
                 }
@@ -2596,11 +2600,15 @@ mod tests {
         app.font_size = 30.0;
         app.action(&ctx, Action::FontReset);
         assert_eq!(app.font_size, 21.0);
-        // Pasting from the palette over an open search must reach the
-        // terminal, whose paste the search would otherwise discard.
+        // Pasting from the palette must reach the terminal, whose paste any
+        // window that blocks terminal input would otherwise discard.
         app.open_search();
+        app.help = true;
+        app.picker.visible = true;
+        app.workspaces_open = true;
         app.action(&ctx, Action::Paste);
         assert!(!app.searching());
+        assert!(!app.help && !app.picker.visible && !app.workspaces_open);
         assert!(app.paste_requested.take().is_some());
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
