@@ -56,6 +56,17 @@ overlay for settings that should apply only in nekomata:
 size_px = 16
 ```
 
+Keys for tabs and panes, and the UI font, go in nekomata's own
+`config.toml`:
+
+```toml
+# ~/Library/Application Support/nekomata/config.toml (macOS)
+# ~/.config/nekomata/config.toml (Linux)
+[keymap]
+"ctrl+a s" = { kind = "split", direction = "down" }
+"ctrl+a v" = { kind = "split", direction = "right" }
+```
+
 ## Learn more
 
 The [user manual](docs/manual/README.md) covers installing the macOS app,
