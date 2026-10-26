@@ -137,13 +137,13 @@ fn commands() -> Vec<Command> {
             "Jump to previous prompt",
             terminal(ScrollToPrompt(PromptJump::Previous)),
         )
-        .detail("Requires shell integration"),
+        .detail("Needs a shell that marks prompts with OSC 133"),
         command(
             Scrollback,
             "Jump to next prompt",
             terminal(ScrollToPrompt(PromptJump::Next)),
         )
-        .detail("Requires shell integration"),
+        .detail("Needs a shell that marks prompts with OSC 133"),
         command(
             Scrollback,
             "Scroll to top",
