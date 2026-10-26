@@ -64,13 +64,6 @@ from the registry rather than spelling their own.
 - The manual can no longer describe commands as menu paths and refers to the
   palette instead.
 
-## Decision–Implementation Gap
-
-The help window takes the labels of commands bound in nekomata's own keymap
-from the registry, but still spells its lines for commands bound in felis's
-keymap (paste, scrolling, prompt jumps, font size). felis's keymap offers no
-way to list its bindings, so help cannot find their keys.
-
 ## Related Decisions
 
 - [Name palette commands by category and verb phrase](20261026-230753-name-palette-commands-by-category-and-verb-phrase.md)
