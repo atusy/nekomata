@@ -64,6 +64,12 @@ Closing a pane or tab removes it from the layout and detaches its felis
 sessions. Closing the last one closes the window. nekomata never ends a
 shell: it keeps running in felis until it exits or its felis daemon stops.
 
+## Reordering tabs
+
+Dragging a tab marks the gap nearest the pointer with an insertion line and
+moves the tab there on release. The active tab stays active. The new order is
+saved like any other layout change.
+
 ## Losing the nekomata daemon
 
 If the window cannot attach a workspace at startup, it shows the error and a

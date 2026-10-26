@@ -42,6 +42,8 @@ command palette.
 
 ## Tabs and panes
 
+- Drag a tab to reorder it; the tab order is kept with the
+  [workspace](workspaces.md).
 - Click a pane to focus it. Drag a divider to resize.
 - A split opens a new shell on the same felis daemon as the pane it splits.
   For a local pane, it starts in the directory the shell last reported with
