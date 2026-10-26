@@ -18,7 +18,7 @@ reachable from the window. A second menu would grow with it.
 
 A single command registry in nekomata owns the list of window commands: for
 each command, its action, its category, its label and any search keywords and
-description. The command palette is the only surface that lists these
+detail line. The command palette is the only surface that lists these
 commands. The button at the left of the tab bar, which opened the menu, opens
 the command palette instead and is named the command palette button.
 
@@ -63,6 +63,13 @@ from the registry rather than spelling their own.
   take its place.
 - The manual can no longer describe commands as menu paths and refers to the
   palette instead.
+
+## Decision–Implementation Gap
+
+The help window takes the labels of commands bound in nekomata's own keymap
+from the registry, but still spells its lines for commands bound in felis's
+keymap (paste, scrolling, prompt jumps, font size). felis's keymap offers no
+way to list its bindings, so help cannot find their keys.
 
 ## Related Decisions
 
