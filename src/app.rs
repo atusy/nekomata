@@ -1262,7 +1262,7 @@ impl App {
                         + 2.0 * ui.spacing().button_padding.y,
                 );
                 ui.horizontal(|ui| {
-                    let menu_button = crate::theme::menu_button(ui, self.palette);
+                    let palette_button = crate::theme::palette_button(ui, self.palette);
                     let search_width = if self.searching() {
                         ui.available_width()
                             .min(crate::theme::ui_extent(ui.style(), 360.0))
@@ -1351,7 +1351,7 @@ impl App {
                             |ui| self.search_bar(ui),
                         );
                     }
-                    menu_button
+                    palette_button
                 })
                 .inner
             });

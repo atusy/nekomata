@@ -83,7 +83,7 @@ pub fn overlay_frame() -> eframe::egui::Frame {
         .inner_margin(12)
 }
 
-pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
+pub fn palette_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Response {
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let size = (egui::vec2(
         ui_size(ui.style(), 16.0),
@@ -103,16 +103,17 @@ pub fn menu_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Respo
             Color32::TRANSPARENT
         };
         ui.painter().rect_filled(rect, 5, fill);
-        let texture_id = egui::Id::unique("nekomata-menu-icon");
+        let texture_id = egui::Id::unique("nekomata-palette-button-icon");
         let texture = ui
             .ctx()
             .data(|data| data.get_temp::<egui::TextureHandle>(texture_id))
             .unwrap_or_else(|| {
-                let icon =
-                    eframe::icon_data::from_png_bytes(include_bytes!("../share/icons/menu.png"))
-                        .expect("bundled menu icon is valid PNG");
+                let icon = eframe::icon_data::from_png_bytes(include_bytes!(
+                    "../share/icons/palette-button.png"
+                ))
+                .expect("bundled palette button icon is valid PNG");
                 let texture = ui.ctx().load_texture(
-                    "nekomata-menu-icon",
+                    "nekomata-palette-button-icon",
                     egui::ColorImage::from_rgba_unmultiplied(
                         [icon.width as usize, icon.height as usize],
                         &icon.rgba,
@@ -306,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_trigger_matches_tab_ink_and_shows_its_open_state() {
+    fn palette_button_matches_tab_ink_and_shows_its_open_state() {
         use eframe::egui::{self, epaint::Shape};
         for font_size in [4.0, 10.0, 14.0, 24.0, 48.0, 72.0] {
             for density in [1.0, 1.1, 1.25, 1.5, 2.0] {
@@ -322,7 +323,7 @@ mod tests {
                     }
                 });
                 for open in [false, true] {
-                    let mut menu_rect = egui::Rect::NOTHING;
+                    let mut button_rect = egui::Rect::NOTHING;
                     let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
                         ui.spacing_mut().button_padding = egui::vec2(15.0, 6.0);
                         ui.spacing_mut().interact_size.y = super::ui_extent(ui.style(), 30.0).max(
@@ -330,7 +331,7 @@ mod tests {
                                 + 2.0 * ui.spacing().button_padding.y,
                         );
                         ui.horizontal(|ui| {
-                            menu_rect = super::menu_button(ui, open).rect;
+                            button_rect = super::palette_button(ui, open).rect;
                             egui::ScrollArea::horizontal()
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
@@ -344,7 +345,7 @@ mod tests {
                         .shapes
                         .iter()
                         .filter_map(|shape| match &shape.shape {
-                            Shape::Mesh(mesh) if menu_rect.contains_rect(mesh.calc_bounds()) => {
+                            Shape::Mesh(mesh) if button_rect.contains_rect(mesh.calc_bounds()) => {
                                 Some(mesh)
                             }
                             _ => None,
@@ -371,11 +372,11 @@ mod tests {
                     assert!(
                         (icon_rect.center().y - title_center - 2.0 * font_size / 14.0).abs()
                             <= 1.0 / density,
-                        "menu optical offset: font={font_size}, density={density}, icon={icon_rect:?}, title_center={title_center}, menu={menu_rect:?}"
+                        "palette button optical offset: font={font_size}, density={density}, icon={icon_rect:?}, title_center={title_center}, button={button_rect:?}"
                     );
-                    assert!((icon_rect.center().x - menu_rect.center().x).abs() <= 0.5 / density);
+                    assert!((icon_rect.center().x - button_rect.center().x).abs() <= 0.5 / density);
                     let highlighted = frame.shapes.iter().any(|shape| matches!(&shape.shape,
-                    Shape::Rect(rect) if rect.rect == menu_rect && rect.fill == super::TAB_ACTIVE_BG));
+                    Shape::Rect(rect) if rect.rect == button_rect && rect.fill == super::TAB_ACTIVE_BG));
                     assert_eq!(
                         highlighted, open,
                         "menu highlight must follow popup visibility"

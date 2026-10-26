@@ -30,12 +30,12 @@ app.insert(0, ET.Element(f"{{{SVG}}}rect", {
 }))
 render(app, 256, ICONS / "nekomata.png")
 
-# Crop the original whitespace for legibility in the small menu button.
-menu = ET.fromstring(ET.tostring(source))
-menu.set("viewBox", "305 300 750 750")
-for path in menu.findall(f"{{{SVG}}}path"):
+# Crop the original whitespace for legibility in the small palette button.
+button = ET.fromstring(ET.tostring(source))
+button.set("viewBox", "305 300 750 750")
+for path in button.findall(f"{{{SVG}}}path"):
     path.set("fill", "#ffffff")
-render(menu, 128, ICONS / "menu.png")
+render(button, 128, ICONS / "palette-button.png")
 
 # ICNS supports PNG payloads at these sizes, on every build host.
 chunks = []
