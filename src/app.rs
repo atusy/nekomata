@@ -68,6 +68,11 @@ impl Pane {
         }
     }
 
+    fn close_search(&mut self) {
+        self.search_open = false;
+        self.session.search.cancel_search();
+    }
+
     fn navigate_search(&mut self, older: bool) {
         if self.search_query.is_empty() {
             self.session.search.cancel_search();
@@ -923,8 +928,7 @@ impl App {
             close |= search_icon_button(ui, SearchIcon::Close).clicked();
         });
         if close {
-            pane.search_open = false;
-            pane.session.search.cancel_search();
+            pane.close_search();
         } else if let Some(older) = navigate {
             pane.navigate_search(older);
         }
@@ -1078,6 +1082,11 @@ impl App {
             }
             Action::Paste => {
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                // Only the palette can paste while searching, and it means the
+                // terminal: an open search would discard the clipboard event.
+                if pane.search_open {
+                    pane.close_search();
+                }
                 let state = pane.session.state.lock().unwrap();
                 if state.connected && self.paste_requested.is_none() {
                     self.paste_requested = Some((
@@ -2587,6 +2596,12 @@ mod tests {
         app.font_size = 30.0;
         app.action(&ctx, Action::FontReset);
         assert_eq!(app.font_size, 21.0);
+        // Pasting from the palette over an open search must reach the
+        // terminal, whose paste the search would otherwise discard.
+        app.open_search();
+        app.action(&ctx, Action::Paste);
+        assert!(!app.searching());
+        assert!(app.paste_requested.take().is_some());
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
         pump(&mut app, &connected);
