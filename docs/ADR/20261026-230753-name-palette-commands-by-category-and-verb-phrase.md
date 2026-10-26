@@ -10,10 +10,8 @@ long.
 Every palette label is `Category: verb phrase`, such as `Tab: Switch to next`.
 
 - Categories form a closed set owned by the command registry.
-- The phrase starts with an imperative verb and acts on the active target
-  unless it names another.
-- Caveats go in a detail line and alternative words in search keywords, not in
-  the label.
+- The phrase starts with an imperative verb.
+- Alternative words go in search keywords, not in the label.
 
 ## Considered Options
 
