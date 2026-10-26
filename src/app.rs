@@ -853,8 +853,7 @@ impl App {
             return;
         }
         let mut navigate = None;
-        let mut close = !egui::Popup::is_any_open(ui.ctx())
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let mut close = consume_search_escape(ui.ctx());
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.spacing_mut().button_padding = Vec2::new(5.0, 4.0);
@@ -1638,6 +1637,14 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
         }
     }
     response.on_hover_text(label)
+}
+
+/// The search field draws before the palette and the font size control, so
+/// it must leave Escape to whichever popup or modal sits above it.
+fn consume_search_escape(ctx: &egui::Context) -> bool {
+    !egui::Popup::is_any_open(ctx)
+        && ctx.memory(|memory| memory.top_modal_layer().is_none())
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
 }
 
 /// Returns the insertion gap for a pointer at `x`: the number of tabs whose
@@ -3088,6 +3095,33 @@ mod tests {
             ops.destroy_session(format!("{original:032x}"))
                 .await
                 .unwrap();
+        });
+    }
+
+    #[test]
+    fn search_leaves_escape_to_a_modal_above_it() {
+        let escape = || egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let _ = crate::test_support::run(&ctx, escape(), |ui| {
+            assert!(consume_search_escape(ui.ctx()));
+        });
+        let modal =
+            |ui: &mut egui::Ui| egui::Modal::new(egui::Id::unique("modal")).show(ui.ctx(), |_| {});
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            modal(ui);
+        });
+        let _ = crate::test_support::run(&ctx, escape(), |ui| {
+            assert!(!consume_search_escape(ui.ctx()));
+            assert!(modal(ui).should_close());
         });
     }
 
