@@ -42,8 +42,8 @@ Linux (x86_64, aarch64), which is less tested. See
 | Command palette | Alt+Shift+P |
 | Search scrollback | Ctrl+Shift+F, or Cmd+F on macOS |
 
-Everything else is in the command palette, which the cat button at the left
-of the tab bar also opens.
+Most other commands are in the command palette, which the cat button at the
+left of the tab bar also opens.
 
 ## Make it yours
 
