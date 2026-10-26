@@ -1061,6 +1061,8 @@ impl App {
                 self.palette = true;
                 self.palette_state = Default::default();
             }
+            Action::AttachSession => self.picker.open(&self.runtime, ctx),
+            Action::ShowShortcuts => self.help = true,
             Action::FontScale(scale) => {
                 self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
                     self.font_size * scale,
@@ -1378,7 +1380,7 @@ impl App {
                 }
             }
             if menu_item(ui, "Attach terminal…", "").clicked() {
-                self.picker.open(&self.runtime, ctx);
+                action = Some(Action::AttachSession);
                 ui.close();
             }
             menu_separator(ui);
@@ -1442,7 +1444,7 @@ impl App {
             });
             menu_separator(ui);
             if menu_item(ui, "Keyboard shortcuts", "").clicked() {
-                self.help = true;
+                action = Some(Action::ShowShortcuts);
                 ui.close();
             }
         })

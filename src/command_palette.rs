@@ -18,9 +18,11 @@ enum Category {
     Workspace,
     Tab,
     Pane,
+    Session,
     Scrollback,
     Clipboard,
     Font,
+    Window,
 }
 
 impl Category {
@@ -29,9 +31,11 @@ impl Category {
             Self::Workspace => "Workspace",
             Self::Tab => "Tab",
             Self::Pane => "Pane",
+            Self::Session => "Session",
             Self::Scrollback => "Scrollback",
             Self::Clipboard => "Clipboard",
             Self::Font => "Font",
+            Self::Window => "Window",
         }
     }
 }
@@ -128,6 +132,7 @@ fn commands() -> Vec<Command> {
         command(Pane, "Close", Action::ClosePane)
             .detail("Detach its session; the shell keeps running")
             .keywords(&["detach"]),
+        command(Session, "Attach…", Action::AttachSession).keywords(&["picker", "open"]),
         command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
         command(
             Scrollback,
@@ -156,6 +161,8 @@ fn commands() -> Vec<Command> {
         command(Clipboard, "Copy selection", Action::Copy),
         command(Clipboard, "Paste", Action::Paste),
         command(Font, "Reset size", Action::FontReset).keywords(&["zoom", "text"]),
+        command(Window, "Show keyboard shortcuts", Action::ShowShortcuts)
+            .keywords(&["help", "keymap"]),
     ]
 }
 
@@ -341,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_focus_and_clipboard_actions_are_listed() {
+    fn menu_and_key_only_actions_are_listed() {
         let labels: Vec<_> = commands()
             .into_iter()
             .map(|command| (command.action.clone(), command.label()))
@@ -354,6 +361,8 @@ mod tests {
             (Action::Focus(Direction::Right), "Pane: Focus right"),
             (Action::Copy, "Clipboard: Copy selection"),
             (Action::Paste, "Clipboard: Paste"),
+            (Action::AttachSession, "Session: Attach…"),
+            (Action::ShowShortcuts, "Window: Show keyboard shortcuts"),
         ] {
             assert!(labels.contains(&(action, label.into())), "{label}");
         }

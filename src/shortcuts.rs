@@ -24,6 +24,8 @@ pub enum Action {
     FontScale(f32),
     FontReset,
     Palette,
+    AttachSession,
+    ShowShortcuts,
     Search,
     Paste,
     Copy,
