@@ -1471,25 +1471,9 @@ impl App {
                     "" => "—",
                     text => text,
                 };
-                ui.label(format!(
-                    "{}: new tab · {} / {}: next / previous tab",
-                    key(Action::NewTab),
-                    key(Action::NextTab),
-                    key(Action::PreviousTab)
-                ));
-                ui.label(format!(
-                    "{} / {}: split top/bottom / left/right",
-                    key(Action::Split(Axis::Vertical)),
-                    key(Action::Split(Axis::Horizontal))
-                ));
-                ui.label(format!(
-                    "{}: close pane · {} / {} / {} / {}: focus left/down/up/right",
-                    key(Action::ClosePane),
-                    key(Action::Focus(crate::layout::Direction::Left)),
-                    key(Action::Focus(crate::layout::Direction::Down)),
-                    key(Action::Focus(crate::layout::Direction::Up)),
-                    key(Action::Focus(crate::layout::Direction::Right))
-                ));
+                for (keys, label) in crate::command_palette::bound_commands(hints) {
+                    ui.label(format!("{keys}: {label}"));
+                }
                 ui.label("Cmd+0 / = / -: reset / enlarge / reduce font · Ctrl+Shift+V: paste");
                 ui.label("Shift+PageUp / PageDown: scroll half a page · Ctrl+Shift+Home / End: oldest / live output");
                 ui.label("Ctrl+Shift+Z / X: previous / next prompt (requires shell integration)");

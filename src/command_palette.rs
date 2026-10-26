@@ -167,6 +167,18 @@ fn commands() -> Vec<Command> {
     ]
 }
 
+/// `(keys, label)` for each command nekomata's own keymap binds, so that
+/// help spells commands as the palette does.
+pub(crate) fn bound_commands(hints: &crate::shortcuts::Hints) -> Vec<(String, String)> {
+    commands()
+        .into_iter()
+        .filter_map(|command| match hints.get(&command.action) {
+            "" => None,
+            keys => Some((keys.to_owned(), command.label())),
+        })
+        .collect()
+}
+
 /// Every query word must appear in the label or the keywords, in any
 /// order, because the `Category: verb` form fixes an order users may not
 /// type.
@@ -356,6 +368,19 @@ mod tests {
         ] {
             assert!(labels.contains(&(action, label.into())), "{label}");
         }
+    }
+
+    #[test]
+    fn key_bound_commands_are_listed_with_their_keys() {
+        let hints = crate::shortcuts::AppKeymap::default().hints();
+        let bound = bound_commands(&hints);
+        assert!(bound.contains(&(hints.get(&Action::NewTab).to_owned(), "Tab: Create".into())));
+        assert!(bound.contains(&(
+            hints.get(&Action::Split(Axis::Vertical)).to_owned(),
+            "Pane: Split below".into()
+        )));
+        assert!(bound.iter().all(|(keys, _)| !keys.is_empty()));
+        assert!(!bound.iter().any(|(_, label)| label == "Workspace: Create"));
     }
 
     #[test]
