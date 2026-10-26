@@ -1,4 +1,8 @@
-use crate::{layout::Axis, shortcuts::Action, theme};
+use crate::{
+    layout::{Axis, Direction},
+    shortcuts::Action,
+    theme,
+};
 use eframe::egui;
 
 #[derive(Default)]
@@ -15,6 +19,7 @@ enum Category {
     Tab,
     Pane,
     Scrollback,
+    Clipboard,
     Font,
 }
 
@@ -25,6 +30,7 @@ impl Category {
             Self::Tab => "Tab",
             Self::Pane => "Pane",
             Self::Scrollback => "Scrollback",
+            Self::Clipboard => "Clipboard",
             Self::Font => "Font",
         }
     }
@@ -114,6 +120,11 @@ fn commands() -> Vec<Command> {
             .keywords(&["vertical", "side by side"]),
         command(Pane, "Split below", Action::Split(Axis::Vertical))
             .keywords(&["horizontal", "down"]),
+        command(Pane, "Focus next", Action::NextPane),
+        command(Pane, "Focus left", Action::Focus(Direction::Left)),
+        command(Pane, "Focus down", Action::Focus(Direction::Down)),
+        command(Pane, "Focus up", Action::Focus(Direction::Up)),
+        command(Pane, "Focus right", Action::Focus(Direction::Right)),
         command(Pane, "Close", Action::ClosePane)
             .detail("Detach its session; the shell keeps running")
             .keywords(&["detach"]),
@@ -142,6 +153,8 @@ fn commands() -> Vec<Command> {
             terminal(Scroll(ScrollStep::End)),
         )
         .keywords(&["live", "end"]),
+        command(Clipboard, "Copy selection", Action::Copy),
+        command(Clipboard, "Paste", Action::Paste),
         command(Font, "Reset size", Action::FontReset).keywords(&["zoom", "text"]),
     ]
 }
@@ -325,6 +338,25 @@ mod tests {
         assert_eq!(label(Action::NextTab), "Tab: Switch to next");
         assert_eq!(label(Action::Split(Axis::Vertical)), "Pane: Split below");
         assert_eq!(label(Action::OpenWorkspaces), "Workspace: Switch…");
+    }
+
+    #[test]
+    fn pane_focus_and_clipboard_actions_are_listed() {
+        let labels: Vec<_> = commands()
+            .into_iter()
+            .map(|command| (command.action.clone(), command.label()))
+            .collect();
+        for (action, label) in [
+            (Action::NextPane, "Pane: Focus next"),
+            (Action::Focus(Direction::Left), "Pane: Focus left"),
+            (Action::Focus(Direction::Down), "Pane: Focus down"),
+            (Action::Focus(Direction::Up), "Pane: Focus up"),
+            (Action::Focus(Direction::Right), "Pane: Focus right"),
+            (Action::Copy, "Clipboard: Copy selection"),
+            (Action::Paste, "Clipboard: Paste"),
+        ] {
+            assert!(labels.contains(&(action, label.into())), "{label}");
+        }
     }
 
     #[test]
