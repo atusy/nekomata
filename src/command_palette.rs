@@ -134,14 +134,14 @@ fn commands() -> Vec<Command> {
         command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
         command(
             Scrollback,
-            "Jump to previous prompt",
-            terminal(ScrollToPrompt(PromptJump::Previous)),
+            "Jump to next prompt",
+            terminal(ScrollToPrompt(PromptJump::Next)),
         )
         .detail("Needs a shell that marks prompts with OSC 133"),
         command(
             Scrollback,
-            "Jump to next prompt",
-            terminal(ScrollToPrompt(PromptJump::Next)),
+            "Jump to previous prompt",
+            terminal(ScrollToPrompt(PromptJump::Previous)),
         )
         .detail("Needs a shell that marks prompts with OSC 133"),
         command(
