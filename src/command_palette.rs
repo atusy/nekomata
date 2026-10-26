@@ -35,6 +35,8 @@ struct Command {
     phrase: &'static str,
     action: Action,
     detail: Option<&'static str>,
+    /// Words that find the command without appearing in it.
+    keywords: &'static [&'static str],
 }
 
 impl Command {
@@ -44,7 +46,17 @@ impl Command {
             phrase,
             action,
             detail: None,
+            keywords: &[],
         }
+    }
+
+    fn keywords(self, keywords: &'static [&'static str]) -> Self {
+        Self { keywords, ..self }
+    }
+
+    fn matches(&self, words: &[String]) -> bool {
+        let text = format!("{} {}", self.label(), self.keywords.join(" ")).to_lowercase();
+        words.iter().all(|word| text.contains(word.as_str()))
     }
 
     fn detail(self, detail: &'static str) -> Self {
@@ -90,18 +102,22 @@ fn commands() -> Vec<Command> {
     let command = Command::new;
     let terminal = Action::Terminal;
     vec![
-        command(Workspace, "Create", Action::NewWorkspace),
-        command(Workspace, "Switch…", Action::OpenWorkspaces),
-        command(Tab, "Create", Action::NewTab),
+        command(Workspace, "Create", Action::NewWorkspace).keywords(&["new"]),
+        command(Workspace, "Switch…", Action::OpenWorkspaces).keywords(&["open", "list"]),
+        command(Tab, "Create", Action::NewTab).keywords(&["new"]),
         command(Tab, "Switch to next", Action::NextTab),
         command(Tab, "Switch to previous", Action::PreviousTab),
         command(Tab, "Close", Action::CloseTab)
-            .detail("Detach its sessions; the shells keep running"),
-        command(Pane, "Split right", Action::Split(Axis::Horizontal)),
-        command(Pane, "Split below", Action::Split(Axis::Vertical)),
+            .detail("Detach its sessions; the shells keep running")
+            .keywords(&["detach"]),
+        command(Pane, "Split right", Action::Split(Axis::Horizontal))
+            .keywords(&["vertical", "side by side"]),
+        command(Pane, "Split below", Action::Split(Axis::Vertical))
+            .keywords(&["horizontal", "down"]),
         command(Pane, "Close", Action::ClosePane)
-            .detail("Detach its session; the shell keeps running"),
-        command(Scrollback, "Find…", Action::Search),
+            .detail("Detach its session; the shell keeps running")
+            .keywords(&["detach"]),
+        command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
         command(
             Scrollback,
             "Jump to previous prompt",
@@ -118,14 +134,27 @@ fn commands() -> Vec<Command> {
             Scrollback,
             "Scroll to top",
             terminal(Scroll(ScrollStep::Home)),
-        ),
+        )
+        .keywords(&["oldest", "home"]),
         command(
             Scrollback,
             "Scroll to bottom",
             terminal(Scroll(ScrollStep::End)),
-        ),
-        command(Font, "Reset size", Action::FontReset),
+        )
+        .keywords(&["live", "end"]),
+        command(Font, "Reset size", Action::FontReset).keywords(&["zoom", "text"]),
     ]
+}
+
+/// Every query word must appear in the label or the keywords, in any
+/// order, because the `Category: verb` form fixes an order users may not
+/// type.
+fn matching(query: &str) -> Vec<Command> {
+    let words: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
+    commands()
+        .into_iter()
+        .filter(|command| command.matches(&words))
+        .collect()
 }
 
 impl CommandPalette {
@@ -189,11 +218,7 @@ impl CommandPalette {
                 if !search.has_focus() {
                     search.request_focus();
                 }
-                let query = self.query.trim().to_lowercase();
-                let matches: Vec<_> = commands()
-                    .into_iter()
-                    .filter(|command| command.label().to_lowercase().contains(&query))
-                    .collect();
+                let matches = matching(&self.query);
                 if search.changed() {
                     self.selected = 0;
                 }
@@ -313,6 +338,22 @@ mod tests {
             assert!(text.starts_with(&command.label()), "{text}");
             assert!(text.contains("keep"), "{text}");
         }
+    }
+
+    #[test]
+    fn query_words_match_in_any_order_including_keywords() {
+        let first = |query| {
+            matching(query)
+                .first()
+                .map(|command| command.action.clone())
+        };
+        assert_eq!(first("new tab"), Some(Action::NewTab));
+        assert_eq!(first("TAB  New"), Some(Action::NewTab));
+        assert_eq!(first("search"), Some(Action::Search));
+        assert_eq!(first("pane detach"), Some(Action::ClosePane));
+        assert_eq!(first("tab next"), Some(Action::NextTab));
+        assert!(matching("tab zzz").is_empty());
+        assert_eq!(matching("  ").len(), commands().len());
     }
 
     #[test]
