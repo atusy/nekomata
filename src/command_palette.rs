@@ -165,8 +165,9 @@ fn commands() -> Vec<Command> {
     ]
 }
 
-/// `(keys, label)` for each command nekomata's own keymap binds, so that
-/// help spells commands as the palette does.
+/// `(keys, label)` for each palette command that nekomata's own keymap
+/// binds, so that help spells commands as the palette does. Opening the
+/// palette itself is not a palette command and is left out.
 pub(crate) fn bound_commands(hints: &crate::shortcuts::Hints) -> Vec<(String, String)> {
     commands()
         .into_iter()
