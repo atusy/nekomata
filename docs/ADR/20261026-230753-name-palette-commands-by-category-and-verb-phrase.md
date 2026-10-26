@@ -27,7 +27,7 @@ Every palette label is `Category: verb phrase`.
 - A trailing "…" marks a command that asks for a choice or input before it
   acts ("Workspace: Switch…", "Session: Attach…", "Scrollback: Find…",
   "Font: Change size…"). A confirmation alone does not count.
-- Side effects and caveats go in the command's description, not in the label.
+- Side effects and caveats go in the command's detail line, not in the label.
 - Alternative words go in the command's search keywords, not in the label.
 - Direction words describe the result: a split names where the new pane goes
   (right, below); focus names the direction of travel (left, down, up, right).
