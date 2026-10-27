@@ -1195,10 +1195,14 @@ impl App {
                 let target = self.panes[&source].session.target.clone();
                 let id = self.add_pane(ctx, None, cwd, target);
                 let tab = &mut self.tabs[self.active];
-                if tab.layout.split(source, id, axis) {
+                let split = tab.layout.split(source, id, axis);
+                // Validation keeps a tab's focused pane in its layout, so this
+                // is a broken invariant. Release builds drop the pane to keep
+                // the workspace valid; its shell stays detached and attachable.
+                debug_assert!(split, "the focused pane is missing from its layout");
+                if split {
                     tab.focus(id);
                 } else {
-                    // A pane outside every layout would never be drawn or closed.
                     self.panes.remove(&id);
                 }
             }
