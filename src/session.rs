@@ -687,6 +687,30 @@ async fn redial_target(
     Ok((recovered.conn, None))
 }
 
+/// Applies one daemon frame to the pane's state.
+///
+/// The GUI thread locks this state for every paint, so a panic in the
+/// frame code must not unwind through the guard: that would poison the
+/// mutex and take down every pane of the window. It fails this pane
+/// instead, resetting what the frame may have left half-applied.
+fn apply_frame(shared: &Mutex<State>, apply: impl FnOnce(&mut State) -> Result<()>) -> Result<()> {
+    let mut state = shared.lock().unwrap();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply(&mut state))) {
+        Ok(result) => result,
+        Err(panic) => {
+            let (rows, cols) = (state.screen.screen().rows(), state.screen.screen().cols());
+            state.screen = ShadowScreen::new(rows, cols);
+            state.images = felis_client_core::ImageShadow::new();
+            let reason = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic");
+            bail!("felis frame could not be applied: {reason}")
+        }
+    }
+}
+
 async fn pump(
     conn: &mut CarrierConnection,
     shared: &Arc<Mutex<State>>,
@@ -713,15 +737,17 @@ async fn pump(
                     Incoming::Payload(payload) => match payload.kind {
                         MessageKind::Grid => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<GridMsg>(&payload)? {
-                                shared.lock().unwrap().apply_grid(&delivery.msg, &clipboard)?;
+                                apply_frame(shared, |state| state.apply_grid(&delivery.msg, &clipboard))?;
                                 ctx.request_repaint();
                             }
                         }
                         MessageKind::Image => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::ImageMsg>(&payload)? {
-                                let mut state = shared.lock().unwrap();
-                                state.images.apply(&delivery.msg)?;
-                                state.redraw.request();
+                                apply_frame(shared, |state| {
+                                    state.images.apply(&delivery.msg)?;
+                                    state.redraw.request();
+                                    Ok(())
+                                })?;
                                 ctx.request_repaint();
                             }
                         }
@@ -1335,6 +1361,30 @@ mod tests {
         assert!(
             queue.push(&InputMsg::Paste(oversized)).is_err(),
             "the encoder drops an oversized paste, so the pane must refuse it first"
+        );
+    }
+
+    #[test]
+    fn a_panic_while_applying_a_frame_fails_only_that_pane() {
+        let shared = Arc::new(Mutex::new(viewport_state(
+            felis_protocol::preface::PROTOCOL_MINOR,
+        )));
+        let error = apply_frame(&shared, |state| {
+            state.screen.apply(&GridMsg::RehydrateBegin)?;
+            panic!("felis bug");
+        })
+        .unwrap_err();
+        assert!(!transport_loss(&error), "a broken frame is not retried");
+        assert!(format!("{error:#}").contains("felis bug"));
+        assert!(!shared.is_poisoned(), "the GUI keeps locking this pane");
+        let state = shared.lock().unwrap();
+        assert!(
+            !state.screen.is_rehydrating(),
+            "half-applied state is reset"
+        );
+        assert_eq!(
+            (state.screen.screen().rows(), state.screen.screen().cols()),
+            (24, 80)
         );
     }
 

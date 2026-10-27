@@ -152,6 +152,9 @@ daemon delivers each write to at most one window attached to the session.
 - When the transport to felis is lost, nekomata retries reconnecting to the
   same session for a bounded period. When retries run out, or on any other
   connection error, the pane shows the error.
+- A frame from felis that the pane cannot apply is a connection error of that
+  pane alone: its screen is cleared to the error, and the window and its other
+  panes keep working.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
 - Keys, pastes and mouse clicks or wheel reports that are typed while the pane
