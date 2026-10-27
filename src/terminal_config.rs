@@ -19,27 +19,42 @@ pub fn load() -> (EffectiveConfig, Vec<Problem>) {
     }
 }
 
-/// Collects diagnostics instead of letting felis log them through
-/// `tracing`, which nothing here subscribes to.
+/// Reads and resolves the document itself, as `EffectiveConfig::diagnose`
+/// does, but collects diagnostics instead of letting felis log them through
+/// `tracing`, which nothing here subscribes to, and words a read failure
+/// without repeating the path every problem already carries.
 fn load_from(path: &Path) -> (EffectiveConfig, Vec<Problem>) {
-    let (config, diagnostics) = EffectiveConfig::diagnose(path, "nekomata");
-    let problems = diagnostics
+    use felis_client_core::config::{ConfigDocument, LoadError};
+    let diagnostics = match ConfigDocument::read(path) {
+        Ok(Some(document)) => {
+            let (config, diagnostics) = document.resolve("nekomata");
+            if !diagnostics.has_errors() {
+                return (config, problems(path, &diagnostics));
+            }
+            diagnostics
+        }
+        Ok(None) => return (EffectiveConfig::default(), vec![]),
+        Err(LoadError::Read { source, .. }) => {
+            let problem = Problem::error(path, format!("cannot read: {source}"));
+            return (EffectiveConfig::default(), vec![problem]);
+        }
+        Err(error) => error.diagnostics(),
+    };
+    (EffectiveConfig::default(), problems(path, &diagnostics))
+}
+
+fn problems(
+    path: &Path,
+    diagnostics: &felis_client_core::config::ConfigDiagnostics,
+) -> Vec<Problem> {
+    use felis_client_core::config::Severity;
+    diagnostics
         .iter()
         .map(|diagnostic| match diagnostic.severity {
-            felis_client_core::config::Severity::Error => {
-                Problem::error(path, diagnostic.to_string())
-            }
-            felis_client_core::config::Severity::Warning => {
-                Problem::warning(path, diagnostic.to_string())
-            }
+            Severity::Error => Problem::error(path, diagnostic.to_string()),
+            Severity::Warning => Problem::warning(path, diagnostic.to_string()),
         })
-        .collect();
-    let config = if diagnostics.has_errors() {
-        EffectiveConfig::default()
-    } else {
-        config
-    };
-    (config, problems)
+        .collect()
 }
 
 pub fn install(ctx: &egui::Context, config: EffectiveConfig) {
@@ -145,7 +160,11 @@ mod tests {
         assert!(is_default(&config));
         assert_eq!(problems.len(), 1);
         assert_eq!(problems[0].severity, Severity::Error);
-        assert!(problems[0].message.contains("cannot read"), "{problems:?}");
+        // The problem's source already names the file.
+        assert!(
+            problems[0].message.starts_with("cannot read: "),
+            "{problems:?}"
+        );
     }
 
     #[test]
