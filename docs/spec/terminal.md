@@ -150,3 +150,12 @@ daemon delivers each write to at most one window attached to the session.
   connection error, the pane shows the error.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
+- Keys, pastes and mouse clicks or wheel reports that are typed while the pane
+  is reconnecting, or that were queued or being written when the connection
+  was lost, are discarded. The pane then shows that some input was not
+  delivered. The notice stays until the next key, paste or mouse report is
+  accepted for sending; while the pane is connecting, reconnecting or showing
+  an error, that status is shown instead.
+- Pane size and focus reports, scrollback navigation and frame requests are
+  not shell input and show no notice when discarded. The pane reports its
+  current size and focus again on every new connection.

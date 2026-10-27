@@ -2040,15 +2040,7 @@ fn draw_pane(
             })
         });
     }
-    if pane.session.input_lost() {
-        painter.text(
-            text_rect.min,
-            egui::Align2::LEFT_TOP,
-            "Input could not be delivered. Reattach this session before continuing.",
-            FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
-            Color32::LIGHT_RED,
-        );
-    } else if let Some(error) = &state.error {
+    if let Some(error) = &state.error {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
@@ -2067,6 +2059,14 @@ fn draw_pane(
             },
             font,
             FG,
+        );
+    } else if pane.session.input_lost() {
+        painter.text(
+            text_rect.min,
+            egui::Align2::LEFT_TOP,
+            "Some input was not delivered. Check the terminal before continuing.",
+            FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
+            Color32::LIGHT_RED,
         );
     }
     if let Some(error) = &pane.links.error {

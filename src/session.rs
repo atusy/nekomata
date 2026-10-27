@@ -190,8 +190,15 @@ impl State {
     }
 }
 
+/// Queued frames, with whether losing each one loses shell input.
+#[derive(Default)]
+struct Pending {
+    frames: OutgoingQueue,
+    shell_input: std::collections::VecDeque<bool>,
+}
+
 struct InputQueue {
-    frames: Mutex<OutgoingQueue>,
+    pending: Mutex<Pending>,
     ready: Notify,
     accepting: AtomicBool,
     lost: AtomicBool,
@@ -200,7 +207,7 @@ struct InputQueue {
 impl Default for InputQueue {
     fn default() -> Self {
         Self {
-            frames: Mutex::new(OutgoingQueue::default()),
+            pending: Mutex::default(),
             ready: Notify::new(),
             accepting: AtomicBool::new(true),
             lost: AtomicBool::new(false),
@@ -208,34 +215,56 @@ impl Default for InputQueue {
     }
 }
 
+/// Input the shell or its program receives. Everything else describes
+/// window state (size, focus, viewport, frame pacing) that the pane sends
+/// again on every new connection, so refusing it loses nothing.
+fn is_shell_input(msg: &InputMsg) -> bool {
+    match msg {
+        InputMsg::Key(_) | InputMsg::KeyBytes(_) | InputMsg::Paste(_) => true,
+        InputMsg::Mouse(_) => felis_client_core::coalesce_key(msg).is_none(),
+        _ => false,
+    }
+}
+
 impl InputQueue {
     fn push(&self, msg: &InputMsg) -> Result<()> {
-        let result = self.enqueue(msg);
-        if result.is_err() {
-            self.mark_lost();
+        let shell_input = is_shell_input(msg);
+        let result = self.enqueue(msg, shell_input);
+        if shell_input {
+            self.lost.store(result.is_err(), Ordering::Relaxed);
         }
         result
     }
 
-    fn enqueue(&self, msg: &InputMsg) -> Result<()> {
+    fn enqueue(&self, msg: &InputMsg, shell_input: bool) -> Result<()> {
         let frame = OutgoingFrame::input(msg)?;
-        let mut frames = self.frames.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap();
         if !self.accepting.load(Ordering::Acquire) {
             bail!("connection is not accepting input");
         }
-        frames
+        let queued = pending.frames.len();
+        pending
+            .frames
             .push(frame)
             .map_err(|full| anyhow::anyhow!("input queue exceeded {} bytes", full.cap))?;
+        // Coalescing replaces a frame in place; only an appended frame
+        // gets its own entry.
+        if pending.frames.len() > queued {
+            pending.shell_input.push_back(shell_input);
+        }
         self.ready.notify_one();
         Ok(())
     }
 
-    fn close(&self) -> bool {
-        let mut frames = self.frames.lock().unwrap();
+    /// Stops accepting input and discards the backlog, reporting lost
+    /// input when the backlog held any.
+    fn close(&self) {
+        let mut pending = self.pending.lock().unwrap();
         self.accepting.store(false, Ordering::Release);
-        let discarded = !frames.is_empty();
-        *frames = OutgoingQueue::default();
-        discarded
+        if pending.shell_input.contains(&true) {
+            self.mark_lost();
+        }
+        *pending = Pending::default();
     }
 
     fn reopen(&self) {
@@ -250,11 +279,16 @@ impl InputQueue {
         self.lost.load(Ordering::Relaxed)
     }
 
-    async fn next(&self) -> OutgoingFrame {
+    /// The oldest frame, and whether it carries shell input.
+    async fn next(&self) -> (OutgoingFrame, bool) {
         loop {
             let notified = self.ready.notified();
-            if let Some(frame) = self.frames.lock().unwrap().pop() {
-                return frame;
+            {
+                let mut pending = self.pending.lock().unwrap();
+                if let Some(frame) = pending.frames.pop() {
+                    let shell_input = pending.shell_input.pop_front().unwrap_or(false);
+                    return (frame, shell_input);
+                }
             }
             notified.await;
         }
@@ -507,9 +541,7 @@ async fn run(
         if !transport_loss(&error) {
             return Err(error);
         }
-        if rx.close() {
-            rx.mark_lost();
-        }
+        rx.close();
         {
             let mut state = shared.lock().unwrap();
             state.connected = false;
@@ -537,12 +569,14 @@ async fn run(
         relay = child;
         {
             let mut state = shared.lock().unwrap();
+            // Accept input before publishing the new generation: the GUI
+            // re-sends size and focus as soon as it sees it.
+            rx.reopen();
             state.connected = true;
             state.reconnecting = false;
             state.reconnects = state.reconnects.wrapping_add(1);
             state.effective_minor = conn.effective_minor;
         }
-        rx.reopen();
         ctx.request_repaint();
     }
 }
@@ -626,11 +660,15 @@ async fn pump(
     let clipboard = crate::terminal_config::get(ctx).clipboard.clone();
     loop {
         tokio::select! {
-            command = rx.next() => {
-                match tokio::time::timeout(Duration::from_secs(10), conn.writer.send_checked(command.frame())).await {
+            (command, shell_input) = rx.next() => {
+                let sent = tokio::time::timeout(Duration::from_secs(10), conn.writer.send_checked(command.frame())).await;
+                if shell_input && !matches!(sent, Ok(Ok(()))) {
+                    rx.mark_lost();
+                }
+                match sent {
                     Ok(Ok(())) => {},
-                    Ok(Err(error)) => { rx.mark_lost(); return Err(error.into()); }
-                    Err(error) => { rx.mark_lost(); return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()); }
+                    Ok(Err(error)) => return Err(error.into()),
+                    Err(error) => return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()),
                 }
             }
             frame = conn.next_frame() => {
@@ -849,14 +887,14 @@ mod tests {
             queue.push(&request).unwrap();
         }
         let expected = OutgoingFrame::input(&InputMsg::ViewportStep { rows: 1 }).unwrap();
-        let mut frames = queue.frames.lock().unwrap();
+        let mut pending = queue.pending.lock().unwrap();
         for _ in 0..2 {
             assert_eq!(
-                frames.pop().unwrap().frame().body(),
+                pending.frames.pop().unwrap().frame().body(),
                 expected.frame().body()
             );
         }
-        assert!(frames.is_empty());
+        assert!(pending.frames.is_empty());
     }
 
     #[test]
@@ -936,16 +974,17 @@ mod tests {
             },
         })
         .unwrap();
-        let latest = queue.frames.lock().unwrap().pop().unwrap();
+        let latest = queue.pending.lock().unwrap().frames.pop().unwrap();
         assert_eq!(latest.frame().body(), expected.frame().body());
-        assert!(queue.frames.lock().unwrap().is_empty());
+        assert!(queue.pending.lock().unwrap().frames.is_empty());
     }
 
     #[test]
     fn lost_connection_discards_input_before_accepting_new_keys() {
         let queue = InputQueue::default();
         queue.push(&InputMsg::KeyBytes(b"old".to_vec())).unwrap();
-        assert!(queue.close());
+        queue.close();
+        assert!(queue.input_lost());
         assert!(
             queue
                 .push(&InputMsg::KeyBytes(b"uncertain".to_vec()))
@@ -955,10 +994,18 @@ mod tests {
         queue.push(&InputMsg::KeyBytes(b"new".to_vec())).unwrap();
         let expected = OutgoingFrame::input(&InputMsg::KeyBytes(b"new".to_vec())).unwrap();
         assert_eq!(
-            queue.frames.lock().unwrap().pop().unwrap().frame().body(),
+            queue
+                .pending
+                .lock()
+                .unwrap()
+                .frames
+                .pop()
+                .unwrap()
+                .frame()
+                .body(),
             expected.frame().body()
         );
-        assert!(queue.frames.lock().unwrap().is_empty());
+        assert!(queue.pending.lock().unwrap().frames.is_empty());
         assert!(!transport_loss(&anyhow::anyhow!("malformed protocol")));
         assert!(transport_loss(
             &std::io::Error::from(std::io::ErrorKind::BrokenPipe).into()
@@ -1153,6 +1200,107 @@ mod tests {
         session.frame_submitted(&mut state, true);
         session.frame_submitted(&mut state, true);
         assert!(state.pull.sent() <= sent + 1, "only one outstanding pull");
+    }
+
+    fn mouse(action: felis_protocol::messages::MouseAction, button: bool) -> InputMsg {
+        use felis_protocol::messages::{InputMods, MouseButton, MouseEvent};
+        InputMsg::Mouse(MouseEvent {
+            x: 1,
+            y: 1,
+            px: 0,
+            py: 0,
+            action,
+            button: button.then_some(MouseButton::Left),
+            mods: InputMods::empty(),
+        })
+    }
+
+    fn state_messages() -> Vec<InputMsg> {
+        use felis_protocol::messages::{MouseAction, PromptJump, RequestedDims};
+        vec![
+            InputMsg::Resize {
+                dims: RequestedDims {
+                    rows: 24,
+                    cols: 80,
+                    pixel_w: 0,
+                    pixel_h: 0,
+                },
+            },
+            InputMsg::FocusChange { focused: true },
+            InputMsg::NextGridFrame,
+            InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None,
+            },
+            InputMsg::ViewportStep { rows: 1 },
+            InputMsg::JumpPrompt {
+                direction: PromptJump::Previous,
+            },
+            mouse(MouseAction::Motion, false),
+        ]
+    }
+
+    #[test]
+    fn refused_view_and_focus_updates_are_not_lost_input() {
+        let queue = InputQueue::default();
+        queue.close();
+        for msg in state_messages() {
+            assert!(queue.push(&msg).is_err());
+            assert!(!queue.input_lost(), "{msg:?} is not shell input");
+        }
+        queue.reopen();
+        for msg in state_messages() {
+            queue.push(&msg).unwrap();
+        }
+        queue.close();
+        assert!(!queue.input_lost());
+    }
+
+    #[test]
+    fn refused_or_discarded_shell_input_is_reported_until_the_next_delivery() {
+        use felis_protocol::messages::MouseAction;
+        for msg in [
+            InputMsg::KeyBytes(b"x".to_vec()),
+            InputMsg::Paste(b"x".to_vec()),
+            mouse(MouseAction::Press, true),
+        ] {
+            let queue = InputQueue::default();
+            queue.close();
+            assert!(queue.push(&msg).is_err());
+            assert!(queue.input_lost(), "{msg:?} is shell input");
+            queue.reopen();
+            queue
+                .push(&InputMsg::FocusChange { focused: true })
+                .unwrap();
+            assert!(queue.input_lost(), "a focus report is not a delivery");
+            queue.push(&msg).unwrap();
+            assert!(!queue.input_lost());
+            queue.close();
+            assert!(queue.input_lost(), "the queued {msg:?} was discarded");
+        }
+    }
+
+    #[test]
+    fn dequeued_frames_say_whether_their_loss_matters() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let queue = InputQueue::default();
+        // The second focus report replaces the first in place, so the
+        // entries must stay aligned with the frames around it.
+        queue
+            .push(&InputMsg::FocusChange { focused: true })
+            .unwrap();
+        queue.push(&InputMsg::KeyBytes(b"x".to_vec())).unwrap();
+        queue
+            .push(&InputMsg::FocusChange { focused: false })
+            .unwrap();
+        queue.push(&InputMsg::NextGridFrame).unwrap();
+        let (_, focus) = runtime.block_on(queue.next());
+        let (_, key) = runtime.block_on(queue.next());
+        let (_, frame) = runtime.block_on(queue.next());
+        assert_eq!((focus, key, frame), (false, true, false));
+        assert!(queue.pending.lock().unwrap().frames.is_empty());
     }
 
     #[test]
