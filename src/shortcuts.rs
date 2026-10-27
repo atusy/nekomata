@@ -258,6 +258,8 @@ fn chord_label(chord: &Chord) -> String {
 
 pub struct Shortcuts {
     pending: Vec<Chord>,
+    /// The chord a sequence last consumed, whose key may still be held.
+    held: Option<Chord>,
     keymap: AppKeymap,
     hints: Hints,
     terminal: Keymap,
@@ -268,6 +270,7 @@ impl Default for Shortcuts {
         let keymap = AppKeymap::default();
         Self {
             pending: Vec::new(),
+            held: None,
             hints: keymap.hints(),
             keymap,
             // Preserve bare End for terminal editors unless explicitly bound.
@@ -317,16 +320,15 @@ fn terminal_key(key: Key) -> KeyCode {
         Key::PageUp => KeyCode::Named(NamedKey::PageUp),
         Key::PageDown => KeyCode::Named(NamedKey::PageDown),
         Key::Insert => KeyCode::Named(NamedKey::Insert),
-        // egui displays this key as U+2212; bindings name the ASCII key.
-        Key::Minus => KeyCode::Character("-".into()),
-        // egui has no symbol for this key and names it "Quote".
-        Key::Quote => KeyCode::Character("'".into()),
-        _ => {
-            let name = key.symbol_or_name().to_ascii_lowercase();
-            name.parse::<Chord>()
-                .map(|chord| chord.key)
-                .unwrap_or(KeyCode::Character(name))
-        }
+        _ => match crate::input::key_char(key) {
+            Some(character) => KeyCode::Character(character.into()),
+            None => {
+                let name = key.symbol_or_name().to_ascii_lowercase();
+                name.parse::<Chord>()
+                    .map(|chord| chord.key)
+                    .unwrap_or(KeyCode::Character(name))
+            }
+        },
     }
 }
 
@@ -357,6 +359,7 @@ impl Shortcuts {
         let mut suppress_text = false;
         if !input.focused {
             self.pending.clear();
+            self.held = None;
             return actions;
         }
         input.events.retain(|event| {
@@ -367,27 +370,58 @@ impl Shortcuts {
                 key,
                 pressed: true,
                 modifiers: mods,
+                repeat,
                 ..
             } = event
             else {
                 return true;
             };
+            // egui reports modifier keys on their own; pressing one is part
+            // of the next chord, not a keystroke that ends a sequence.
+            if matches!(
+                key,
+                Key::ShiftLeft
+                    | Key::ShiftRight
+                    | Key::ControlLeft
+                    | Key::ControlRight
+                    | Key::AltLeft
+                    | Key::AltRight
+                    | Key::SuperLeft
+                    | Key::SuperRight
+            ) {
+                return true;
+            }
             suppress_text = false;
+            let chord = terminal_chord(*key, *mods);
+            // A held key that a sequence consumed, whether it started,
+            // continued, completed or cancelled it, repeats into nothing.
+            if *repeat && self.held.as_ref() == Some(&chord) {
+                suppress_text = true;
+                return false;
+            }
+            self.held = None;
             let pending = !self.pending.is_empty();
             if pending && *key == Key::Escape {
                 self.pending.clear();
+                self.held = Some(chord);
                 suppress_text = true;
                 return false;
             }
             // `pending` is cleared rather than replaced, so its allocation
             // is reused across key presses.
-            self.pending.push(terminal_chord(*key, *mods));
+            self.pending.push(chord);
             let action = match self.keymap.lookup(&self.pending) {
                 Lookup::Prefix => {
+                    self.held = self.pending.last().cloned();
                     suppress_text = true;
                     return false;
                 }
-                Lookup::Action(action) => Some(action),
+                Lookup::Action(action) => {
+                    if pending {
+                        self.held = self.pending.last().cloned();
+                    }
+                    Some(action)
+                }
                 // An unfinished sequence gives the key to the program, not
                 // to a terminal binding it happens to match.
                 Lookup::Miss if pending => None,
@@ -670,6 +704,84 @@ mod tests {
                 press(Key::F, ctrl_shift),
             ]
         );
+    }
+
+    #[test]
+    fn holding_a_prefix_keeps_its_sequence_pending() {
+        let repeat = |key, modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers,
+        };
+        let (actions, remaining) = consume_events(vec![
+            press(Key::W, Modifiers::ALT),
+            repeat(Key::W, Modifiers::ALT),
+            Event::Text("∑".into()),
+            repeat(Key::W, Modifiers::ALT),
+            press(Key::S, Modifiers::ALT),
+        ]);
+        assert_eq!(actions, vec![Action::Split(Axis::Vertical)]);
+        assert!(remaining.is_empty(), "{remaining:?}");
+    }
+
+    #[test]
+    fn holding_the_key_that_ends_a_sequence_sends_nothing_more() {
+        let repeat = |key, modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers,
+        };
+        let (actions, remaining) = consume_events(vec![
+            press(Key::W, Modifiers::ALT),
+            press(Key::S, Modifiers::ALT),
+            repeat(Key::S, Modifiers::ALT),
+            Event::Text("ß".into()),
+            press(Key::W, Modifiers::ALT),
+            press(Key::Escape, Modifiers::NONE),
+            repeat(Key::Escape, Modifiers::NONE),
+        ]);
+        assert_eq!(actions, vec![Action::Split(Axis::Vertical)]);
+        assert!(remaining.is_empty(), "{remaining:?}");
+    }
+
+    #[test]
+    fn pressing_a_modifier_key_keeps_a_sequence_pending() {
+        for modifiers in [Modifiers::NONE, Modifiers::ALT] {
+            let (actions, remaining) = consume_events(vec![
+                press(Key::W, Modifiers::ALT),
+                press(Key::AltLeft, modifiers),
+                press(Key::S, Modifiers::ALT),
+            ]);
+            assert_eq!(
+                actions,
+                vec![Action::Split(Axis::Vertical)],
+                "{modifiers:?}"
+            );
+            assert_eq!(remaining, vec![press(Key::AltLeft, modifiers)]);
+        }
+    }
+
+    #[test]
+    fn holding_a_bound_key_repeats_its_action() {
+        let (actions, remaining) = consume_events(vec![
+            press(Key::PageUp, Modifiers::SHIFT),
+            Event::Key {
+                key: Key::PageUp,
+                physical_key: None,
+                pressed: true,
+                repeat: true,
+                modifiers: Modifiers::SHIFT,
+            },
+        ]);
+        let scroll = Action::Terminal(TerminalAction::Scroll(
+            felis_client_core::ScrollStep::HalfPageUp,
+        ));
+        assert_eq!(actions, vec![scroll.clone(), scroll]);
+        assert!(remaining.is_empty());
     }
 
     #[test]

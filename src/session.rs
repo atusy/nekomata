@@ -300,6 +300,23 @@ impl Session {
         }
     }
 
+    /// Drains the input queue and reports whether it held exactly
+    /// `expected`, in order. A test drives no runtime, so nothing else
+    /// drains it.
+    #[cfg(test)]
+    pub fn drain_queued_matches(&self, expected: &[InputMsg]) -> bool {
+        let mut frames = self.tx.frames.lock().unwrap();
+        // Compare wire frames: queueing later frames rewrites coalescing state.
+        let queued: Vec<_> = std::iter::from_fn(|| frames.pop())
+            .map(|frame| frame.frame().clone())
+            .collect();
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|msg| OutgoingFrame::input(msg).unwrap().frame().clone())
+            .collect();
+        queued == expected
+    }
+
     pub fn send(&self, msg: InputMsg) {
         if self.tx.push(&msg).is_err() {
             self.input_failed.store(true, Ordering::Relaxed);

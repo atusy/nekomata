@@ -14,6 +14,30 @@ settings.
 
 Not supported: key release events and OSC 52 clipboard reads.
 
+## Keyboard input
+
+- A key pressed with Ctrl, or with Alt when it types no text, is sent with
+  those modifiers as the ASCII character the window names it by, letters in
+  lowercase (Ctrl+- sends `-`, Ctrl+' sends `'`). felis encodes it as a
+  control byte where one exists, as an escape sequence when the program
+  enables modifyOtherKeys or the Kitty keyboard protocol, and otherwise sends
+  nothing. Keys that name no character, such as Copy, are not sent.
+- Text typed with Alt held is sent with Alt, which felis encodes as Escape
+  followed by the character when it is a single ASCII character (Alt+B sends
+  ESC b), except on macOS as described below.
+- Ctrl (Cmd on macOS) with -, =, + or 0 does not scale the window's
+  interface; those keys follow the keymap and the rules above like any
+  other.
+- On macOS, Option types the character the keyboard layout composes, sent
+  without Alt: Option+L on a German layout types `@`, not Alt+@. Option acts
+  as Alt only where it composes no character, such as Option+Space, Option
+  with a named key like an arrow, or together with Ctrl or Cmd. felis's
+  `window.macos_option_as_alt` is not applied.
+- Everything sent to the program from the keyboard or clipboard (keys,
+  committed IME text, pastes once sent, and the clipboard control bytes of
+  [keymap](keymap.md#clipboard-events)) returns the pane to the bottom of the
+  scrollback and clears the selection.
+
 ## OSC 52 clipboard writes
 
 A program's OSC 52 write reaches the system clipboard only when felis's

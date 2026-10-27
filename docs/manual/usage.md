@@ -68,6 +68,19 @@ the active session is disconnected or in the alternate screen.
   daemon stops, and you can [attach to it again](sessions.md). Closing the
   last pane closes the window.
 
+## Keyboard
+
+- Typing, pasting or committing IME text returns the pane to the bottom of
+  the scrollback.
+- On macOS, Option types the character your layout puts on the key, such as
+  `@` for Option+L on a German layout. It works as Alt (Meta) only where it
+  types nothing, for example with the arrow keys.
+- Ctrl+Shift+- makes the font smaller, so press Ctrl+/ to send Ctrl+_ (undo
+  in Emacs and readline).
+
+See the [terminal specification](../spec/terminal.md#keyboard-input) for the
+exact rules.
+
 ## Mouse
 
 - Drag to select text; Alt+drag selects a rectangle. Double-click selects a

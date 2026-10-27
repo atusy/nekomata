@@ -188,6 +188,7 @@ impl App {
             keymap,
         } = crate::app_config::load()?;
 
+        leave_zoom_keys_to_the_terminal(&cc.egui_ctx);
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
@@ -1038,8 +1039,14 @@ impl App {
         if response.inner.0 {
             let pending = pane.pending_paste.take().unwrap();
             let state = pane.session.state.lock().unwrap();
+            // Sent under the lock: a reconnect bumps `reconnects` under it,
+            // so the paste cannot reach a connection it was not confirmed for.
             if pending.is_current(state.connected, state.reconnects) {
-                pane.session.send(InputMsg::Paste(pending.into_bytes()));
+                send_to_program(
+                    &mut pane.selection,
+                    &pane.session,
+                    InputMsg::Paste(pending.into_bytes()),
+                );
             }
         } else if response.inner.1 || response.should_close() {
             pane.pending_paste = None;
@@ -2184,6 +2191,13 @@ fn mouse_input(
     })
 }
 
+/// egui zooms the whole window on Ctrl (Cmd on macOS) with -, =, + or 0 after
+/// the frame has already forwarded those keys to the program; nekomata's own
+/// font-size actions cover zooming.
+fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
+    ctx.options_mut(|options| options.zoom_with_keyboard = false);
+}
+
 /// Native clipboard replies are valid for one frame and one connection only.
 fn requested_paste_is_current(
     (frame, generation, origin): (u64, u64, &Arc<Session>),
@@ -2202,40 +2216,16 @@ fn terminal_input(
     selection: &mut Option<Selection>,
     session: &Session,
     pending_paste: &mut Option<crate::paste::PendingPaste>,
-    mut explicit_paste: bool,
+    explicit_paste: bool,
 ) {
-    use felis_protocol::messages::{Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods};
-    let events = ctx.input(|i| i.events.clone());
-    let has_text = events
-        .iter()
-        .any(|event| matches!(event, egui::Event::Text(_)));
-    let mods = ctx.input(|i| i.modifiers);
-    for event in events {
-        let event_mods = match &event {
-            egui::Event::Key { modifiers, .. } => *modifiers,
-            _ => mods,
-        };
-        let mut key_mods = KeyMods::empty();
-        key_mods.set(KeyMods::CTRL, event_mods.ctrl);
-        key_mods.set(KeyMods::SHIFT, event_mods.shift);
-        key_mods.set(KeyMods::ALT, event_mods.alt);
-        key_mods.set(KeyMods::SUPER, event_mods.mac_cmd);
-        let kind = match &event {
-            egui::Event::Key { repeat: true, .. } => KeyEventKind::Repeat,
-            _ => KeyEventKind::Press,
-        };
-
-        let requested_paste =
-            matches!(event, egui::Event::Paste(_)) && std::mem::take(&mut explicit_paste);
-        if !requested_paste
-            && let Some(control) = clipboard_control(&event, mods, cfg!(target_os = "macos"))
-        {
-            *selection = None;
-            session.send(control);
-            continue;
-        }
-        let key = match event {
-            egui::Event::Paste(text) => {
+    use crate::input::TerminalInput;
+    let (events, mods) = ctx.input(|i| (i.events.clone(), i.modifiers));
+    for input in crate::input::translate(&events, mods, explicit_paste, cfg!(target_os = "macos")) {
+        match input {
+            TerminalInput::Control(bytes) => {
+                send_to_program(selection, session, InputMsg::KeyBytes(bytes));
+            }
+            TerminalInput::Paste(text) => {
                 let state = session.state.lock().unwrap();
                 if !state.connected {
                     continue;
@@ -2249,97 +2239,32 @@ fn terminal_input(
                         *pending_paste = Some(pending);
                         break;
                     }
-                    Err(bytes) => session.send(InputMsg::Paste(bytes)),
+                    Err(bytes) => send_to_program(selection, session, InputMsg::Paste(bytes)),
                 }
-                continue;
             }
-            egui::Event::Copy => {
+            TerminalInput::Copy => {
                 if let Some(selection) = *selection {
                     let state = session.state.lock().unwrap();
                     ctx.copy_text(selection.extract_text(state.screen.screen()));
                 }
-                continue;
             }
-            egui::Event::Text(text) => Some((Key::Character(text.clone()), Some(text))),
-            egui::Event::Key {
-                key, pressed: true, ..
-            } => physical_key(key, event_mods, has_text).map(|key| (key, None)),
-            egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
-                session.send(InputMsg::KeyBytes(text.into_bytes()));
-                continue;
+            TerminalInput::Commit(text) => {
+                send_to_program(selection, session, InputMsg::KeyBytes(text.into_bytes()));
             }
-            _ => None,
-        };
-        if let Some((key, text)) = key {
-            *selection = None;
-            session.send(InputMsg::Viewport {
-                lines_from_bottom: 0,
-                anchor: None,
-            });
-            session.send(InputMsg::Key(KeyEvent {
-                key,
-                text,
-                mods: key_mods,
-                kind,
-                location: KeyLocation::Standard,
-            }));
+            TerminalInput::Key(key) => send_to_program(selection, session, InputMsg::Key(key)),
         }
     }
 }
 
-fn clipboard_control(event: &egui::Event, mods: egui::Modifiers, macos: bool) -> Option<InputMsg> {
-    if macos || !mods.ctrl || mods.shift || mods.alt {
-        return None;
-    }
-    let byte = match event {
-        egui::Event::Copy => 3,
-        egui::Event::Cut => 24,
-        egui::Event::Paste(_) => 22,
-        _ => return None,
-    };
-    Some(InputMsg::KeyBytes(vec![byte]))
-}
-
-fn physical_key(
-    key: egui::Key,
-    mods: egui::Modifiers,
-    has_text: bool,
-) -> Option<felis_protocol::messages::Key> {
-    use felis_protocol::messages::{FKey, Key, NamedKey};
-    let named = match key {
-        egui::Key::Space if mods.ctrl || (mods.alt && !has_text) => Some(NamedKey::Space),
-        egui::Key::Enter => Some(NamedKey::Enter),
-        egui::Key::Tab => Some(NamedKey::Tab),
-        egui::Key::Escape => Some(NamedKey::Escape),
-        egui::Key::Backspace => Some(NamedKey::Backspace),
-        egui::Key::Insert => Some(NamedKey::Insert),
-        egui::Key::Delete => Some(NamedKey::Delete),
-        egui::Key::Home => Some(NamedKey::Home),
-        egui::Key::End => Some(NamedKey::End),
-        egui::Key::PageUp => Some(NamedKey::PageUp),
-        egui::Key::PageDown => Some(NamedKey::PageDown),
-        egui::Key::ArrowUp => Some(NamedKey::ArrowUp),
-        egui::Key::ArrowDown => Some(NamedKey::ArrowDown),
-        egui::Key::ArrowLeft => Some(NamedKey::ArrowLeft),
-        egui::Key::ArrowRight => Some(NamedKey::ArrowRight),
-        _ => key
-            .name()
-            .strip_prefix('F')
-            .and_then(|n| n.parse().ok())
-            .and_then(FKey::new)
-            .map(NamedKey::F),
-    };
-    if let Some(named) = named {
-        Some(Key::Named(named))
-    } else if mods.ctrl || (mods.alt && !has_text) {
-        Some(Key::Character(key_character(key)))
-    } else {
-        None
-    }
-}
-
-fn key_character(key: egui::Key) -> String {
-    key.symbol_or_name().to_lowercase()
+/// Input for the program shows the live screen it lands on, so a selection
+/// made while browsing no longer marks what is displayed.
+fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: InputMsg) {
+    *selection = None;
+    session.send(InputMsg::Viewport {
+        lines_from_bottom: 0,
+        anchor: None,
+    });
+    session.send(msg);
 }
 
 #[cfg(test)]
@@ -2435,6 +2360,109 @@ mod tests {
         pane.search_query.clear();
         pane.navigate_search(true);
         assert!(!pane.session.search.search.lock().unwrap().active);
+    }
+
+    #[test]
+    fn zoom_keys_do_not_zoom_the_window() {
+        let ctx = egui::Context::default();
+        leave_zoom_keys_to_the_terminal(&ctx);
+        // Num0 last would reset an unwanted zoom and hide it.
+        for key in [
+            egui::Key::Num0,
+            egui::Key::Minus,
+            egui::Key::Equals,
+            egui::Key::Plus,
+            egui::Key::Plus,
+        ] {
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::COMMAND,
+                    }],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+        }
+        assert_eq!(ctx.zoom_factor(), 1.0);
+    }
+
+    #[test]
+    fn every_input_for_the_program_returns_to_the_live_view_and_clears_the_selection() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let live = InputMsg::Viewport {
+            lines_from_bottom: 0,
+            anchor: None,
+        };
+        let mut cases = vec![
+            (
+                egui::Event::Text("a".into()),
+                egui::Modifiers::NONE,
+                InputMsg::Key(felis_protocol::messages::KeyEvent {
+                    key: felis_protocol::messages::Key::Character("a".into()),
+                    text: Some("a".into()),
+                    mods: felis_protocol::messages::KeyMods::empty(),
+                    kind: felis_protocol::messages::KeyEventKind::Press,
+                    location: felis_protocol::messages::KeyLocation::Standard,
+                }),
+            ),
+            (
+                egui::Event::Ime(egui::ImeEvent::Commit("あ".into())),
+                egui::Modifiers::NONE,
+                InputMsg::KeyBytes("あ".into()),
+            ),
+            (
+                egui::Event::Paste("plain".into()),
+                egui::Modifiers::NONE,
+                InputMsg::Paste(b"plain".to_vec()),
+            ),
+        ];
+        if !cfg!(target_os = "macos") {
+            cases.push((
+                egui::Event::Copy,
+                egui::Modifiers::CTRL,
+                InputMsg::KeyBytes(vec![3]),
+            ));
+        }
+        for (event, modifiers, expected) in cases {
+            let ctx = egui::Context::default();
+            // This current-thread runtime is never driven: no daemon is contacted.
+            let session = Session::start(
+                &runtime,
+                ctx.clone(),
+                Target::Local("/unused-nekomata-test.sock".into()),
+                None,
+                None,
+                vec![],
+            );
+            session.state.lock().unwrap().connected = true;
+            let mut selection = Some(Selection::new(GridPos { row: 0, col: 1 }));
+            let mut pending = None;
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![event.clone()],
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.ctx().input_mut(|input| input.modifiers = modifiers);
+                    terminal_input(ui.ctx(), &mut selection, &session, &mut pending, true)
+                },
+            );
+            assert_eq!(selection, None, "{event:?}");
+            assert!(
+                session.drain_queued_matches(&[live.clone(), expected]),
+                "{event:?}"
+            );
+        }
     }
 
     #[test]
@@ -3217,31 +3245,5 @@ mod tests {
         assert_eq!(tab.focused, 1);
         assert_eq!(other.focused, 2);
         assert_eq!(other.focus_history, vec![1, 2]);
-    }
-
-    #[test]
-    fn linux_control_c_interrupts_instead_of_copying() {
-        assert_eq!(
-            clipboard_control(&egui::Event::Copy, egui::Modifiers::CTRL, false),
-            Some(InputMsg::KeyBytes(vec![3]))
-        );
-    }
-
-    #[test]
-    fn control_bracket_keeps_the_character_needed_for_escape() {
-        assert_eq!(key_character(egui::Key::OpenBracket), "[");
-    }
-    #[test]
-    fn composed_alt_text_does_not_emit_a_second_physical_character() {
-        assert_eq!(physical_key(egui::Key::E, egui::Modifiers::ALT, true), None);
-    }
-
-    #[test]
-    fn function_keys_reach_terminal_programs_without_text_events() {
-        use felis_protocol::messages::{FKey, Key, NamedKey};
-        assert_eq!(
-            physical_key(egui::Key::F1, egui::Modifiers::NONE, false),
-            Some(Key::Named(NamedKey::F(FKey::lit(1))))
-        );
     }
 }

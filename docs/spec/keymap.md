@@ -18,6 +18,14 @@ list, the session picker or a paste confirmation is open, or while a
 workspace switch is in progress. A pending sequence survives these conditions;
 losing window focus cancels it only while key dispatch is active.
 
+Pressing a modifier key on its own neither continues nor ends a pending
+sequence, so `alt+w` may be released and Alt pressed again for `alt+s`.
+
+Key repeat from a held key that a sequence consumed (one that started,
+continued or completed it, or the Escape that cancelled it, such as a held
+`alt+w` or the `c` of `alt+w c`) is ignored. Holding a key bound to an action on its own repeats
+the action.
+
 A key that ends a pending application sequence without completing it skips
 the terminal keymap: the keys already pressed are discarded, and this key goes
 to the terminal program.
@@ -39,6 +47,13 @@ Application keymap:
 Terminal keymap defaults are felis's, except that nekomata unbinds unmodified
 `End` so that shells and editors receive it; binding it in felis's keymap
 restores a binding.
+
+nekomata keeps felis's Ctrl+Shift+- font-size binding on every platform,
+although that chord is Ctrl+_ on US layouts. The window reports it as `-` with
+Shift, never as `_`, so with the binding removed it reaches the program as
+Ctrl+Shift+-, which has no control byte. Ctrl+/ sends the Ctrl+_ byte (0x1F)
+to programs that read control bytes, that is, unless they enable
+modifyOtherKeys or the Kitty keyboard protocol.
 
 ## Application keymap entries
 
