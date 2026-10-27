@@ -765,6 +765,44 @@ mod tests {
     }
 
     #[test]
+    fn application_kinds_do_not_shadow_felis_kinds_except_unbind() {
+        let schema = schemars::schema_for!(felis_client_core::BindingValue);
+        let variants = schema.as_value()["oneOf"]
+            .as_array()
+            .expect("felis binding schema must enumerate its variants");
+        assert!(
+            variants.len() > 1,
+            "the binding schema must not be empty or just unbind"
+        );
+        let mut shared_unbind = false;
+        for variant in variants {
+            let kind = variant["properties"]["kind"]["const"]
+                .as_str()
+                .expect("each binding variant must name its kind");
+            let binding = toml::Value::Table(toml::Table::from_iter([(
+                "kind".into(),
+                toml::Value::String(kind.into()),
+            )]));
+            let result = parse_binding(&binding);
+            if kind == "unbind" {
+                assert_eq!(result, Ok(None));
+                shared_unbind = true;
+            } else {
+                // Missing required arguments still identify a recognized application
+                // kind; only an unknown-kind error proves the names do not overlap.
+                assert!(
+                    matches!(&result, Err(error) if error.starts_with(&format!("unknown kind `{kind}`;"))),
+                    "felis kind `{kind}` overlaps the application vocabulary: {result:?}"
+                );
+            }
+        }
+        assert!(
+            shared_unbind,
+            "unbind must remain the explicit shared exception"
+        );
+    }
+
+    #[test]
     fn unknown_kinds_suggest_the_terminal_document_without_claiming_support() {
         for kind in ["copy", "run", "new_tba", "future_terminal_action"] {
             let (config, warnings) =

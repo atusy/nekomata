@@ -38,4 +38,7 @@ yeslogic-fontconfig-sys = { version = "6.0.1", features = ["dlopen"] }
 yeslogic-fontconfig-sys = { version = "6.0.1", features = ["dlopen"] }
 
 [dev-dependencies]
+# Inspect upstream binding names in tests without shipping schema generation.
+felis-client-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951", features = ["schema"] }
+schemars = "1"
 tempfile = "3"
