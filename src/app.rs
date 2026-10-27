@@ -455,11 +455,10 @@ impl App {
                         self.resuming = false;
                     }
                     if operation == Operation::Disconnected && self.workspace_id.is_some() {
-                        let delay = self.reconnect.schedule(std::time::Instant::now());
-                        self.workspace_error = Some(format!(
-                            "Lost the nekomata daemon: {error}. Reconnecting in {} s…",
-                            delay.as_secs()
-                        ));
+                        self.reconnect.schedule(std::time::Instant::now());
+                        // No countdown: it would go stale between repaints.
+                        self.workspace_error =
+                            Some(format!("{error}. Reconnecting automatically…"));
                     } else {
                         self.workspace_error = Some(error);
                     }
