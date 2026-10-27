@@ -60,7 +60,7 @@ size (see [configuration](configuration.md#font-size-precedence)).
   still queued ahead of it; the window stops responding meanwhile. If saving fails or times out, the
   GUI reports it on standard error and exits anyway. A window closed during a
   workspace switch detaches without saving; one closed while it has lost the
-  daemon exits without saving.
+  daemon, or is still reconnecting, exits without saving.
 - After a GUI crash, the workspace restores up to the last snapshot the daemon
   received.
 

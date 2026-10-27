@@ -1575,7 +1575,9 @@ impl eframe::App for App {
     // by `CLOSE_DEADLINE`, after which the lease ends with the connection.
     fn on_exit(&mut self) {
         if let Some(client) = &self.workspace {
-            if client.is_closed() {
+            // An unanswered resume would hold the close behind up to four
+            // daemon exchanges; the window has no lease to save into yet.
+            if client.is_closed() || self.resuming {
                 return;
             }
             let snapshot = self
