@@ -63,4 +63,4 @@ mechanisms are specification, not part of this decision.
 
 - [Keep workspaces in a daemon independent of GUI windows](20261023-120000-separate-workspaces-from-windows.md)
 - [Share felis client policies and the GPU renderer](20261024-180000-share-felis-client-and-gpu.md)
-- [Split configuration into a terminal layer and an application layer](20261024-220000-split-configuration-into-two-layers.md)
+- [Publish commands through a shared registry](20261027-120000-publish-commands-through-a-shared-registry.md)

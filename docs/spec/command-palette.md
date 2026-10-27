@@ -2,9 +2,14 @@
 
 ## Opening and closing
 
-The command palette button at the left of the tab bar and the `command_palette`
+The command palette button at the left of the tab bar and the `command_palette:open`
 binding open the palette. Escape or a click outside closes it without running a
 command.
+
+Every listed command can also be invoked through nekomata's application keymap
+using its [public kind](keymap.md#application-keymap-entries). The palette
+shows bindings from nekomata's keymap, including bindings for terminal
+commands; it does not show fallback bindings from felis's shared keymap.
 
 ## Finding a command
 

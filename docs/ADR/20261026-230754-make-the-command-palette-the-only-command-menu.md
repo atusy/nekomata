@@ -39,4 +39,4 @@ changing the font size, opens its own UI from the palette.
 ## Related Decisions
 
 - [Name palette commands by category and verb phrase](20261026-230753-name-palette-commands-by-category-and-verb-phrase.md)
-- [Split configuration into a terminal layer and an application layer](20261024-220000-split-configuration-into-two-layers.md)
+- [Publish commands through a shared registry](20261027-120000-publish-commands-through-a-shared-registry.md)

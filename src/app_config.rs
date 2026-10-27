@@ -258,6 +258,15 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
         .get("kind")
         .and_then(toml::Value::as_str)
         .ok_or("a binding needs a string `kind`")?;
+    if let Some(command) = crate::commands::commands()
+        .iter()
+        .find(|command| command.kind == kind)
+    {
+        if let Some(unknown) = binding.keys().find(|name| *name != "kind") {
+            return Err(format!("`{kind}` has no field `{unknown}`"));
+        }
+        return Ok(Some(command.action.clone()));
+    }
     let field = |name: &str| -> Result<&str, String> {
         binding
             .get(name)
@@ -585,6 +594,73 @@ mod tests {
             |ui| actions = ui.ctx().input_mut(|input| shortcuts.consume(input)),
         );
         actions
+    }
+
+    #[test]
+    fn session_attach_can_be_bound_by_its_public_kind() {
+        use eframe::egui::{Key, Modifiers};
+        assert_eq!(
+            press(
+                "[keymap]\n\"alt+a\" = { kind = \"session:attach\" }",
+                &[(Key::A, Modifiers::ALT)],
+            ),
+            [Action::AttachSession]
+        );
+    }
+
+    #[test]
+    fn every_public_command_is_bindable_without_a_separate_kind_list() {
+        use eframe::egui::{Key, Modifiers};
+        let mut kinds = std::collections::BTreeSet::new();
+        for command in crate::commands::commands() {
+            assert!(
+                kinds.insert(command.kind),
+                "duplicate kind {}",
+                command.kind
+            );
+            let text = format!(
+                r#"[keymap]
+"alt+c" = {{ kind = "unbind" }}
+"alt+t" = {{ kind = "unbind" }}
+"alt+shift+t" = {{ kind = "unbind" }}
+"alt+shift+p" = {{ kind = "unbind" }}
+"alt+w" = {{ kind = "unbind" }}
+"alt+q" = {{ kind = {:?} }}"#,
+                command.kind
+            );
+            assert_eq!(
+                press(&text, &[(Key::Q, Modifiers::ALT)]),
+                std::slice::from_ref(&command.action),
+                "{}",
+                command.kind
+            );
+            let (config, _) = parse(&text).unwrap();
+            assert_eq!(
+                config.keymap.hints().get(&command.action),
+                "Alt+Q",
+                "{}",
+                command.kind
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_commands_reject_arguments_instead_of_ignoring_them() {
+        for command in crate::commands::commands() {
+            let text = format!(
+                "[keymap]\n\"alt+q\" = {{ kind = {:?}, unexpected = true }}",
+                command.kind
+            );
+            let (config, warnings) = parse(&text).unwrap();
+            assert_eq!(config.keymap, AppKeymap::default());
+            assert_eq!(
+                warnings,
+                [format!(
+                    "`keymap.\"alt+q\"` is dropped: `{}` has no field `unexpected`",
+                    command.kind
+                )]
+            );
+        }
     }
 
     #[test]

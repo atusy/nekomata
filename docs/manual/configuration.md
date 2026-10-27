@@ -2,14 +2,14 @@
 
 nekomata reads two files:
 
-- **Terminal settings** — fonts, colors, the cursor, and terminal keys such
-  as copy and paste — come from **felis's** `config.toml`, shared with other
-  felis clients.
-- **Application settings** — the UI font and keys for tabs, panes and
-  workspaces — come from **nekomata's** own `config.toml`.
+- **Terminal settings** — fonts, colors, the cursor, and shared terminal key
+  bindings — come from **felis's** `config.toml`, shared with other felis clients.
+- **Application settings** — the UI font and bindings for all public commands —
+  come from **nekomata's** own `config.toml`.
 
-As a rule of thumb, a setting that would make sense in a single-pane terminal
-belongs to felis's file.
+Terminal appearance belongs to felis's file. nekomata's keymap can bind any
+public command, including terminal operations; it takes precedence over the
+shared terminal keymap.
 
 | | macOS | Linux |
 | --- | --- | --- |
@@ -48,10 +48,10 @@ family = "UDEV Gothic NF"   # default: Hiragino (macOS), Noto Sans CJK at its De
 size_px = 15                # default: 14, felis's default terminal size
 
 [keymap]
-"alt+n"    = { kind = "new_tab" }
+"alt+n"    = { kind = "tab:create" }
 "alt+c"    = { kind = "unbind" }
-"ctrl+a s" = { kind = "split", direction = "below" }
-"ctrl+a v" = { kind = "split", direction = "right" }
+"ctrl+a s" = { kind = "pane:split_below" }
+"ctrl+a v" = { kind = "pane:split_right" }
 ```
 
 Keys are written the same way as in felis's `[keymap]`. Separate keystrokes
@@ -60,21 +60,19 @@ replace the defaults for the same keys. Escape cancels a sequence in
 progress; any other key that does not continue it is sent to the terminal
 program.
 
-| `kind` | Arguments | Action |
-| --- | --- | --- |
-| `new_tab` | — | New tab |
-| `close_tab` | — | Close tab |
-| `switch_tab` | `to = "next" \| "previous"` | Next / previous tab |
-| `split` | `direction = "below" \| "right"` | New pane below / to the right |
-| `close_pane` | — | Close pane (its shell keeps running) |
-| `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` or `to = "next"` | Focus a neighboring / the next pane |
-| `command_palette` | — | Command palette |
-| `new_workspace` | — | New workspace |
-| `open_workspaces` | — | Workspace list |
-| `unbind` | — | Remove a binding |
+Kinds use `category:operation`, matching the palette's categories and verbs.
+For example, bind the session picker and font size controls directly:
 
-Copy, paste, font size, scrolling and search are terminal actions; bind them
-in felis's `[keymap]`.
+```toml
+[keymap]
+"alt+a" = { kind = "session:attach" }
+"alt+f" = { kind = "font:change_size" }
+```
+
+See the [complete kind catalog](../spec/keymap.md#application-keymap-entries).
+The old application kind names remain supported as compatibility aliases.
+`unbind` removes bindings and is not an executable command. Shared terminal
+bindings can still be configured in felis's `[keymap]` using felis's syntax.
 
 ## When something is wrong
 

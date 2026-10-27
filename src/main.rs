@@ -3,6 +3,7 @@ mod app_config;
 mod cli;
 mod colors;
 mod command_palette;
+mod commands;
 mod control;
 mod daemon;
 mod font_size;

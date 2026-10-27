@@ -65,5 +65,5 @@ adds only its application layer.
 ## Related Decisions
 
 - [Keep workspaces in a daemon independent of GUI windows](20261023-120000-separate-workspaces-from-windows.md)
-- [Split configuration into a terminal layer and an application layer](20261024-220000-split-configuration-into-two-layers.md)
+- [Publish commands through a shared registry](20261027-120000-publish-commands-through-a-shared-registry.md)
 - [Each input layer owns consumption and forwarding](20261025-004911-own-input-consumption-at-each-layer.md)
