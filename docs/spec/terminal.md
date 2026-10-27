@@ -67,6 +67,18 @@ Not supported: key release events and OSC 52 clipboard reads.
 - While the search field is open, keyboard input is not sent to the terminal
   (mouse input still is). Escape closes the field and its highlights.
 
+## Font size
+
+- The terminal font size applies to every pane of the window. Each larger or
+  smaller step multiplies or divides it by 1.1, whether it comes from felis's
+  `font_size` binding or the font size control, and the result is clamped to
+  4–72 logical pixels.
+- Reset returns to the resolved size described in
+  [configuration](configuration.md#font-size-precedence).
+- `Font: Change size…` opens the font size control, which shows the current
+  size with buttons to step and reset it; Up and Down arrows step it larger
+  and smaller.
+
 ## Rendering
 
 - Only visible local panes request new frames; hidden panes stop requesting

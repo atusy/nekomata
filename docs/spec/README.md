@@ -11,7 +11,7 @@ change them in the same commit as the behavior.
 | [command palette](command-palette.md) | Opening the palette, finding commands and what labels promise |
 | [workspaces](workspaces.md) | Workspace contents, leases, startup, switching and the nekomata daemon |
 | [panes](panes.md) | Pane connections, retargeting from the CLI and window resolution |
-| [terminal](terminal.md) | Terminal interactions: selection, links, paste, search, scrolling, reconnection |
+| [terminal](terminal.md) | Terminal interactions: selection, links, paste, search, font size, scrolling, reconnection |
 | [accessibility](accessibility.md) | The platform accessibility tree and what it does not expose |
 
 [Architecture decisions](../ADR/) record why components own what they do.
