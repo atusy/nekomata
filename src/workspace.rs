@@ -2,11 +2,37 @@
 use crate::layout::Layout;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "StoredTab")]
 pub struct Tab {
     pub name: String,
     pub layout: Layout,
+    /// Always the last entry of `focus_history`; `focus` keeps them together.
     pub focused: u64,
     pub focus_history: Vec<u64>,
+}
+
+// Snapshots come from other nekomata processes, which serialize both fields.
+// Restore the invariant on load instead of rejecting a workspace over the
+// order of its focus history.
+#[derive(serde::Deserialize)]
+struct StoredTab {
+    name: String,
+    layout: Layout,
+    focused: u64,
+    focus_history: Vec<u64>,
+}
+
+impl From<StoredTab> for Tab {
+    fn from(stored: StoredTab) -> Self {
+        let mut tab = Self {
+            name: stored.name,
+            layout: stored.layout,
+            focused: stored.focused,
+            focus_history: stored.focus_history,
+        };
+        tab.focus(tab.focused);
+        tab
+    }
 }
 
 impl Tab {
@@ -317,6 +343,26 @@ mod tests {
         );
         snapshot.validate().unwrap();
         assert_eq!(serde_json::to_value(&snapshot).unwrap(), json);
+    }
+
+    #[test]
+    fn loaded_tabs_end_their_focus_history_on_the_focused_pane() {
+        let tab: Tab = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "layout": split_tab().layout,
+            "focused": 2,
+            "focus_history": [2, 3],
+        }))
+        .unwrap();
+        assert_eq!(tab.focus_history, [3, 2]);
+        let tab: Tab = serde_json::from_value(serde_json::json!({
+            "name": "test",
+            "layout": {"Pane": 1},
+            "focused": 1,
+            "focus_history": [],
+        }))
+        .unwrap();
+        assert_eq!(tab.focus_history, [1]);
     }
 
     #[test]
