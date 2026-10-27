@@ -12,6 +12,7 @@ change them in the same commit as the behavior.
 | [workspaces](workspaces.md) | Workspace contents, leases, startup, switching and the nekomata daemon |
 | [panes](panes.md) | Pane connections, retargeting from the CLI and window resolution |
 | [terminal](terminal.md) | Terminal interactions: selection, links, paste, search, scrolling, reconnection |
+| [accessibility](accessibility.md) | The platform accessibility tree and what it does not expose |
 
 [Architecture decisions](../ADR/) record why components own what they do.
 They do not specify behavior. The [user manual](../manual/) explains how to use
