@@ -2392,7 +2392,7 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::PaneRemoval;
+    use crate::workspace::{PaneRemoval, Tab};
     use std::time::Duration;
 
     #[test]
@@ -2620,7 +2620,7 @@ mod tests {
                 None,
                 vec![],
             );
-            session.state.lock().unwrap().connected = true;
+            session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
             let mut selection = Some(Selection::new(GridPos { row: 0, col: 1 }));
             let mut pending = None;
             let _ = crate::test_support::run(
