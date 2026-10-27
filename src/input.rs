@@ -28,19 +28,32 @@ pub fn translate(
     mut explicit_paste: bool,
     macos: bool,
 ) -> Vec<TerminalInput> {
-    let has_text = events
-        .iter()
-        .any(|event| matches!(event, egui::Event::Text(_)));
     let mut inputs = Vec::new();
-    for event in events {
-        let event_mods = match event {
-            egui::Event::Key { modifiers, .. } => *modifiers,
-            _ => frame_mods,
+    for (index, event) in events.iter().enumerate() {
+        // egui-winit queues a keystroke's text right after its key event;
+        // the frame's modifiers may already belong to a later keystroke.
+        let typed_by = match event {
+            egui::Event::Text(_) => index.checked_sub(1).and_then(|i| match &events[i] {
+                egui::Event::Key {
+                    pressed: true,
+                    modifiers,
+                    repeat,
+                    ..
+                } => Some((*modifiers, *repeat)),
+                _ => None,
+            }),
+            egui::Event::Key {
+                modifiers, repeat, ..
+            } => Some((*modifiers, *repeat)),
+            _ => None,
         };
-        let kind = match event {
-            egui::Event::Key { repeat: true, .. } => KeyEventKind::Repeat,
-            _ => KeyEventKind::Press,
+        let (event_mods, repeat) = typed_by.unwrap_or((frame_mods, false));
+        let kind = if repeat {
+            KeyEventKind::Repeat
+        } else {
+            KeyEventKind::Press
         };
+        let has_text = matches!(events.get(index + 1), Some(egui::Event::Text(_)));
         let requested_paste =
             matches!(event, egui::Event::Paste(_)) && std::mem::take(&mut explicit_paste);
         if !requested_paste && let Some(control) = clipboard_control(event, frame_mods, macos) {
@@ -156,6 +169,108 @@ pub fn key_char(key: egui::Key) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn text(text: &str) -> egui::Event {
+        egui::Event::Text(text.into())
+    }
+
+    fn sent(key: Key, text: Option<&str>, mods: KeyMods, kind: KeyEventKind) -> TerminalInput {
+        TerminalInput::Key(KeyEvent {
+            key,
+            text: text.map(str::to_owned),
+            mods,
+            kind,
+            location: KeyLocation::Standard,
+        })
+    }
+
+    fn character(c: &str) -> Key {
+        Key::Character(c.into())
+    }
+
+    #[test]
+    fn a_key_without_text_is_encoded_even_when_another_key_in_the_frame_typed_text() {
+        let alt = egui::Modifiers::ALT;
+        let got = translate(
+            &[
+                press(egui::Key::E, alt),
+                press(egui::Key::B, alt),
+                text("∫"),
+            ],
+            alt,
+            false,
+            false,
+        );
+        assert_eq!(
+            got,
+            [
+                sent(character("e"), None, KeyMods::ALT, KeyEventKind::Press),
+                sent(character("∫"), Some("∫"), KeyMods::ALT, KeyEventKind::Press),
+            ]
+        );
+    }
+
+    #[test]
+    fn text_carries_the_modifiers_and_repeat_of_the_key_that_typed_it() {
+        let got = translate(
+            &[
+                egui::Event::Key {
+                    key: egui::Key::B,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: true,
+                    modifiers: egui::Modifiers::ALT,
+                },
+                text("b"),
+                press(egui::Key::C, egui::Modifiers::NONE),
+                text("c"),
+            ],
+            egui::Modifiers::NONE,
+            false,
+            false,
+        );
+        assert_eq!(
+            got,
+            [
+                sent(
+                    character("b"),
+                    Some("b"),
+                    KeyMods::ALT,
+                    KeyEventKind::Repeat
+                ),
+                sent(
+                    character("c"),
+                    Some("c"),
+                    KeyMods::empty(),
+                    KeyEventKind::Press
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn text_without_a_key_uses_the_frame_modifiers() {
+        let got = translate(&[text("ろ")], egui::Modifiers::SHIFT, false, false);
+        assert_eq!(
+            got,
+            [sent(
+                character("ろ"),
+                Some("ろ"),
+                KeyMods::SHIFT,
+                KeyEventKind::Press
+            )]
+        );
+    }
 
     #[test]
     fn linux_control_c_interrupts_instead_of_copying() {
