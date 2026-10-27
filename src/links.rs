@@ -420,7 +420,10 @@ mod tests {
                 b'/', b't', b'm', b'p', b'/', 0xE3, 0x81, 0x82
             ])))
         );
-        assert!(path("file://elsewhere/tmp/a").is_err());
+        assert_eq!(
+            path("file://elsewhere/tmp/a"),
+            Err("The linked file is on another host (elsewhere)".into())
+        );
         assert!(path("file:relative").is_err());
         // A relative path could otherwise start with `-` and become an option.
         assert!(path("file:-R").is_err());
@@ -441,17 +444,25 @@ mod tests {
             folder: root.clone(),
         };
         assert_eq!(resolved(&uri(&script)), Ok(expected));
-        // `..` after a file must not make the file itself the folder. Linux
-        // refuses the path; macOS resolves it to the directory.
-        match resolved(&format!("{}/..", uri(&script))) {
-            Err(_) => {}
-            Ok(Launch::Reveal { item, folder }) => {
-                assert_eq!(item, root);
-                assert!(folder.is_dir());
-            }
-            Ok(launch) => panic!("unexpected {launch:?}"),
+        // `..` after a file must not make the file itself the folder.
+        let dotdot = resolved(&format!("{}/..", uri(&script)));
+        if cfg!(target_os = "macos") {
+            // macOS resolves the path lexically to the directory.
+            assert_eq!(
+                dotdot,
+                Ok(Launch::Reveal {
+                    item: root.clone(),
+                    folder: root.parent().unwrap().to_owned(),
+                })
+            );
+        } else {
+            let error = dotdot.unwrap_err();
+            assert!(error.contains("Not a directory"), "{error}");
         }
-        assert!(resolved(&uri(&root.join("missing"))).is_err());
+        assert_eq!(
+            resolved(&uri(&root.join("missing"))),
+            Err("The linked file does not exist".into())
+        );
         let link = root.join("link");
         std::os::unix::fs::symlink(&script, &link).unwrap();
         assert_eq!(
@@ -479,14 +490,26 @@ mod tests {
         );
         let linux = plan(Platform::Linux, &launch);
         assert_eq!(linux.len(), 2);
-        assert_eq!(linux[0][0], "gdbus");
-        assert!(linux[0].contains(&"org.freedesktop.FileManager1.ShowItems".into()));
         // Quotes, commas and brackets are encoded, so GVariant text stays one string.
         assert_eq!(
-            linux[0][linux[0].len() - 2],
-            "['file:///tmp/x/a%2Cb%27c%22%5Bd%5D.sh']"
+            linux[0],
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--timeout",
+                "5",
+                "--dest",
+                "org.freedesktop.FileManager1",
+                "--object-path",
+                "/org/freedesktop/FileManager1",
+                "--method",
+                "org.freedesktop.FileManager1.ShowItems",
+                "['file:///tmp/x/a%2Cb%27c%22%5Bd%5D.sh']",
+                "''",
+            ]
+            .map(OsString::from)
         );
-        assert_eq!(linux[0][linux[0].len() - 1], "''");
         // The trailing slash makes path lookup demand a directory, even if
         // the folder were swapped for a file after it was checked.
         assert_eq!(linux[1], [OsString::from("xdg-open"), "/tmp/x/".into()]);
