@@ -139,11 +139,18 @@ impl PaneGeometry {
         }
     }
 
-    /// The physical-pixel offset of `pos` from the text origin.
-    pub fn pixel_offset(&self, pos: Pos2, ppp: f32) -> (f32, f32) {
+    /// The 1-based `(x, y)` cell and `(px, py)` physical pixel a mouse report
+    /// names for `pos`, as xterm numbers them. The cell clamps to the drawn
+    /// grid; pixels clamp only at the text origin, as felis-client's do.
+    pub fn mouse_position(&self, pos: Pos2, ppp: f32) -> ([u16; 2], [u16; 2]) {
+        let cell = self.clamped_cell(pos);
+        let pixel = |offset: f32| ((offset.max(0.0) * ppp) as u16).saturating_add(1);
         (
-            (pos.x - self.text_rect.left()).max(0.0) * ppp,
-            (pos.y - self.text_rect.top()).max(0.0) * ppp,
+            [cell.col + 1, cell.row + 1],
+            [
+                pixel(pos.x - self.text_rect.left()),
+                pixel(pos.y - self.text_rect.top()),
+            ],
         )
     }
 
@@ -489,6 +496,25 @@ mod tests {
         assert_eq!(
             empty.clamped_cell(Pos2::new(500.0, 500.0)),
             GridPos { row: 0, col: 0 }
+        );
+    }
+
+    #[test]
+    fn mouse_reports_name_one_based_cells_within_the_drawn_grid() {
+        let geometry = geometry();
+        // Cell (1, 2) at 2 physical pixels per point.
+        assert_eq!(
+            geometry.mouse_position(Pos2::new(125.0, 71.0), 2.0),
+            ([3, 2], [51, 43])
+        );
+        // Past the drawn grid, even inside a larger requested size.
+        assert_eq!(
+            geometry.mouse_position(Pos2::new(500.0, 500.0), 1.0).0,
+            [4, 2]
+        );
+        assert_eq!(
+            geometry.mouse_position(Pos2::new(0.0, 0.0), 1.0),
+            ([1, 1], [1, 1])
         );
     }
 

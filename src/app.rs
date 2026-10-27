@@ -2270,16 +2270,15 @@ fn mouse_input(
     mods.set(InputMods::SHIFT, modifiers.shift);
     mods.set(InputMods::ALT, modifiers.alt);
     mods.set(InputMods::CTRL, modifiers.ctrl);
-    let cell = geometry.clamped_cell(pos);
-    let (px, py) = geometry.pixel_offset(pos, ui.ctx().pixels_per_point());
+    let ([x, y], [px, py]) = geometry.mouse_position(pos, ui.ctx().pixels_per_point());
     InputMsg::Mouse(MouseEvent {
         button,
         action,
         mods,
-        x: cell.col + 1,
-        y: cell.row + 1,
-        px: (px as u16).saturating_add(1),
-        py: (py as u16).saturating_add(1),
+        x,
+        y,
+        px,
+        py,
     })
 }
 
