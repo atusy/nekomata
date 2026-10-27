@@ -84,18 +84,33 @@ pub struct Client {
 type Saved = std::sync::Arc<std::sync::Mutex<Option<Snapshot>>>;
 
 /// When a window that lost the daemon tries to reach it again: after 1 s,
-/// doubling up to 30 s while attempts keep failing.
+/// doubling up to 30 s while attempts keep failing, and never while an
+/// attempt is still unanswered or after the daemon refused one.
 #[derive(Debug, Default)]
-pub struct Backoff {
+pub struct Reconnect {
     failures: u32,
     due: Option<std::time::Instant>,
+    resuming: bool,
 }
 
-impl Backoff {
+impl Reconnect {
     const MAX: Duration = Duration::from_secs(30);
 
+    /// Follows an event of a window that holds a workspace.
+    pub fn observe(&mut self, operation: Operation, succeeded: bool, now: std::time::Instant) {
+        match (operation, succeeded) {
+            (Operation::Disconnected, _) => {
+                self.resuming = false;
+                self.schedule(now);
+            }
+            (Operation::Resume, true) => *self = Self::default(),
+            (Operation::Resume, false) => self.resuming = false,
+            _ => {}
+        }
+    }
+
     /// Schedules the next attempt after another failure and returns its delay.
-    pub fn schedule(&mut self, now: std::time::Instant) -> Duration {
+    fn schedule(&mut self, now: std::time::Instant) -> Duration {
         let delay = Duration::from_secs(1 << self.failures.min(5)).min(Self::MAX);
         self.failures += 1;
         self.due = Some(now + delay);
@@ -106,13 +121,19 @@ impl Backoff {
         self.due = Some(std::time::Instant::now());
     }
 
-    /// Whether an attempt is due at `now`; it is then no longer scheduled.
-    pub fn take_due(&mut self, now: std::time::Instant) -> bool {
-        let due = self.due.is_some_and(|due| due <= now);
+    /// Whether an attempt should start at `now`; it is then in flight.
+    pub fn start(&mut self, now: std::time::Instant) -> bool {
+        let due = !self.resuming && self.due.is_some_and(|due| due <= now);
         if due {
             self.due = None;
+            self.resuming = true;
         }
         due
+    }
+
+    /// An attempt was started and has not been answered yet.
+    pub fn resuming(&self) -> bool {
+        self.resuming
     }
 }
 
@@ -509,15 +530,48 @@ mod tests {
     #[test]
     fn reconnect_attempts_back_off_up_to_thirty_seconds() {
         let now = std::time::Instant::now();
-        let mut backoff = Backoff::default();
-        assert!(!backoff.take_due(now));
-        let delays: Vec<_> = (0..8).map(|_| backoff.schedule(now).as_secs()).collect();
+        let mut reconnect = Reconnect::default();
+        assert!(!reconnect.start(now));
+        let delays: Vec<_> = (0..8).map(|_| reconnect.schedule(now).as_secs()).collect();
         assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30]);
-        assert!(!backoff.take_due(now));
-        assert!(backoff.take_due(now + Duration::from_secs(30)));
-        assert!(!backoff.take_due(now + Duration::from_secs(30)), "once");
-        backoff.retry_now();
-        assert!(backoff.take_due(std::time::Instant::now()));
+        assert!(!reconnect.start(now));
+        assert!(reconnect.start(now + Duration::from_secs(30)));
+        assert!(reconnect.resuming());
+    }
+
+    #[test]
+    fn a_lost_connection_schedules_one_attempt_at_a_time() {
+        let now = std::time::Instant::now();
+        let later = now + Duration::from_secs(60);
+        let mut reconnect = Reconnect::default();
+        reconnect.observe(Operation::Disconnected, false, now);
+        assert!(!reconnect.start(now));
+        assert!(reconnect.start(later));
+        reconnect.retry_now();
+        assert!(!reconnect.start(later), "an attempt is still unanswered");
+        // The attempt could not reach a daemon: try again later.
+        reconnect.observe(Operation::Disconnected, false, later);
+        assert!(!reconnect.resuming());
+        assert!(reconnect.start(later + Duration::from_secs(2)));
+        reconnect.observe(Operation::Resume, true, later);
+        assert!(!reconnect.resuming());
+        assert!(!reconnect.start(later + Duration::from_secs(60)));
+        // Backoff restarts from 1 s after a success.
+        reconnect.observe(Operation::Disconnected, false, now);
+        assert!(reconnect.start(now + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_refused_attempt_is_not_retried_automatically() {
+        let now = std::time::Instant::now();
+        let mut reconnect = Reconnect::default();
+        reconnect.observe(Operation::Disconnected, false, now);
+        assert!(reconnect.start(now + Duration::from_secs(1)));
+        reconnect.observe(Operation::Resume, false, now);
+        assert!(!reconnect.resuming());
+        assert!(!reconnect.start(now + Duration::from_secs(3600)));
+        reconnect.retry_now();
+        assert!(reconnect.start(std::time::Instant::now()));
     }
 
     #[tokio::test]

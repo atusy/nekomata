@@ -158,9 +158,7 @@ pub struct App {
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch<Pane>>,
-    reconnect: crate::workspace_client::Backoff,
-    /// A resume client is re-leasing the workspace and has not answered yet.
-    resuming: bool,
+    reconnect: crate::workspace_client::Reconnect,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
@@ -226,7 +224,6 @@ impl App {
             last_snapshot: None,
             pending_workspace: None,
             reconnect: Default::default(),
-            resuming: false,
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
@@ -315,6 +312,13 @@ impl App {
                 .as_mut()
                 .and_then(|client| client.events.try_recv().ok());
             let Some(event) = event else { break };
+            if self.workspace_id.is_some() {
+                self.reconnect.observe(
+                    event.operation,
+                    event.result.is_ok(),
+                    std::time::Instant::now(),
+                );
+            }
             match (event.operation, event.result) {
                 (
                     Operation::Open,
@@ -451,11 +455,7 @@ impl App {
                     {
                         let _ = reply.send(Err(error.clone()));
                     }
-                    if operation == Operation::Disconnected {
-                        self.resuming = false;
-                    }
                     if operation == Operation::Disconnected && self.workspace_id.is_some() {
-                        self.reconnect.schedule(std::time::Instant::now());
                         // No countdown: it would go stale between repaints.
                         self.workspace_error =
                             Some(format!("{error}. Reconnecting automatically…"));
@@ -464,14 +464,11 @@ impl App {
                     }
                 }
                 (Operation::Resume, Ok(Payload::Workspace { id, snapshot })) => {
-                    self.resuming = false;
                     self.workspace_id = Some(id);
                     self.last_snapshot = Some(snapshot);
                     self.workspace_error = None;
-                    self.reconnect = Default::default();
                 }
                 (Operation::Resume, Err(error)) => {
-                    self.resuming = false;
                     self.workspace_error = Some(format!("Could not resume the workspace: {error}"));
                 }
                 (_, Err(error)) => self.workspace_error = Some(error),
@@ -494,7 +491,7 @@ impl App {
             // A switch queued behind a resume would never be answered if the
             // daemon refused the resume.
             anyhow::ensure!(
-                !self.resuming && !self.daemon_lost(),
+                !self.reconnect.resuming() && !self.daemon_lost(),
                 "the nekomata daemon is reconnecting"
             );
             anyhow::ensure!(
@@ -637,14 +634,13 @@ impl App {
     fn resume_workspace(&mut self, ctx: &egui::Context) {
         if !self.daemon_lost()
             || self.pending_workspace.is_some()
-            || !self.reconnect.take_due(std::time::Instant::now())
+            || !self.reconnect.start(std::time::Instant::now())
         {
             return;
         }
         let Some(previous) = self.workspace_id else {
             return;
         };
-        self.resuming = true;
         self.workspace = Some(WorkspaceClient::resume(
             &self.runtime,
             ctx.clone(),
@@ -1576,7 +1572,7 @@ impl eframe::App for App {
         if let Some(client) = &self.workspace {
             // An unanswered resume would hold the close behind up to four
             // daemon exchanges; the window has no lease to save into yet.
-            if client.is_closed() || self.resuming {
+            if client.is_closed() || self.reconnect.resuming() {
                 return;
             }
             let snapshot = self
@@ -3257,7 +3253,6 @@ mod tests {
             last_snapshot: None,
             pending_workspace: None,
             reconnect: Default::default(),
-            resuming: false,
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
