@@ -68,17 +68,20 @@ size (see [configuration](configuration.md#font-size-precedence)).
 
 1. The daemon must first accept the current workspace's snapshot.
 2. The destination is reserved while the source lease is still held.
-3. The GUI connects every pane of the destination and waits until each has
-   connected, failed or ended. A pane already open in this window with the
-   same target and session is reused.
+3. The GUI connects every pane of the destination that refers to a felis
+   session and waits until each has connected, failed or ended. A pane
+   already open in this window with the same target and session is reused.
+   A pane without a session, such as the first pane of a new workspace,
+   starts its shell only after the switch commits, so a cancelled switch
+   never leaves a shell behind.
 4. Only then does the switch commit and the source lease end. A pane whose
    session ended or was detached leaves the destination layout. A pane that
    failed to connect, for example because its felis session no longer exists
    or its felis daemon is unreachable, stays in the layout and shows its
    error, as it would at startup; closing it removes it.
 
-If the daemon refuses a step, or no destination pane connects, the
-reservation is cancelled and the window keeps its current workspace.
+If the daemon refuses a step, or no destination pane connects and none is
+waiting to start a shell, the reservation is cancelled and the window keeps its current workspace.
 Interrupting a CLI that requested the switch does not cancel it.
 
 ## Closing panes and tabs

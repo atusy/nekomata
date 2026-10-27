@@ -77,7 +77,8 @@ impl<P> Switch<P> {
         }
     }
 
-    /// The daemon reserved `id`; `connect` opens the panes of its `snapshot`.
+    /// The daemon reserved `id`; `connect` opens the panes of its `snapshot`
+    /// that attach an existing felis session.
     pub fn prepared(
         &mut self,
         id: u64,
@@ -88,6 +89,9 @@ impl<P> Switch<P> {
             let panes = snapshot
                 .panes
                 .iter()
+                // A fresh shell starts only after the commit, so a cancelled
+                // switch never leaves one running unseen.
+                .filter(|(_, spec)| spec.session.is_some())
                 .map(|(&id, spec)| (id, connect(id, spec)))
                 .collect();
             self.phase = Phase::Connecting {
@@ -106,7 +110,8 @@ impl<P> Switch<P> {
 
     /// Commits once every destination pane has connected, failed or ended.
     /// Panes whose session ended leave the layout; failed panes stay and show
-    /// their error. A destination with no connected pane is cancelled.
+    /// their error. A destination with neither a connected pane nor a pane
+    /// for a fresh shell is cancelled.
     pub fn poll(&mut self, status: impl Fn(&P) -> PaneStatus, reply_closed: bool) -> Poll {
         let error = match &mut self.phase {
             Phase::Connecting {
@@ -130,7 +135,8 @@ impl<P> Switch<P> {
                             PaneStatus::Ended => ended.push(id),
                         }
                     }
-                    if sessions.is_empty() {
+                    let fresh = snapshot.panes.len() > panes.len();
+                    if sessions.is_empty() && !fresh {
                         failure.unwrap_or_else(|| "destination session ended".into())
                     } else {
                         for id in ended {
@@ -432,6 +438,26 @@ mod tests {
         assert_eq!(switch.poll(status, false), Poll::Finish(None));
         switch.finish_sent();
         assert_eq!(failure(switch), "destination session ended");
+    }
+
+    #[test]
+    fn fresh_shells_are_not_started_before_the_commit() {
+        let (mut switch, panes) = connecting(&[Some(A), None]);
+        assert_eq!(panes.keys().copied().collect::<Vec<_>>(), [1]);
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        let snapshot = finish(&mut switch);
+        assert_eq!(snapshot.panes[&2].session, None);
+        let Step::Committed { panes, .. } = switch.finished(Ok(())) else {
+            panic!("expected a committed switch")
+        };
+        assert_eq!(panes.keys().copied().collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn a_new_workspace_commits_without_waiting_for_a_shell() {
+        let (mut switch, panes) = connecting(&[None]);
+        assert!(panes.is_empty());
+        finish(&mut switch);
     }
 
     #[test]

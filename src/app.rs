@@ -405,11 +405,25 @@ impl App {
                             reply,
                         } => {
                             self.panes = panes;
+                            self.workspace_id = Some(id);
+                            for (pane_id, spec) in snapshot.panes {
+                                if !self.panes.contains_key(&pane_id) {
+                                    let pane = Pane::connect(
+                                        &self.runtime,
+                                        ctx,
+                                        self.control.window,
+                                        Some(id),
+                                        pane_id,
+                                        spec,
+                                        None,
+                                    );
+                                    self.panes.insert(pane_id, pane);
+                                }
+                            }
                             self.tabs = snapshot.tabs;
                             self.active = snapshot.active;
                             self.next_id = snapshot.next_id;
                             self.font_size = snapshot.font_size;
-                            self.workspace_id = Some(id);
                             self.last_snapshot = None;
                             self.workspace_error = None;
                             if let Some(reply) = reply {
@@ -2794,6 +2808,8 @@ mod tests {
         let other = replacement.workspace_id.unwrap();
         assert_ne!(Some(other), workspace_id);
         assert_eq!(replacement.panes.len(), 1);
+        // A new workspace's shell starts only once the switch has committed.
+        pump(&mut replacement, &connected);
         let other_shell = replacement
             .panes
             .values()
@@ -2879,6 +2895,7 @@ mod tests {
         // cancellation acknowledgement as its own commit.
         let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
+        pump(&mut replacement, &connected);
         let third_shell = replacement
             .panes
             .values()
