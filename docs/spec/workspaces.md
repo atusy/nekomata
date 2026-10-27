@@ -46,7 +46,7 @@ size (see [configuration](configuration.md#font-size-precedence)).
 
 ## Switching
 
-`New workspace` and `Switch workspace…` replace the window's workspace.
+`Workspace: Create` and `Workspace: Switch…` replace the window's workspace.
 
 1. The daemon must first accept the current workspace's snapshot.
 2. The destination is reserved while the source lease is still held.
