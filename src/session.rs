@@ -1410,20 +1410,18 @@ mod tests {
             .build()
             .unwrap();
         let queue = InputQueue::default();
-        // The second focus report replaces the first in place, so the
-        // entries must stay aligned with the frames around it.
-        queue
-            .push(&InputMsg::FocusChange { focused: true })
-            .unwrap();
+        // The second focus report replaces the first in place: an entry
+        // recorded for it would pair the key with the wrong flag.
+        for focused in [true, false] {
+            queue.push(&InputMsg::FocusChange { focused }).unwrap();
+        }
         queue.push(&InputMsg::KeyBytes(b"x".to_vec())).unwrap();
-        queue
-            .push(&InputMsg::FocusChange { focused: false })
-            .unwrap();
         queue.push(&InputMsg::NextGridFrame).unwrap();
         let (_, focus) = runtime.block_on(queue.next());
         let (_, key) = runtime.block_on(queue.next());
         let (_, frame) = runtime.block_on(queue.next());
         assert_eq!((focus, key, frame), (false, true, false));
+        assert!(queue.pending.lock().unwrap().shell_input.is_empty());
         assert!(queue.pending.lock().unwrap().frames.is_empty());
     }
 
