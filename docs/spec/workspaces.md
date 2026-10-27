@@ -58,7 +58,8 @@ size (see [configuration](configuration.md#font-size-precedence)).
 - Closing a window saves its layout and detaches the workspace, waiting up to
   6 seconds for the daemon to acknowledge. If saving fails or times out, the
   GUI reports it on standard error and exits anyway. A window closed during a
-  workspace switch detaches without saving.
+  workspace switch detaches without saving; one closed while it has lost the
+  daemon exits without saving.
 - After a GUI crash, the workspace restores up to the last snapshot the daemon
   received.
 
@@ -99,8 +100,27 @@ saved like any other layout change.
 ## Losing the nekomata daemon
 
 If the window cannot attach a workspace at startup, it shows the error and a
-button to retry. Once attached, a window does not reconnect after losing its
-connection to the nekomata daemon.
+button to retry.
+
+A window that loses its connection to the nekomata daemon after attaching
+notices even while idle, keeps its tabs, panes and shells, and shows the
+error with a button to reconnect at once. Until it reconnects, layout changes
+reach no daemon. It reconnects on its own after 1 second, doubling the delay
+after each failed attempt up to 30 seconds, and starts the daemon if none is
+running. It does not reconnect on its own while a switch is pending or after
+the daemon refuses it, for example for an incompatible protocol version.
+
+On reconnecting, the window attaches a workspace and saves its current layout
+there:
+
+- When the workspace the daemon offers is new, or still holds exactly the
+  layout this window last sent under the same ID, the window takes it.
+- Otherwise the window leaves that workspace untouched and takes a new one.
+
+The workspace ID may therefore change. Shells started before the change keep
+exporting the old ID in `NEKOMATA_WORKSPACE_ID`, so CLI commands run from
+them may fail or, on a restarted daemon that reused the ID, reach another
+window; pass `--window` there. Shells started afterwards carry the new ID.
 
 ## CLI
 

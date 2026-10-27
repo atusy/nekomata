@@ -21,6 +21,7 @@ pub const CLOSE_DEADLINE: Duration = Duration::from_secs(6);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     Open,
+    Resume,
     Disconnected,
     Save,
     List,
@@ -78,48 +79,165 @@ pub struct Client {
     task: tokio::task::JoinHandle<()>,
 }
 
-impl Client {
-    pub fn start(runtime: &tokio::runtime::Runtime, ctx: egui::Context, window: u32) -> Self {
-        Self::launch(runtime.handle(), ctx, window, daemon::connect())
+/// When a window that lost the daemon tries to reach it again: after 1 s,
+/// doubling up to 30 s while attempts keep failing.
+#[derive(Debug, Default)]
+pub struct Backoff {
+    failures: u32,
+    due: Option<std::time::Instant>,
+}
+
+impl Backoff {
+    const MAX: Duration = Duration::from_secs(30);
+
+    /// Schedules the next attempt after another failure and returns its delay.
+    pub fn schedule(&mut self, now: std::time::Instant) -> Duration {
+        let delay = Duration::from_secs(1 << self.failures.min(5)).min(Self::MAX);
+        self.failures += 1;
+        self.due = Some(now + delay);
+        delay
     }
 
-    fn launch(
+    pub fn retry_now(&mut self) {
+        self.due = Some(std::time::Instant::now());
+    }
+
+    /// Whether an attempt is due at `now`; it is then no longer scheduled.
+    pub fn take_due(&mut self, now: std::time::Instant) -> bool {
+        let due = self.due.is_some_and(|due| due <= now);
+        if due {
+            self.due = None;
+        }
+        due
+    }
+}
+
+/// What a window that lost the daemon needs to lease its workspace again.
+#[derive(Debug, Clone)]
+pub struct Resume {
+    /// The workspace the window held before the connection was lost.
+    pub previous: u64,
+    /// The last snapshot the window sent for it.
+    pub sent: Option<Snapshot>,
+    /// The window's layout now, which the resumed workspace takes.
+    pub current: Snapshot,
+}
+
+/// Whether the workspace a fresh `Open` claimed may take the window's
+/// layout: one without tabs is new, and one still holding exactly what this
+/// window last sent under its ID is the window's own. Any other is somebody
+/// else's retained layout, which must not be overwritten.
+fn reclaimable(resume: &Resume, id: u64, retained: &Snapshot) -> bool {
+    retained.tabs.is_empty() || (id == resume.previous && resume.sent.as_ref() == Some(retained))
+}
+
+async fn resume(stream: &mut UnixStream, window: u32, resume: Resume) -> Result<Payload> {
+    let Payload::Workspace { id, snapshot } =
+        daemon::exchange(stream, Request::Open { window }).await?
+    else {
+        anyhow::bail!("unexpected nekomata daemon reply");
+    };
+    let id = if reclaimable(&resume, id, &snapshot) {
+        daemon::exchange(stream, Request::Save(resume.current.clone())).await?;
+        id
+    } else {
+        let Payload::Workspace { id, .. } =
+            daemon::exchange(stream, Request::Prepare(daemon::Selection::New)).await?
+        else {
+            anyhow::bail!("unexpected nekomata daemon reply");
+        };
+        daemon::exchange(
+            stream,
+            Request::Finish {
+                snapshot: Some(resume.current.clone()),
+            },
+        )
+        .await?;
+        id
+    };
+    Ok(Payload::Workspace {
+        id,
+        snapshot: resume.current,
+    })
+}
+
+impl Client {
+    pub fn start(runtime: &tokio::runtime::Runtime, ctx: egui::Context, window: u32) -> Self {
+        Self::open_with(runtime.handle(), ctx, window, daemon::connect())
+    }
+
+    /// Leases a workspace for a window that lost its daemon connection,
+    /// starting the daemon if needed, and gives it the window's layout.
+    pub fn resume(
+        runtime: &tokio::runtime::Runtime,
+        ctx: egui::Context,
+        window: u32,
+        state: Resume,
+    ) -> Self {
+        Self::resume_with(runtime.handle(), ctx, window, state, daemon::connect())
+    }
+
+    fn open_with(
         runtime: &tokio::runtime::Handle,
         ctx: egui::Context,
         window: u32,
         connect: impl Future<Output = Result<UnixStream>> + Send + 'static,
     ) -> Self {
-        let (tx, commands) = mpsc::channel(16);
-        let (events_tx, events) = mpsc::unbounded_channel();
-        let task = runtime.spawn(async move {
+        Self::launch(runtime, ctx, async move {
             let opened = async {
                 let mut stream = connect.await?;
                 let payload = daemon::exchange(&mut stream, Request::Open { window }).await?;
                 Ok::<_, anyhow::Error>((stream, payload))
             }
             .await;
-            let (stream, payload) = match opened {
-                Ok(opened) => opened,
-                Err(error) => {
-                    let _ = events_tx.send(Event {
-                        operation: Operation::Open,
-                        result: Err(format!("{error:#}")),
-                    });
-                    ctx.request_repaint();
-                    return;
-                }
-            };
-            if events_tx
-                .send(Event {
-                    operation: Operation::Open,
-                    result: Ok(payload),
-                })
-                .is_err()
-            {
-                return;
+            match opened {
+                Ok((stream, payload)) => (Some(stream), Operation::Open, Ok(payload)),
+                Err(error) => (None, Operation::Open, Err(format!("{error:#}"))),
             }
+        })
+    }
+
+    fn resume_with(
+        runtime: &tokio::runtime::Handle,
+        ctx: egui::Context,
+        window: u32,
+        state: Resume,
+        connect: impl Future<Output = Result<UnixStream>> + Send + 'static,
+    ) -> Self {
+        Self::launch(runtime, ctx, async move {
+            let resumed = async {
+                let mut stream = connect.await?;
+                let payload = resume(&mut stream, window, state).await?;
+                Ok::<_, anyhow::Error>((stream, payload))
+            }
+            .await;
+            match resumed {
+                Ok((stream, payload)) => (Some(stream), Operation::Resume, Ok(payload)),
+                // A refusal will not change by itself; a lost or absent daemon may.
+                Err(error) if error.downcast_ref::<daemon::Rejection>().is_some() => {
+                    (None, Operation::Resume, Err(format!("{error:#}")))
+                }
+                Err(error) => (None, Operation::Disconnected, Err(format!("{error:#}"))),
+            }
+        })
+    }
+
+    fn launch(
+        runtime: &tokio::runtime::Handle,
+        ctx: egui::Context,
+        open: impl Future<Output = (Option<UnixStream>, Operation, Result<Payload, String>)>
+        + Send
+        + 'static,
+    ) -> Self {
+        let (tx, commands) = mpsc::channel(16);
+        let (events_tx, events) = mpsc::unbounded_channel();
+        let task = runtime.spawn(async move {
+            let (stream, operation, result) = open.await;
+            let sent = events_tx.send(Event { operation, result }).is_ok();
             ctx.request_repaint();
-            serve(stream, commands, events_tx, ctx).await;
+            if let (Some(stream), true) = (stream, sent) {
+                serve(stream, commands, events_tx, ctx).await;
+            }
         });
         Self { tx, events, task }
     }
@@ -182,7 +300,27 @@ async fn serve(
     events: mpsc::UnboundedSender<Event>,
     ctx: egui::Context,
 ) {
-    while let Some(message) = commands.recv().await {
+    loop {
+        let message = tokio::select! {
+            message = commands.recv() => match message {
+                Some(message) => message,
+                None => return,
+            },
+            // The daemon only ever answers, so anything readable while no
+            // request is outstanding is the connection ending.
+            _ = stream.readable() => {
+                let mut byte = [0; 1];
+                match stream.try_read(&mut byte) {
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+                    Ok(0) => {
+                        disconnected(&events, &ctx, "nekomata daemon closed the connection".into());
+                    }
+                    Ok(_) => disconnected(&events, &ctx, "unexpected nekomata daemon message".into()),
+                    Err(error) => disconnected(&events, &ctx, format!("{error:#}")),
+                }
+                return;
+            }
+        };
         let (operation, result) = match message {
             Message::Command(command) => (
                 command.operation(),
@@ -227,6 +365,14 @@ async fn serve(
     }
 }
 
+fn disconnected(events: &mpsc::UnboundedSender<Event>, ctx: &egui::Context, error: String) {
+    let _ = events.send(Event {
+        operation: Operation::Disconnected,
+        result: Err(error),
+    });
+    ctx.request_repaint();
+}
+
 async fn close(stream: &mut UnixStream, snapshot: Option<Snapshot>) -> Result<(), String> {
     if let Some(snapshot) = snapshot {
         daemon::exchange(stream, Request::Save(snapshot))
@@ -262,7 +408,7 @@ mod tests {
     /// A client whose Open the fake daemon has already answered.
     async fn opened() -> (Client, UnixStream) {
         let (client, mut daemon) = UnixStream::pair().unwrap();
-        let mut client = Client::launch(
+        let mut client = Client::open_with(
             &tokio::runtime::Handle::current(),
             egui::Context::default(),
             7,
@@ -283,6 +429,20 @@ mod tests {
         let event = client.events.recv().await.unwrap();
         assert_eq!(event.operation, Operation::Open);
         (client, daemon)
+    }
+
+    #[test]
+    fn reconnect_attempts_back_off_up_to_thirty_seconds() {
+        let now = std::time::Instant::now();
+        let mut backoff = Backoff::default();
+        assert!(!backoff.take_due(now));
+        let delays: Vec<_> = (0..8).map(|_| backoff.schedule(now).as_secs()).collect();
+        assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30]);
+        assert!(!backoff.take_due(now));
+        assert!(backoff.take_due(now + Duration::from_secs(30)));
+        assert!(!backoff.take_due(now + Duration::from_secs(30)), "once");
+        backoff.retry_now();
+        assert!(backoff.take_due(std::time::Instant::now()));
     }
 
     #[tokio::test]
@@ -309,6 +469,18 @@ mod tests {
         assert!(event.result.is_err());
         assert!(client.events.recv().await.is_none());
         assert!(client.is_closed());
+    }
+
+    #[tokio::test]
+    async fn a_daemon_lost_while_idle_is_noticed_without_a_command() {
+        let (mut client, daemon) = opened().await;
+        drop(daemon);
+        let event = tokio::time::timeout(Duration::from_secs(5), client.events.recv())
+            .await
+            .expect("the loss is reported while no command is pending")
+            .unwrap();
+        assert_eq!(event.operation, Operation::Disconnected);
+        assert!(client.events.recv().await.is_none());
     }
 
     #[tokio::test]
@@ -388,5 +560,170 @@ mod tests {
             .await
             .unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(1), "{error:#}");
+    }
+
+    /// A layout with one tab, unlike the empty one a new workspace has.
+    fn layout() -> Snapshot {
+        let mut snapshot = Snapshot::default();
+        crate::workspace_switch::add_first_tab(
+            &mut snapshot,
+            14.0,
+            crate::session::Target::Local("/felis.sock".into()),
+        );
+        snapshot
+    }
+
+    fn resuming(state: Resume) -> (Client, UnixStream) {
+        let (client, daemon) = UnixStream::pair().unwrap();
+        let client = Client::resume_with(
+            &tokio::runtime::Handle::current(),
+            egui::Context::default(),
+            7,
+            state,
+            async move { Ok(client) },
+        );
+        (client, daemon)
+    }
+
+    async fn resumed(client: &mut Client) -> u64 {
+        let event = client.events.recv().await.unwrap();
+        assert_eq!(event.operation, Operation::Resume);
+        let Ok(Payload::Workspace { id, .. }) = event.result else {
+            panic!("expected a resumed workspace: {:?}", event.result.err())
+        };
+        id
+    }
+
+    #[tokio::test]
+    async fn resuming_fills_a_new_workspace_with_the_current_layout() {
+        let current = layout();
+        let (mut client, mut daemon) = resuming(Resume {
+            previous: 3,
+            sent: None,
+            current: current.clone(),
+        });
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Open { window: 7 })
+        ));
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 1,
+                snapshot: Snapshot::default(),
+            }),
+        )
+        .await;
+        let Some(Request::Save(saved)) = receive(&mut daemon).await else {
+            panic!("expected the layout to be saved")
+        };
+        assert_eq!(saved, current);
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert_eq!(resumed(&mut client).await, 1);
+        // The resumed connection carries later commands.
+        client.send(Command::List).unwrap();
+        assert!(matches!(receive(&mut daemon).await, Some(Request::List)));
+    }
+
+    #[tokio::test]
+    async fn resuming_reclaims_the_windows_own_retained_workspace() {
+        let sent = layout();
+        let mut current = sent.clone();
+        current.font_size += 1.0;
+        let (mut client, mut daemon) = resuming(Resume {
+            previous: 3,
+            sent: Some(sent.clone()),
+            current: current.clone(),
+        });
+        receive(&mut daemon).await.unwrap();
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 3,
+                snapshot: sent,
+            }),
+        )
+        .await;
+        let Some(Request::Save(saved)) = receive(&mut daemon).await else {
+            panic!("expected the layout to be saved")
+        };
+        assert_eq!(saved, current);
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert_eq!(resumed(&mut client).await, 3);
+    }
+
+    #[tokio::test]
+    async fn resuming_never_overwrites_another_retained_workspace() {
+        let current = layout();
+        let (mut client, mut daemon) = resuming(Resume {
+            previous: 3,
+            sent: Some(current.clone()),
+            current: current.clone(),
+        });
+        receive(&mut daemon).await.unwrap();
+        let mut other = layout();
+        other.font_size += 2.0;
+        // Same ID, different layout: a restarted daemon's workspace.
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 3,
+                snapshot: other,
+            }),
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Prepare(daemon::Selection::New))
+        ));
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 4,
+                snapshot: Snapshot::default(),
+            }),
+        )
+        .await;
+        let Some(Request::Finish {
+            snapshot: Some(saved),
+        }) = receive(&mut daemon).await
+        else {
+            panic!("expected the layout to commit into the new workspace")
+        };
+        assert_eq!(saved, current);
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert_eq!(resumed(&mut client).await, 4);
+    }
+
+    #[tokio::test]
+    async fn resuming_without_a_daemon_reports_disconnection() {
+        let mut client = Client::resume_with(
+            &tokio::runtime::Handle::current(),
+            egui::Context::default(),
+            7,
+            Resume {
+                previous: 3,
+                sent: None,
+                current: layout(),
+            },
+            async { Err(anyhow!("no daemon")) },
+        );
+        let event = client.events.recv().await.unwrap();
+        assert_eq!(event.operation, Operation::Disconnected);
+        assert!(client.events.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_refused_resume_is_not_a_disconnection() {
+        let (mut client, mut daemon) = resuming(Resume {
+            previous: 3,
+            sent: None,
+            current: layout(),
+        });
+        receive(&mut daemon).await.unwrap();
+        respond(&mut daemon, Err("incompatible nekomata protocol".into())).await;
+        let event = client.events.recv().await.unwrap();
+        assert_eq!(event.operation, Operation::Resume);
+        assert!(event.result.is_err());
     }
 }

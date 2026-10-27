@@ -158,6 +158,7 @@ pub struct App {
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch<Pane>>,
+    reconnect: crate::workspace_client::Backoff,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
@@ -222,6 +223,7 @@ impl App {
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
+            reconnect: Default::default(),
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
@@ -438,7 +440,7 @@ impl App {
                         }
                     }
                 }
-                (Operation::Prepare | Operation::Disconnected, Err(error)) => {
+                (operation @ (Operation::Prepare | Operation::Disconnected), Err(error)) => {
                     if let Some(reply) = self
                         .pending_workspace
                         .take()
@@ -446,7 +448,24 @@ impl App {
                     {
                         let _ = reply.send(Err(error.clone()));
                     }
-                    self.workspace_error = Some(error);
+                    if operation == Operation::Disconnected && self.workspace_id.is_some() {
+                        let delay = self.reconnect.schedule(std::time::Instant::now());
+                        self.workspace_error = Some(format!(
+                            "Lost the nekomata daemon: {error}. Reconnecting in {} s…",
+                            delay.as_secs()
+                        ));
+                    } else {
+                        self.workspace_error = Some(error);
+                    }
+                }
+                (Operation::Resume, Ok(Payload::Workspace { id, snapshot })) => {
+                    self.workspace_id = Some(id);
+                    self.last_snapshot = Some(snapshot);
+                    self.workspace_error = None;
+                    self.reconnect = Default::default();
+                }
+                (Operation::Resume, Err(error)) => {
+                    self.workspace_error = Some(format!("Could not resume the workspace: {error}"));
                 }
                 (_, Err(error)) => self.workspace_error = Some(error),
                 _ => {}
@@ -589,6 +608,39 @@ impl App {
         if let Some(workspace) = selected {
             self.begin_workspace(workspace, None);
         }
+    }
+
+    /// Whether the window holds a workspace but no daemon connection.
+    fn daemon_lost(&self) -> bool {
+        self.workspace_id.is_some()
+            && self
+                .workspace
+                .as_ref()
+                .is_none_or(WorkspaceClient::is_closed)
+    }
+
+    /// Re-leases a workspace with the current layout once the reconnect
+    /// delay after losing the daemon has passed.
+    fn resume_workspace(&mut self, ctx: &egui::Context) {
+        if !self.daemon_lost()
+            || self.pending_workspace.is_some()
+            || !self.reconnect.take_due(std::time::Instant::now())
+        {
+            return;
+        }
+        let Some(previous) = self.workspace_id else {
+            return;
+        };
+        self.workspace = Some(WorkspaceClient::resume(
+            &self.runtime,
+            ctx.clone(),
+            self.control.window,
+            crate::workspace_client::Resume {
+                previous,
+                sent: self.last_snapshot.clone(),
+                current: self.snapshot(),
+            },
+        ));
     }
 
     fn save_workspace(&mut self, ctx: &egui::Context) {
@@ -1127,6 +1179,7 @@ impl App {
         let ctx = &context;
         self.workspace_events(ctx);
         self.poll_workspace();
+        self.resume_workspace(ctx);
         if self.workspace.is_some() && self.workspace_id.is_none() {
             egui::CentralPanel::default().show(root_ui, |ui| {
                 if let Some(error) = &self.workspace_error {
@@ -1148,8 +1201,14 @@ impl App {
         }
         self.control_requests(ctx);
         if let Some(error) = &self.workspace_error {
+            let lost = self.daemon_lost();
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    if lost && ui.button("Reconnect now").clicked() {
+                        self.reconnect.retry_now();
+                    }
+                });
             });
         }
         for pane in self.panes.values() {
@@ -2997,6 +3056,144 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
+    fn live_window_recovers_its_layout_after_the_nekomata_daemon_dies() {
+        use std::{sync::mpsc, time::Instant};
+        crate::test_support::private_runtime_dir();
+        crate::test_support::private_felis_socket();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(25);
+            while !done(app) {
+                let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
+                app.workspace_events(&ctx);
+                app.poll_workspace();
+                app.resume_workspace(&ctx);
+                app.control_requests(&ctx);
+                app.save_workspace();
+                assert!(
+                    Instant::now() < deadline,
+                    "daemon recovery test timed out: {:?}",
+                    app.workspace_error
+                );
+                let _ = repaints.recv_timeout(Duration::from_millis(50));
+            }
+        };
+        let connected = |app: &App| {
+            !app.panes.is_empty()
+                && app
+                    .panes
+                    .values()
+                    .all(|p| p.session.state.lock().unwrap().connected)
+        };
+        let mut app = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
+        // Start from a workspace of one fresh pane, whatever earlier tests
+        // left in the daemon.
+        pump(&mut app, &|app| app.workspace_id.is_some());
+        app.begin_workspace(None, None);
+        pump(&mut app, &|app| {
+            app.pending_workspace.is_none() && connected(app)
+        });
+        assert_eq!(app.tabs.len(), 1, "{:?}", app.workspace_error);
+        let shell = app.panes.values().next().unwrap().session.clone();
+        // The test binary cannot start a daemon itself; the real one can.
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        // Only the isolated daemon behind NEKOMATA_RUNTIME_DIR is killed.
+        let pid = app.runtime.block_on(async {
+            let stream = tokio::net::UnixStream::connect(daemon::socket().unwrap())
+                .await
+                .unwrap();
+            stream.peer_cred().unwrap().pid().unwrap()
+        });
+        let killed = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        // The window notices while idle and reports it.
+        pump(&mut app, &|app| {
+            app.daemon_lost() && app.workspace_error.is_some()
+        });
+        app.action(&ctx, Action::NewTab);
+        let started = std::process::Command::new(&executable)
+            .args(["workspaces", "list"])
+            .output()
+            .unwrap();
+        assert!(started.status.success(), "{started:?}");
+        app.reconnect.retry_now();
+        pump(&mut app, &|app| {
+            !app.daemon_lost() && app.workspace_error.is_none() && connected(app)
+        });
+        assert!(
+            Arc::ptr_eq(&app.panes.values().next().unwrap().session, &shell),
+            "recovery keeps the window's shells"
+        );
+        let id = app.workspace_id.unwrap();
+        let summary = |app: &App| {
+            app.runtime.block_on(async {
+                let mut client = daemon::connect().await.unwrap();
+                let Payload::Workspaces(workspaces) =
+                    daemon::exchange(&mut client, daemon::Request::List)
+                        .await
+                        .unwrap()
+                else {
+                    panic!("expected workspaces")
+                };
+                workspaces.into_iter().find(|w| w.id == id).unwrap()
+            })
+        };
+        let resumed = summary(&app);
+        assert_eq!(resumed.window, Some(app.control.window));
+        assert_eq!(resumed.tabs, 2, "the layout made while disconnected");
+        // Later layout changes keep reaching the new daemon.
+        app.action(&ctx, Action::NewTab);
+        pump(&mut app, &connected);
+        pump(&mut app, &|app| {
+            app.last_snapshot.as_ref() == Some(&app.snapshot())
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while summary(&app).tabs != 3 {
+            assert!(Instant::now() < deadline, "later layout was not saved");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let ids: Vec<_> = app
+            .panes
+            .values()
+            .map(|p| p.session.state.lock().unwrap().session_id.unwrap())
+            .collect();
+        drop(shell);
+        eframe::App::on_exit(&mut app);
+        drop(app);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(
+                std::path::PathBuf::from(crate::test_support::private_felis_socket()),
+                felis_client_core::Offer::ops(),
+            )
+            .await
+            .unwrap();
+            for id in ids {
+                ops.destroy_session(format!("{id:032x}")).await.unwrap();
+            }
+        });
+    }
+
+    #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_pane_attach_routes_cli_and_preserves_sessions_on_failure() {
         use felis_client_core::Offer;
@@ -3036,6 +3233,7 @@ mod tests {
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
+            reconnect: Default::default(),
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
