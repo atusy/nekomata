@@ -136,8 +136,8 @@ struct Registry {
     clock: u64,
     /// Distinguishes this daemon from earlier ones, whose IDs restarted at 1.
     instance: String,
-    /// Set under the lock by an accepted Stop, so no window attaches between
-    /// the owner check and the daemon exiting.
+    /// Set under the lock by an accepted Stop, so no window opens between the
+    /// owner check and the daemon exiting.
     stopping: bool,
 }
 
@@ -516,7 +516,8 @@ fn handle(
             Ok(Payload::Done)
         }
         Request::Prepare(selection) => {
-            ensure!(!registry.stopping, "nekomata daemon is stopping");
+            // No stopping check: a window with a workspace holds a lease, so
+            // Stop is refused while one can prepare a switch.
             ensure!(pending.is_none(), "workspace switch already in progress");
             let id =
                 registry.claim(owner, window.context("window has no workspace")?, selection)?;
