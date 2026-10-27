@@ -85,9 +85,10 @@ A CLI command targets a window as follows:
    [runtime directory](#runtime-directory).
 
 Because resolution goes through the workspace ID, a shell keeps reaching its
-window after the GUI restarts, but not after the nekomata daemon restarts. A shell carries the IDs it was started with,
-so a shell moved to another workspace by hand still targets its original
-workspace's window; pass `--window` there.
+window after the GUI restarts, but not after the nekomata daemon restarts. A
+shell carries the IDs it was started with, so a shell moved to another
+workspace by hand still targets its original workspace's window; pass
+`--window` there.
 
 A window that has not yet attached a workspace, because it is still
 connecting to the nekomata daemon or failed to, answers every command at once
