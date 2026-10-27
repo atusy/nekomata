@@ -871,6 +871,21 @@ impl App {
         }
     }
 
+    fn input_blocked(&self, ctx: &egui::Context) -> bool {
+        blocks_input(
+            ctx,
+            InputBlockers {
+                overlay: self.picker.visible
+                    || self.palette
+                    || self.font_size_open
+                    || self.workspaces_open,
+                searching: self.searching(),
+                paste_pending: self.panes.values().any(|pane| pane.pending_paste.is_some()),
+                switching: self.pending_workspace.is_some(),
+            },
+        )
+    }
+
     fn searching(&self) -> bool {
         self.window
             .focused()
@@ -1292,14 +1307,7 @@ impl App {
         let paste_pending = self.panes.values().any(|pane| pane.pending_paste.is_some());
         let mut action = None;
         // Consume application shortcuts before forwarding terminal events.
-        if !paste_pending
-            && !self.picker.visible
-            && !self.palette
-            && !self.font_size_open
-            && !self.workspaces_open
-            && !self.searching()
-            && self.pending_workspace.is_none()
-        {
+        if !self.input_blocked(ctx) {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
             for action in actions {
                 self.action(ctx, action);
@@ -1308,15 +1316,7 @@ impl App {
                 }
             }
         }
-        if !paste_pending
-            && !self.picker.visible
-            && !self.palette
-            && !self.font_size_open
-            && !self.workspaces_open
-            && !self.searching()
-            && self.pending_workspace.is_none()
-            && !egui::Popup::is_any_open(ctx)
-        {
+        if !self.input_blocked(ctx) {
             focus_terminal(ctx);
         }
         let tabs = egui::Panel::top("tabs")
@@ -1443,13 +1443,7 @@ impl App {
         if self.window.tabs.is_empty() {
             return;
         }
-        let modal = paste_pending
-            || self.searching()
-            || self.picker.visible
-            || self.palette
-            || self.font_size_open
-            || self.workspaces_open
-            || self.pending_workspace.is_some();
+        let modal = self.input_blocked(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(root_ui, |ui| {
@@ -1759,6 +1753,28 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
         }
     }
     response.on_hover_text(label)
+}
+
+/// What keeps keys from both keymaps and the terminal.
+#[derive(Clone, Copy, Default)]
+struct InputBlockers {
+    /// A window-level overlay: the palette, a dialog or a picker.
+    overlay: bool,
+    /// The focused pane's search field.
+    searching: bool,
+    paste_pending: bool,
+    switching: bool,
+}
+
+/// An open popup menu owns the keyboard as well, so it blocks input too.
+fn blocks_input(ctx: &egui::Context, blockers: InputBlockers) -> bool {
+    let InputBlockers {
+        overlay,
+        searching,
+        paste_pending,
+        switching,
+    } = blockers;
+    overlay || searching || paste_pending || switching || egui::Popup::is_any_open(ctx)
 }
 
 /// The search field draws before the palette and the font size control, so
@@ -3798,6 +3814,42 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn input_is_blocked_by_any_blocker_or_open_popup() {
+        let ctx = egui::Context::default();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
+        assert!(!blocks_input(&ctx, InputBlockers::default()));
+        for blockers in [
+            InputBlockers {
+                overlay: true,
+                ..Default::default()
+            },
+            InputBlockers {
+                searching: true,
+                ..Default::default()
+            },
+            InputBlockers {
+                paste_pending: true,
+                ..Default::default()
+            },
+            InputBlockers {
+                switching: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(blocks_input(&ctx, blockers));
+        }
+        let popup = egui::Id::unique("popup");
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
+            egui::CentralPanel::default().show(root_ui, |ui| {
+                let response = ui.button("Options");
+                egui::Popup::open_id(ui.ctx(), popup);
+                egui::Popup::menu(&response).id(popup).show(|_| {});
+            });
+        });
+        assert!(blocks_input(&ctx, InputBlockers::default()));
     }
 
     #[test]
