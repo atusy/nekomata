@@ -98,18 +98,15 @@ impl Pane {
         let state = self.session.state.lock().unwrap();
         PaneSpec {
             target: self.session.target.clone(),
-            session: state
-                .session_id
-                .map(|id| format!("{id:032x}"))
-                // An attach by prefix names no session until felis resolves
-                // it; recording the prefix would make the daemon reject every
-                // snapshot while it is pending or after it fails.
-                .or_else(|| {
-                    self.session
-                        .attachment
-                        .clone()
-                        .filter(|id| id.len() == 32 && u128::from_str_radix(id, 16).is_ok())
-                }),
+            // An attach by prefix names no session until felis resolves it;
+            // recording the prefix would make the daemon reject every
+            // snapshot while it is pending or after it fails.
+            session: state.session_id.or_else(|| {
+                self.session
+                    .attachment
+                    .as_deref()
+                    .and_then(|id| id.parse().ok())
+            }),
         }
     }
 
@@ -159,13 +156,15 @@ impl Pane {
         self.search_focus = true;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn connect(
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
         window: u32,
         workspace: Option<(u64, Option<&str>)>,
         id: u64,
-        spec: PaneSpec,
+        target: Target,
+        attach: Option<String>,
         cwd: Option<String>,
     ) -> Self {
         let mut env = vec![
@@ -181,8 +180,8 @@ impl Pane {
         Self::from_session(Arc::new(Session::start(
             runtime,
             ctx.clone(),
-            spec.target,
-            spec.session,
+            target,
+            attach,
             cwd,
             env,
         )))
@@ -327,7 +326,8 @@ impl App {
                     self.control.window,
                     self.workspace(),
                     id,
-                    spec,
+                    spec.target,
+                    spec.session.map(|id| id.to_string()),
                     None,
                 ),
             );
@@ -408,7 +408,7 @@ impl App {
                             current.values().find(|pane| {
                                 let state = pane.session.state.lock().unwrap();
                                 pane.session.target == spec.target
-                                    && state.session_id.map(|i| format!("{i:032x}")).as_ref()
+                                    && state.session_id.as_ref()
                                         == Some(session)
                             })
                         });
@@ -737,10 +737,8 @@ impl App {
                 self.control.window,
                 self.workspace(),
                 id,
-                PaneSpec {
-                    target,
-                    session: attach,
-                },
+                target,
+                attach,
                 cwd,
             ),
         );
@@ -787,7 +785,7 @@ impl App {
                         let state = pane.session.state.lock().unwrap();
                         let session = state
                             .session_id
-                            .map(|id| format!("{id:032x}"))
+                            .map(|id| id.to_string())
                             .unwrap_or_else(|| "connecting".into());
                         output.push_str(&format!(
                             "{id}\t{}\t{}\t{session}\n",
@@ -2475,7 +2473,7 @@ mod tests {
         {
             let mut state = session.state.lock().unwrap();
             state.connected = true;
-            state.session_id = Some(1);
+            state.session_id = Some(crate::session::SessionId(1));
         }
         let mut pane = Pane::from_session(session);
         pane.search_query = "needle".into();
@@ -2711,7 +2709,7 @@ mod tests {
         snapshot(&prefix).validate().unwrap();
         let full = format!("{:032x}", 7);
         let exact = pane(&full);
-        assert_eq!(exact.spec().session, Some(full));
+        assert_eq!(exact.spec().session, Some(crate::session::SessionId(7)));
         snapshot(&exact).validate().unwrap();
     }
 
@@ -3659,7 +3657,7 @@ mod tests {
         assert!(output.status.success(), "{:?}", output);
         assert_eq!(
             app.panes[&1].session.state.lock().unwrap().session_id,
-            Some(remote)
+            Some(crate::session::SessionId(remote))
         );
         assert_eq!(
             app.panes[&1].session.target,
@@ -3672,7 +3670,7 @@ mod tests {
         assert!(!output.status.success());
         assert_eq!(
             app.panes[&1].session.state.lock().unwrap().session_id,
-            Some(remote)
+            Some(crate::session::SessionId(remote))
         );
         if std::env::var("NEKOMATA_TEST_SSH").as_deref() == Ok("1") {
             // A relative path containing spaces, an apostrophe and shell syntax
@@ -3695,7 +3693,7 @@ mod tests {
             );
             assert_eq!(
                 app.panes[&1].session.state.lock().unwrap().session_id,
-                Some(remote)
+                Some(crate::session::SessionId(remote))
             );
             let mut args = attach(
                 Some("missing remote.sock"),
@@ -3707,7 +3705,7 @@ mod tests {
             assert!(!output.status.success());
             assert_eq!(
                 app.panes[&1].session.state.lock().unwrap().session_id,
-                Some(remote)
+                Some(crate::session::SessionId(remote))
             );
             // Omitting both flags must retain the remote socket, too.
             let output = command(&mut app, attach(None, format!("{remote:032x}"), Some("1")));
@@ -3730,7 +3728,7 @@ mod tests {
                     .await
                     .unwrap()
                     .iter()
-                    .any(|session| session.id == original),
+                    .any(|session| crate::session::SessionId(session.id) == original),
                 "switching panes killed the old shell"
             );
             ops.destroy_session(format!("{original:032x}"))

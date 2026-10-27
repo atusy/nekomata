@@ -81,7 +81,7 @@ pub fn move_tab(tabs: &mut Vec<Tab>, active: usize, from: usize, to: usize) -> u
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaneSpec {
     pub target: crate::session::Target,
-    pub session: Option<String>,
+    pub session: Option<crate::session::SessionId>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -157,14 +157,14 @@ impl Snapshot {
             "invalid next pane ID"
         );
         for pane in self.panes.values() {
-            if let Some(id) = &pane.session {
-                ensure!(
-                    id.len() == 32 && u128::from_str_radix(id, 16).is_ok(),
-                    "invalid felis session ID"
-                );
-            }
-            if let crate::session::Target::Local(path) = &pane.target {
-                ensure!(path.is_absolute(), "daemon socket must be absolute")
+            match &pane.target {
+                crate::session::Target::Local(path) => {
+                    ensure!(path.is_absolute(), "daemon socket must be absolute")
+                }
+                crate::session::Target::Ssh { host, .. } => ensure!(
+                    !host.is_empty() && !host.starts_with('-'),
+                    "invalid SSH host"
+                ),
             }
         }
         Ok(())
@@ -202,6 +202,50 @@ mod tests {
         remove_pane(&mut list, &mut active, 2);
         assert_eq!(names(&list), ["b"]);
         assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn persisted_session_ids_keep_their_hex_wire_format() {
+        let json = serde_json::json!({
+            "tabs": [{
+                "name": "Terminal 1",
+                "layout": {"Pane": 1},
+                "focused": 1,
+                "focus_history": [1],
+            }],
+            "panes": {
+                "1": {
+                    "target": {"Local": "/tmp/felis.sock"},
+                    "session": "0123456789abcdef0123456789abcdef",
+                },
+            },
+            "active": 0,
+            "next_id": 2,
+            "font_size": 14.0,
+        });
+        let snapshot: Snapshot = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            snapshot.panes[&1].session,
+            Some(crate::session::SessionId(
+                0x0123456789abcdef0123456789abcdef
+            ))
+        );
+        snapshot.validate().unwrap();
+        assert_eq!(serde_json::to_value(&snapshot).unwrap(), json);
+    }
+
+    #[test]
+    fn persisted_session_ids_must_be_complete() {
+        use crate::session::SessionId;
+        let parse = |id: &str| serde_json::from_value::<SessionId>(serde_json::json!(id));
+        assert!(parse("0123456789abcdef").is_err(), "prefix");
+        assert!(parse("0123456789abcdef0123456789abcdeg").is_err());
+        assert_eq!(
+            parse("0000000000000000000000000000000A")
+                .unwrap()
+                .to_string(),
+            "0000000000000000000000000000000a"
+        );
     }
 
     #[test]

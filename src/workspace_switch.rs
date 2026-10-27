@@ -18,7 +18,7 @@ pub type ReplySender = tokio::sync::oneshot::Sender<Reply>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaneStatus {
     Connecting,
-    Connected(Option<u128>),
+    Connected(Option<crate::session::SessionId>),
     Failed(String),
     Ended,
 }
@@ -150,7 +150,7 @@ impl<P> Switch<P> {
                         }
                         for (id, session) in sessions {
                             if let Some(spec) = snapshot.panes.get_mut(&id) {
-                                spec.session = session.map(|id| format!("{id:032x}"));
+                                spec.session = session;
                             }
                         }
                         return Poll::Finish(Some(snapshot.clone()));

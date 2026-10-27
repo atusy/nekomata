@@ -18,6 +18,48 @@ use felis_transport::{Delivery, Incoming};
 use std::{path::PathBuf, time::Duration};
 use tokio::sync::Notify;
 
+/// A felis session ID, persisted as the 32-digit hex string felis prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionId(pub u128);
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:032x}", self.0)
+    }
+}
+
+impl std::fmt::LowerHex for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl std::str::FromStr for SessionId {
+    type Err = anyhow::Error;
+
+    /// Accepts only a complete ID; felis resolves prefixes, not nekomata.
+    fn from_str(id: &str) -> Result<Self> {
+        anyhow::ensure!(id.len() == 32, "invalid felis session ID");
+        Ok(Self(
+            u128::from_str_radix(id, 16).context("invalid felis session ID")?,
+        ))
+    }
+}
+
+impl serde::Serialize for SessionId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SessionId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "StoredTarget")]
 pub enum Target {
@@ -100,7 +142,7 @@ pub struct State {
     pub redraw: felis_client_core::redraw::RedrawScheduler,
     pub colors: crate::colors::Colors,
     pub images: felis_client_core::ImageShadow,
-    pub session_id: Option<u128>,
+    pub session_id: Option<SessionId>,
     pub error: Option<String>,
     pub connected: bool,
     pub reconnects: u64,
@@ -579,7 +621,7 @@ async fn run(
         let mut state = shared.lock().unwrap();
         state.screen = ShadowScreen::new(info.dims.rows, info.dims.cols);
         state.effective_minor = conn.effective_minor;
-        state.session_id = Some(info.id);
+        state.session_id = Some(SessionId(info.id));
         state.connected = true;
     }
     ctx.request_repaint();
@@ -775,7 +817,7 @@ async fn pump(
                                         return Ok(());
                                     }
                                     felis_protocol::messages::PushMsg::SessionExited { id }
-                                        if shared.lock().unwrap().session_id == Some(id) => {
+                                        if shared.lock().unwrap().session_id == Some(SessionId(id)) => {
                                         shared.lock().unwrap().exited = true;
                                         return Ok(());
                                     }
@@ -1625,7 +1667,7 @@ mod tests {
                     .await
                     .unwrap()
                     .iter()
-                    .any(|session| session.id == id),
+                    .any(|session| SessionId(session.id) == id),
                 "detach killed the session"
             );
             ops.destroy_session(format!("{id:032x}")).await.unwrap();
@@ -1696,7 +1738,7 @@ mod tests {
                     .await
                     .unwrap()
                     .iter()
-                    .any(|session| session.id == id)
+                    .any(|session| SessionId(session.id) == id)
             );
             ops.destroy_session(format!("{id:032x}")).await.unwrap();
             ops.destroy_session(format!("{spawned_id:032x}"))

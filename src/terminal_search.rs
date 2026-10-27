@@ -24,7 +24,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Source {
-    id: u128,
+    id: crate::session::SessionId,
     generation: u64,
 }
 
@@ -309,7 +309,7 @@ struct Ops {
     conn: CarrierConnection,
     _relay: Option<tokio::process::Child>,
 }
-async fn attached_ops(target: &Target, id: u128) -> Result<Ops> {
+async fn attached_ops(target: &Target, id: crate::session::SessionId) -> Result<Ops> {
     let mut ops = if let Target::Ssh { host, socket } = target {
         let (conn, relay) = crate::ssh::connect(host, socket.as_deref(), Offer::ops()).await?;
         Ops {
@@ -328,7 +328,7 @@ async fn attached_ops(target: &Target, id: u128) -> Result<Ops> {
         }
     };
     ops.conn
-        .attach_by_prefix(format!("{id:032x}"), AttachIntent::Automatic)
+        .attach_by_prefix(id.to_string(), AttachIntent::Automatic)
         .await?;
     Ok(ops)
 }
@@ -493,11 +493,11 @@ mod tests {
     fn superseded_search_results_cannot_replace_the_current_query() {
         let mut state = SearchState::default();
         let old = state.begin(Some(Source {
-            id: 1,
+            id: crate::session::SessionId(1),
             generation: 0,
         }));
         let current = state.begin(Some(Source {
-            id: 1,
+            id: crate::session::SessionId(1),
             generation: 0,
         }));
         assert!(!state.push(old, hit("old".into())));
