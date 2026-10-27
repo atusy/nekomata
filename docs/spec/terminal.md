@@ -138,8 +138,9 @@ daemon delivers each write to at most one window attached to the session.
 
 - Only visible local panes request new frames; hidden panes stop requesting
   updates. SSH panes receive pushed frames.
-- The pane area outside whole cells takes the terminal's default background,
-  or its default foreground while reverse video (DECSCNM) is on.
+- Inside a pane's 2-point border, the area outside whole cells takes the
+  terminal's default background, or its default foreground while reverse
+  video (DECSCNM) is on. The border keeps the window color.
 
 ## Reconnection
 
