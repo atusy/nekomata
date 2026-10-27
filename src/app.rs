@@ -2698,6 +2698,9 @@ mod tests {
         let prefix = pane("abc");
         assert_eq!(prefix.spec().session, None);
         snapshot(&prefix).validate().unwrap();
+        let resolved = crate::session::SessionId(9);
+        prefix.session.state.lock().unwrap().session_id = Some(resolved);
+        assert_eq!(prefix.spec().session, Some(resolved));
         let full = format!("{:032x}", 7);
         let exact = pane(&full);
         assert_eq!(exact.spec().session, Some(crate::session::SessionId(7)));
