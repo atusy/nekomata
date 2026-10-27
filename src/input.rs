@@ -134,6 +134,25 @@ fn physical_key(key: egui::Key, mods: egui::Modifiers, has_text: bool) -> Option
     }
 }
 
+/// The ASCII character a character key types without modifiers, as keymaps
+/// spell it and felis encodes it; `None` for keys that name no character.
+pub fn key_char(key: egui::Key) -> Option<char> {
+    match key {
+        // egui displays this key as U+2212.
+        egui::Key::Minus => Some('-'),
+        // egui has no symbol for this key and names it "Quote".
+        egui::Key::Quote => Some('\''),
+        _ => {
+            let mut chars = key.symbol_or_name().chars();
+            let character = chars.next().filter(|c| c.is_ascii_graphic())?;
+            chars
+                .next()
+                .is_none()
+                .then(|| character.to_ascii_lowercase())
+        }
+    }
+}
+
 fn key_character(key: egui::Key) -> String {
     key.symbol_or_name().to_lowercase()
 }

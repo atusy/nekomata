@@ -317,16 +317,15 @@ fn terminal_key(key: Key) -> KeyCode {
         Key::PageUp => KeyCode::Named(NamedKey::PageUp),
         Key::PageDown => KeyCode::Named(NamedKey::PageDown),
         Key::Insert => KeyCode::Named(NamedKey::Insert),
-        // egui displays this key as U+2212; bindings name the ASCII key.
-        Key::Minus => KeyCode::Character("-".into()),
-        // egui has no symbol for this key and names it "Quote".
-        Key::Quote => KeyCode::Character("'".into()),
-        _ => {
-            let name = key.symbol_or_name().to_ascii_lowercase();
-            name.parse::<Chord>()
-                .map(|chord| chord.key)
-                .unwrap_or(KeyCode::Character(name))
-        }
+        _ => match crate::input::key_char(key) {
+            Some(character) => KeyCode::Character(character.into()),
+            None => {
+                let name = key.symbol_or_name().to_ascii_lowercase();
+                name.parse::<Chord>()
+                    .map(|chord| chord.key)
+                    .unwrap_or(KeyCode::Character(name))
+            }
+        },
     }
 }
 
