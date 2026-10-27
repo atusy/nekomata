@@ -13,6 +13,8 @@ felis daemon.
 - `nekomata daemon stop` stops it, and refuses while any window has a
   workspace attached. It never starts a daemon. Retained layouts are lost;
   felis shells keep running.
+- The daemon removes a stale socket left at its socket path, but refuses to
+  start when anything other than a socket is there.
 - Workspaces are held in memory only. Stopping or crashing the daemon, or
   restarting the OS, loses every layout.
 - Client and daemon speak a versioned protocol. On an incompatible version the

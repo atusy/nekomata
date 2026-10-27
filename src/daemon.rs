@@ -2,7 +2,10 @@
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
-    os::unix::{fs::OpenOptionsExt, process::CommandExt},
+    os::unix::{
+        fs::{FileTypeExt, OpenOptionsExt},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -267,15 +270,29 @@ pub fn run() -> Result<()> {
     if lock.try_lock().is_err() {
         return Ok(());
     }
-    if path.exists() {
-        std::fs::remove_file(&path).context("remove stale nekomata daemon socket")?;
-    }
+    remove_stale_socket(&path)?;
     let runtime = tokio::runtime::Runtime::new()?;
     let _guard = SocketGuard {
         path: path.clone(),
         _lock: lock,
     };
     runtime.block_on(serve(&path))
+}
+
+/// Only a socket is ours to remove; a symlink or regular file in its place is
+/// left for the user to inspect.
+fn remove_stale_socket(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_socket() => {
+            std::fs::remove_file(path).context("remove stale nekomata daemon socket")
+        }
+        Ok(_) => bail!(
+            "{} exists and is not a socket; remove it to start the nekomata daemon",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).context("inspect nekomata daemon socket"),
+    }
 }
 
 async fn serve(path: &Path) -> Result<()> {
@@ -455,6 +472,28 @@ mod tests {
             serde_json::to_value(Payload::Workspaces(vec![])).unwrap(),
             serde_json::json!({"Sessions": []})
         );
+    }
+
+    #[test]
+    fn stale_daemon_sockets_are_removed_but_other_files_are_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("daemon.sock");
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        remove_stale_socket(&socket).unwrap();
+        assert!(std::fs::symlink_metadata(&socket).is_err());
+        remove_stale_socket(&socket).unwrap();
+
+        let file = directory.path().join("precious");
+        std::fs::write(&file, "keep").unwrap();
+        std::os::unix::fs::symlink(&file, &socket).unwrap();
+        assert!(remove_stale_socket(&socket).is_err());
+        assert!(std::fs::symlink_metadata(&socket).unwrap().is_symlink());
+        std::fs::remove_file(&socket).unwrap();
+
+        std::fs::write(&socket, "keep").unwrap();
+        assert!(remove_stale_socket(&socket).is_err());
+        assert_eq!(std::fs::read_to_string(&socket).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep");
     }
 
     #[test]
