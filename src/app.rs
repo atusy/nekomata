@@ -159,6 +159,8 @@ pub struct App {
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch<Pane>>,
     reconnect: crate::workspace_client::Backoff,
+    /// A resume client is re-leasing the workspace and has not answered yet.
+    resuming: bool,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
@@ -224,6 +226,7 @@ impl App {
             last_snapshot: None,
             pending_workspace: None,
             reconnect: Default::default(),
+            resuming: false,
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
@@ -448,6 +451,9 @@ impl App {
                     {
                         let _ = reply.send(Err(error.clone()));
                     }
+                    if operation == Operation::Disconnected {
+                        self.resuming = false;
+                    }
                     if operation == Operation::Disconnected && self.workspace_id.is_some() {
                         let delay = self.reconnect.schedule(std::time::Instant::now());
                         self.workspace_error = Some(format!(
@@ -459,12 +465,14 @@ impl App {
                     }
                 }
                 (Operation::Resume, Ok(Payload::Workspace { id, snapshot })) => {
+                    self.resuming = false;
                     self.workspace_id = Some(id);
                     self.last_snapshot = Some(snapshot);
                     self.workspace_error = None;
                     self.reconnect = Default::default();
                 }
                 (Operation::Resume, Err(error)) => {
+                    self.resuming = false;
                     self.workspace_error = Some(format!("Could not resume the workspace: {error}"));
                 }
                 (_, Err(error)) => self.workspace_error = Some(error),
@@ -484,6 +492,12 @@ impl App {
                 "another attach is in progress"
             );
             anyhow::ensure!(self.workspace_id.is_some(), "workspace is not ready");
+            // A switch queued behind a resume would never be answered if the
+            // daemon refused the resume.
+            anyhow::ensure!(
+                !self.resuming && !self.daemon_lost(),
+                "the nekomata daemon is reconnecting"
+            );
             anyhow::ensure!(
                 workspace != self.workspace_id,
                 "workspace is already attached to this window"
@@ -631,6 +645,7 @@ impl App {
         let Some(previous) = self.workspace_id else {
             return;
         };
+        self.resuming = true;
         self.workspace = Some(WorkspaceClient::resume(
             &self.runtime,
             ctx.clone(),
@@ -3237,6 +3252,7 @@ mod tests {
             last_snapshot: None,
             pending_workspace: None,
             reconnect: Default::default(),
+            resuming: false,
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,

@@ -106,7 +106,7 @@ button to retry.
 A window that loses its connection to the nekomata daemon after attaching
 notices even while idle, keeps its tabs, panes and shells, and shows the
 error with a button to reconnect at once. Until it reconnects, layout changes
-reach no daemon. It reconnects on its own after 1 second, doubling the delay
+reach no daemon and the window refuses to switch workspaces. It reconnects on its own after 1 second, doubling the delay
 after each failed attempt up to 30 seconds, and starts the daemon if none is
 running. It does not reconnect on its own after the daemon refuses it, for
 example for an incompatible protocol version.
