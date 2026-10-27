@@ -465,8 +465,8 @@ mod tests {
     }
 
     #[test]
-    fn runtime_directory_does_not_depend_on_home_or_build() {
-        // A hash of HOME could change between Rust releases; the path must not.
+    fn runtime_directory_falls_back_to_a_name_fixed_by_the_uid() {
+        // The name once hashed HOME with an algorithm Rust may change.
         assert_eq!(
             default_directory(vars(&[("HOME", "/home/a")]), 501, None, private(&[])),
             PathBuf::from("/tmp/nekomata-501")
@@ -576,6 +576,8 @@ mod tests {
         drop(listener);
     }
 
+    // Discriminates on Linux, where connecting to a regular file is refused;
+    // macOS reports ENOTSOCK, which never reaches the reclaim path.
     #[test]
     fn only_sockets_are_reclaimed() {
         let directory = tempfile::tempdir().unwrap();
