@@ -139,3 +139,22 @@ daemon delivers each write to at most one window attached to the session.
   connection error, the pane shows the error.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
+
+## Command output and scrollback export
+
+The palette exposes `scrollback:copy_command_output`,
+`scrollback:edit_command_output`, and `scrollback:edit`; none has a default
+binding. The first two export the most recent completed OSC 133 command output
+(the text between C and D, without the command line or color escapes). Edit
+scrollback exports retained history and the current screen, including the
+current alternate screen when active, without requiring command boundaries.
+Exports are snapshots limited to 8 MiB; missing output or failures are shown
+as dismissible errors.
+
+Editing opens a temporary local session in the same pane, preserving the
+original session and restoring it when the editor exits. Workspace persistence
+records the original session. The editor is selected from `VISUAL`, `EDITOR`,
+then `vi`; quoted arguments are parsed without shell expansion. Output from an
+SSH pane is edited locally. The temporary file is retained until the editor
+exits even if the pane detaches or the GUI closes. A lost launch response can
+leave its private temporary directory behind.

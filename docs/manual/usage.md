@@ -129,3 +129,14 @@ or `Scrollback: Find…` in the command palette.
 
 The exact rules are in the [terminal specification](../spec/terminal.md) and
 the [keymap specification](../spec/keymap.md).
+
+## Copy or edit terminal output
+
+Use the command palette to copy or edit the last completed command output,
+or to edit the retained scrollback and current screen. Command output needs
+a shell that marks command boundaries with OSC 133; editing scrollback also
+works while a command is running. Editing temporarily replaces the current
+pane with a local editor and restores the original session when you quit.
+The editor comes from `VISUAL`, then `EDITOR`, then `vi`. See the
+[terminal specification](../spec/terminal.md#command-output-and-scrollback-export)
+for limits and details.

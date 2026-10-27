@@ -163,6 +163,24 @@ pub(crate) fn commands() -> &'static [Command] {
         Command::new("session:attach", Session, "Attach…", Action::AttachSession)
             .detail("Opens a local daemon session in a new tab")
             .keywords(&["picker", "open"]),
+        Command::new(
+            "scrollback:copy_command_output",
+            Scrollback,
+            "Copy last command output",
+            Action::CopyCommandOutput,
+        ),
+        Command::new(
+            "scrollback:edit_command_output",
+            Scrollback,
+            "Edit last command output",
+            Action::EditCommandOutput,
+        ),
+        Command::new(
+            "scrollback:edit",
+            Scrollback,
+            "Edit…",
+            Action::EditScrollback,
+        ),
         Command::new("scrollback:find", Scrollback, "Find…", Action::Search)
             .keywords(&["search", "grep"]),
         Command::new(
@@ -256,4 +274,24 @@ pub(crate) fn commands() -> &'static [Command] {
         .hidden(),
     ];
     COMMANDS
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn output_actions_are_available_in_the_palette() {
+        for action in [
+            Action::CopyCommandOutput,
+            Action::EditCommandOutput,
+            Action::EditScrollback,
+        ] {
+            assert!(
+                commands()
+                    .iter()
+                    .any(|command| command.visible && command.action == action)
+            );
+        }
+    }
 }

@@ -7,9 +7,9 @@ mod command_palette;
 mod commands;
 mod control;
 mod daemon;
+mod editor_output;
 mod font_size;
 mod input;
-mod editor_output;
 mod layout;
 mod links;
 #[cfg(test)]

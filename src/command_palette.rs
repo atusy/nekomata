@@ -346,8 +346,8 @@ mod tests {
             "Font",
         ];
         const VERBS: &[&str] = &[
-            "Attach", "Change", "Close", "Copy", "Create", "Decrease", "Find", "Focus", "Increase",
-            "Jump", "Paste", "Reset", "Scroll", "Show", "Split", "Switch",
+            "Attach", "Change", "Close", "Copy", "Create", "Decrease", "Edit", "Find", "Focus",
+            "Increase", "Jump", "Paste", "Reset", "Scroll", "Show", "Split", "Switch",
         ];
         for command in commands() {
             let label = command.label();

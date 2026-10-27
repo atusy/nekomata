@@ -133,7 +133,7 @@ fn test_app(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> App {
         next_id: 1,
         font_size: 15.0,
         picker: SessionPicker::default(),
-        help: false,
+        font_size_open: false,
         shortcuts: Shortcuts::default(),
         palette: false,
         palette_state: Default::default(),
