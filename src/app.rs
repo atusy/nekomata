@@ -2677,6 +2677,60 @@ mod tests {
     }
 
     #[test]
+    fn both_halves_of_a_wide_linked_character_open_its_link() {
+        use felis_grid::{
+            Cell, StyleTable,
+            wire::{RowEncode, encode_row},
+        };
+        use felis_protocol::{RowPayload, messages::GridMsg};
+        let mut shadow = felis_client_core::ShadowScreen::new(1, 4);
+        shadow
+            .apply(&GridMsg::Hyperlink {
+                id: 1,
+                anchor: None,
+                uri: "https://example.com/".into(),
+            })
+            .unwrap();
+        // felis-grid gives the spacer of a wide print the pen's link.
+        let link = std::num::NonZeroU16::new(1);
+        let cells = [
+            Cell {
+                grapheme: Grapheme::Char('字'),
+                link,
+                ..Cell::default()
+            },
+            Cell {
+                grapheme: Grapheme::Spacer,
+                link,
+                ..Cell::default()
+            },
+        ];
+        let bytes = encode_row(
+            RowEncode {
+                cells: &cells,
+                pad_to: 4,
+                sized_cells: &[],
+                soft_wrap_continued: false,
+            },
+            &StyleTable::new(),
+        )
+        .unwrap();
+        shadow
+            .apply(&GridMsg::RowDelta {
+                rows: vec![(0, RowPayload(bytes))],
+            })
+            .unwrap();
+        for col in [0, 1] {
+            assert_eq!(
+                link_at(&shadow, GridPos { row: 0, col }),
+                Some("https://example.com/"),
+                "column {col}"
+            );
+        }
+        assert_eq!(link_at(&shadow, GridPos { row: 0, col: 2 }), None);
+    }
+
+    #[test]
     fn copying_soft_wrapped_text_keeps_one_logical_line() {
         use felis_grid::{
             Cell, StyleTable,
