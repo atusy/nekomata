@@ -99,8 +99,8 @@ pub struct State {
     pub detached: bool,
     pub exited: bool,
     pub clipboard: Option<String>,
-    /// Advances when the screen switches, the viewport moves to other
-    /// lines, or the screen is rehydrated; a selection made before is stale.
+    /// Advances when the screen switches, resizes or is rehydrated, or the
+    /// viewport moves to other lines; a selection made before is stale.
     pub selection_epoch: u64,
 }
 
@@ -146,10 +146,14 @@ impl State {
         self.pull.on_frame(msg);
         let alt_screen_before = self.screen.alt_screen();
         let viewport_before = (self.screen.viewport(), self.screen.viewport_anchor());
+        let size = |screen: &ShadowScreen| (screen.screen().rows(), screen.screen().cols());
+        let size_before = size(&self.screen);
         self.screen.apply(msg)?;
         // A rehydrate (after reconnecting) resends every cell, possibly of a
-        // screen that changed while this client was away.
+        // screen that changed while this client was away; a resize, also by
+        // another client of the session, reflows them.
         if matches!(msg, GridMsg::RehydrateBegin)
+            || size(&self.screen) != size_before
             || crate::selection::grid_change_invalidates_selection(
                 msg,
                 alt_screen_before,
@@ -721,6 +725,29 @@ mod tests {
             .apply_grid(&mode_flags(false), &Default::default())
             .unwrap();
         assert_eq!(state.selection_epoch, 2);
+    }
+
+    #[test]
+    fn resizing_the_screen_invalidates_the_selection() {
+        let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        let size = |rows, cols| GridMsg::Size {
+            dims: felis_protocol::messages::GridDims {
+                rows,
+                cols,
+                pixel_w: 0,
+                pixel_h: 0,
+            },
+        };
+        // Another client resized the shared session.
+        state
+            .apply_grid(&size(30, 100), &Default::default())
+            .unwrap();
+        assert_eq!(state.selection_epoch, 1);
+        // A size felis only confirms moves no cell.
+        state
+            .apply_grid(&size(30, 100), &Default::default())
+            .unwrap();
+        assert_eq!(state.selection_epoch, 1);
     }
 
     #[test]
