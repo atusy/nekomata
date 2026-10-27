@@ -2540,6 +2540,20 @@ mod tests {
         use std::{sync::mpsc, time::Instant};
         crate::test_support::private_runtime_dir();
         crate::test_support::private_felis_socket();
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        // daemon::connect starts the daemon from current_exe(), which is this
+        // test harness rather than nekomata, so start it from the real binary.
+        let output = std::process::Command::new(&executable)
+            .args(["workspaces", "list"])
+            .output()
+            .expect("build the nekomata binary first: cargo build --bin nekomata");
+        assert!(output.status.success(), "start nekomata daemon: {output:?}");
         let ctx = egui::Context::default();
         let (tx, repaints) = mpsc::channel();
         ctx.set_request_repaint_callback(move |_| {
@@ -2628,13 +2642,6 @@ mod tests {
         assert_eq!(replacement.tabs.len(), 2);
         assert_eq!(replacement.panes.len(), 3);
 
-        let executable = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("nekomata");
         let id = workspace_id.unwrap();
         let repaint = ctx.clone();
         let routing_executable = executable.clone();
