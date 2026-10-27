@@ -15,3 +15,10 @@
 - A window cannot be made smaller than 480×320 logical pixels.
 - Window geometry is not part of a [workspace](workspaces.md): switching
   workspaces neither moves nor resizes the window.
+
+## Overlays
+
+The command palette, the font size control, the workspace list and the
+session picker are overlays: the window shows at most one of them. Opening
+one, for example with the command palette button while the workspace list is
+open, closes the one already open.

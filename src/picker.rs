@@ -51,9 +51,6 @@ impl SessionPicker {
         ctx: &egui::Context,
         open: &mut bool,
     ) -> Option<String> {
-        if !*open {
-            return None;
-        }
         let mut refresh = false;
         let mut selected = None;
         egui::Window::new("Attach a felis session")
