@@ -300,10 +300,11 @@ impl Session {
         }
     }
 
-    /// Whether exactly `expected` is queued for the daemon, in order; a
-    /// test's session is never connected, so the queue only fills.
+    /// Drains the input queue and reports whether it held exactly
+    /// `expected`, in order. A test drives no runtime, so nothing else
+    /// drains it.
     #[cfg(test)]
-    pub fn queued_exactly(&self, expected: &[InputMsg]) -> bool {
+    pub fn drain_queued_matches(&self, expected: &[InputMsg]) -> bool {
         let mut frames = self.tx.frames.lock().unwrap();
         // Compare wire frames: queueing later frames rewrites coalescing state.
         let queued: Vec<_> = std::iter::from_fn(|| frames.pop())

@@ -2397,6 +2397,17 @@ mod tests {
         };
         let mut cases = vec![
             (
+                egui::Event::Text("a".into()),
+                egui::Modifiers::NONE,
+                InputMsg::Key(felis_protocol::messages::KeyEvent {
+                    key: felis_protocol::messages::Key::Character("a".into()),
+                    text: Some("a".into()),
+                    mods: felis_protocol::messages::KeyMods::empty(),
+                    kind: felis_protocol::messages::KeyEventKind::Press,
+                    location: felis_protocol::messages::KeyLocation::Standard,
+                }),
+            ),
+            (
                 egui::Event::Ime(egui::ImeEvent::Commit("あ".into())),
                 egui::Modifiers::NONE,
                 InputMsg::KeyBytes("あ".into()),
@@ -2441,7 +2452,7 @@ mod tests {
             );
             assert_eq!(selection, None, "{event:?}");
             assert!(
-                session.queued_exactly(&[live.clone(), expected]),
+                session.drain_queued_matches(&[live.clone(), expected]),
                 "{event:?}"
             );
         }
