@@ -15,7 +15,7 @@ use crate::{
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
     workspace::{PaneSpec, Snapshot, Tab, move_tab},
-    workspace_client::{Client as WorkspaceClient, Operation},
+    workspace_client::{Client as WorkspaceClient, Command as WorkspaceCommand, Operation},
 };
 
 struct Pane {
@@ -540,7 +540,7 @@ impl App {
                 .workspace
                 .as_ref()
                 .unwrap()
-                .send(daemon::Request::Finish { snapshot: None })
+                .send(WorkspaceCommand::Finish { snapshot: None })
                 .is_ok()
             {
                 pending.committing = true;
@@ -591,7 +591,7 @@ impl App {
                 .workspace
                 .as_ref()
                 .unwrap()
-                .send(daemon::Request::Finish {
+                .send(WorkspaceCommand::Finish {
                     snapshot: Some(snapshot.clone()),
                 })
                 .is_ok()
@@ -645,7 +645,7 @@ impl App {
             });
         self.workspaces_open = open;
         if refresh && let Some(client) = &self.workspace {
-            let _ = client.send(daemon::Request::List);
+            let _ = client.send(WorkspaceCommand::List);
         }
         if let Some(workspace) = selected {
             self.begin_workspace(workspace, None);
@@ -663,7 +663,7 @@ impl App {
         let Some(client) = &self.workspace else {
             return;
         };
-        if client.send(daemon::Request::Save(snapshot.clone())).is_ok() {
+        if client.send(WorkspaceCommand::Save(snapshot.clone())).is_ok() {
             self.last_snapshot = Some(snapshot);
         } else if !client.is_closed() {
             // The command queue is full. A queued save completes without
@@ -1099,7 +1099,7 @@ impl App {
                 self.workspaces_open = true;
                 self.workspace_roster = None;
                 if let Some(client) = &self.workspace {
-                    let _ = client.send(daemon::Request::List);
+                    let _ = client.send(WorkspaceCommand::List);
                 }
             }
             Action::Palette => {
