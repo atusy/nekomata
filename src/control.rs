@@ -1,6 +1,7 @@
 //! Per-window control socket. Only the GUI thread mutates panes.
 use std::{
     collections::hash_map::DefaultHasher,
+    ffi::OsString,
     hash::{Hash, Hasher},
     os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
@@ -52,14 +53,7 @@ const MAX_MESSAGE: u64 = 65536;
 pub(crate) fn directory() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("HOME is required for GUI discovery")?;
     let owner = std::fs::metadata(&home)?.uid();
-    let mut hash = DefaultHasher::new();
-    home.hash(&mut hash);
-    // Keep Unix socket paths short, including on macOS.
-    let path = std::env::var_os("NEKOMATA_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from("/tmp").join(format!("nekomata-{owner}-{:x}", hash.finish()))
-        });
+    let path = default_directory(|name| std::env::var_os(name), owner);
     match std::fs::DirBuilder::new().mode(0o700).create(&path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -70,6 +64,17 @@ pub(crate) fn directory() -> Result<PathBuf> {
         bail!("control directory must be private and owned by the current user");
     }
     Ok(path)
+}
+
+fn default_directory(env: impl Fn(&str) -> Option<OsString>, owner: u32) -> PathBuf {
+    if let Some(path) = env("NEKOMATA_RUNTIME_DIR") {
+        return PathBuf::from(path);
+    }
+    let home = env("HOME").unwrap_or_default();
+    let mut hash = DefaultHasher::new();
+    home.hash(&mut hash);
+    // Keep Unix socket paths short, including on macOS.
+    PathBuf::from("/tmp").join(format!("nekomata-{owner}-{:x}", hash.finish()))
 }
 
 impl Server {
