@@ -215,6 +215,8 @@ pub struct App {
     geometry: GeometryAutosave,
 }
 
+/// A window-level overlay. The window shows at most one, so opening one
+/// closes the one already open.
 enum Overlay {
     Palette(crate::command_palette::CommandPalette),
     FontSize,
@@ -1765,10 +1767,11 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
     response.on_hover_text(label)
 }
 
-/// What keeps keys from both keymaps and the terminal.
+/// What keeps keys from both keymaps, and keyboard input and focus reports
+/// from the terminal.
 #[derive(Clone, Copy, Default)]
 struct InputBlockers {
-    /// A window-level overlay: the palette, a dialog or a picker.
+    /// Any open [`Overlay`].
     overlay: bool,
     /// The focused pane's search field.
     searching: bool,
