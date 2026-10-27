@@ -28,6 +28,8 @@ Not supported: key release events and OSC 52 clipboard reads.
   application, through `xdg-open` on Linux (bundled with the Nix package).
 - A link that fails felis's validation is not opened; the reason is shown.
 - Plain URL text is not turned into links.
+- The click does not open a link while Alt is also held, or, on macOS, while
+  Ctrl is held with Cmd.
 
 ## Paste
 
