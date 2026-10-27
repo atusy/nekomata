@@ -70,14 +70,15 @@ pub struct PaneGeometry {
 }
 
 impl PaneGeometry {
-    /// The cell under `pos`, or `None` outside the drawn text area.
+    /// The cell under `pos`, or `None` outside the drawn grid. Cells are
+    /// half-open, so the grid's right and bottom edges belong to no cell.
     pub fn cell_at(&self, pos: Pos2) -> Option<felis_client_core::GridPos> {
-        if !self.text_rect.contains(pos) {
-            return None;
-        }
-        Some(felis_client_core::GridPos {
-            col: ((pos.x - self.text_rect.left()) / self.cell.x).floor() as u16,
-            row: ((pos.y - self.text_rect.top()) / self.cell.y).floor() as u16,
+        let col = ((pos.x - self.text_rect.left()) / self.cell.x).floor();
+        let row = ((pos.y - self.text_rect.top()) / self.cell.y).floor();
+        let inside = |index: f32, len: u16| (0.0..f32::from(len)).contains(&index);
+        (inside(col, self.cols) && inside(row, self.rows)).then_some(felis_client_core::GridPos {
+            col: col as u16,
+            row: row as u16,
         })
     }
 
@@ -391,6 +392,31 @@ mod tests {
             // The one-pixel remainder goes into a margin, never into the rows.
             assert!((rect.bottom() * ppp - pane.bottom() * ppp).abs() <= 1.0001);
         }
+    }
+
+    fn geometry() -> PaneGeometry {
+        // 4 x 2 cells of 10 x 20, in a text area 7 points wider than the grid.
+        PaneGeometry {
+            text_rect: Rect::from_min_size(Pos2::new(100.0, 50.0), Vec2::new(47.0, 40.0)),
+            cell: Vec2::new(10.0, 20.0),
+            cols: 4,
+            rows: 2,
+        }
+    }
+
+    #[test]
+    fn points_past_the_last_cell_hit_no_cell() {
+        use felis_client_core::GridPos;
+        let geometry = geometry();
+        assert_eq!(
+            geometry.cell_at(Pos2::new(139.9, 89.9)),
+            Some(GridPos { row: 1, col: 3 })
+        );
+        // The horizontal remainder and the far edges belong to no cell.
+        assert_eq!(geometry.cell_at(Pos2::new(140.0, 60.0)), None);
+        assert_eq!(geometry.cell_at(Pos2::new(147.0, 60.0)), None);
+        assert_eq!(geometry.cell_at(Pos2::new(110.0, 90.0)), None);
+        assert_eq!(geometry.cell_at(Pos2::new(99.9, 60.0)), None);
     }
 
     #[test]
