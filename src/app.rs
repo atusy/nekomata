@@ -2538,10 +2538,8 @@ mod tests {
     #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
     fn live_gui_restart_and_switch_preserve_workspaces_and_shells() {
         use std::{sync::mpsc, time::Instant};
-        assert!(
-            std::env::var_os("NEKOMATA_RUNTIME_DIR").is_some(),
-            "use scripts/test-live.sh"
-        );
+        crate::test_support::private_runtime_dir();
+        crate::test_support::private_felis_socket();
         let ctx = egui::Context::default();
         let (tx, repaints) = mpsc::channel();
         ctx.set_request_repaint_callback(move |_| {
@@ -2710,10 +2708,8 @@ mod tests {
         // The destination shares two live shells with the source, but its other
         // pane is unavailable. Preparing it must not steal those source connections.
         let mut broken = before.clone();
-        broken.panes.get_mut(&2).unwrap().target = Target::Local(
-            std::path::PathBuf::from(std::env::var_os("NEKOMATA_RUNTIME_DIR").unwrap())
-                .join("missing-felis.sock"),
-        );
+        broken.panes.get_mut(&2).unwrap().target =
+            Target::Local(crate::test_support::private_runtime_dir().join("missing-felis.sock"));
         replacement.runtime.block_on(async {
             let mut client = daemon::connect().await.unwrap();
             let Payload::Workspace { id, .. } =
@@ -2802,7 +2798,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let mut ops = felis_client_core::connect(
-                std::path::PathBuf::from(std::env::var_os("NEKOMATA_TEST_SOCKET").unwrap()),
+                std::path::PathBuf::from(crate::test_support::private_felis_socket()),
                 felis_client_core::Offer::ops(),
             )
             .await
@@ -2820,6 +2816,7 @@ mod tests {
         use felis_protocol::messages::SpawnArgs;
         use std::{sync::mpsc, time::Instant};
 
+        crate::test_support::private_runtime_dir();
         let socket = crate::test_support::private_felis_socket();
         let other_socket = std::path::Path::new(&socket).with_file_name("other.sock");
         struct StopDaemon(std::path::PathBuf);

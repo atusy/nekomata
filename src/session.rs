@@ -889,9 +889,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_hidden_panes_pause_pulls_and_resume_with_the_latest_screen() {
-        let socket = PathBuf::from(
-            std::env::var_os("NEKOMATA_TEST_SOCKET").expect("private daemon required"),
-        );
+        let socket = PathBuf::from(crate::test_support::private_felis_socket());
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (tx, repaints) = sync_mpsc::channel();
@@ -930,9 +928,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_reconnect_preserves_the_existing_shell_after_transport_loss() {
-        let socket = PathBuf::from(
-            std::env::var_os("NEKOMATA_TEST_SOCKET").expect("use the private daemon runner"),
-        );
+        let socket = PathBuf::from(crate::test_support::private_felis_socket());
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let original = runtime.block_on(async {
             let mut conn = connect_or_spawn_daemon(&socket, Offer::window(false))
@@ -1005,6 +1001,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_kitty_pixels_reach_the_frontend_image_store() {
+        crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (repaint_tx, repaints) = sync_mpsc::channel();

@@ -35,3 +35,11 @@ pub fn private_felis_socket() -> String {
     );
     socket
 }
+
+/// The private GUI runtime directory `scripts/test-live.sh` provisions, which
+/// holds the nekomata daemon and window control sockets of live tests.
+pub fn private_runtime_dir() -> std::path::PathBuf {
+    std::env::var_os("NEKOMATA_RUNTIME_DIR")
+        .expect("use scripts/test-live.sh")
+        .into()
+}
