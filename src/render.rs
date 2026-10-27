@@ -506,6 +506,21 @@ mod tests {
         assert_eq!(requested_dims(pane(47.0, 45.0), [0, 40], 2.0), None);
         assert_eq!(requested_dims(pane(47.0, 45.0), [20, 0], 2.0), None);
         assert!(requested_dims(pane(10.0, 20.0), cell, 2.0).is_some());
+        assert_eq!(requested_dims(pane(47.0, 45.0), cell, f32::NAN), None);
+    }
+
+    #[test]
+    fn a_huge_pane_requests_at_most_the_grid_limits() {
+        let pane = Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0e6));
+        assert_eq!(
+            requested_dims(pane, [20, 40], 2.0),
+            Some(RequestedDims {
+                rows: MAX_REQUESTED_ROWS,
+                cols: MAX_REQUESTED_COLS,
+                pixel_w: MAX_REQUESTED_COLS * 20,
+                pixel_h: MAX_REQUESTED_ROWS * 40,
+            })
+        );
     }
 
     #[test]
