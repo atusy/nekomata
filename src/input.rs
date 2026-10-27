@@ -32,16 +32,10 @@ pub fn translate(
     for (index, event) in events.iter().enumerate() {
         // egui-winit queues a keystroke's text right after its key event;
         // the frame's modifiers may already belong to a later keystroke.
+        // A key egui cannot name queues its text alone, so text only
+        // belongs to a preceding key that could have typed it.
         let typed_by = match event {
-            egui::Event::Text(_) => index.checked_sub(1).and_then(|i| match &events[i] {
-                egui::Event::Key {
-                    pressed: true,
-                    modifiers,
-                    repeat,
-                    ..
-                } => Some((*modifiers, *repeat)),
-                _ => None,
-            }),
+            egui::Event::Text(_) => index.checked_sub(1).and_then(|i| text_key(&events[i])),
             egui::Event::Key {
                 modifiers, repeat, ..
             } => Some((*modifiers, *repeat)),
@@ -53,7 +47,8 @@ pub fn translate(
         } else {
             KeyEventKind::Press
         };
-        let has_text = matches!(events.get(index + 1), Some(egui::Event::Text(_)));
+        let has_text = text_key(event).is_some()
+            && matches!(events.get(index + 1), Some(egui::Event::Text(_)));
         let requested_paste =
             matches!(event, egui::Event::Paste(_)) && std::mem::take(&mut explicit_paste);
         if !requested_paste && let Some(control) = clipboard_control(event, frame_mods, macos) {
@@ -100,6 +95,25 @@ pub fn translate(
         }
     }
     inputs
+}
+
+/// The modifiers and repeat state of a key press that may have typed text:
+/// egui-winit queues no text for named keys or while Ctrl or Cmd is held.
+fn text_key(event: &egui::Event) -> Option<(egui::Modifiers, bool)> {
+    match event {
+        egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            repeat,
+            ..
+        } if !(modifiers.ctrl || modifiers.command || modifiers.mac_cmd)
+            && (*key == egui::Key::Space || key_char(*key).is_some()) =>
+        {
+            Some((*modifiers, *repeat))
+        }
+        _ => None,
+    }
 }
 
 /// macOS reports Option as Alt even when it only selected the character
@@ -324,6 +338,45 @@ mod tests {
                 "{typed:?}"
             );
         }
+    }
+
+    #[test]
+    fn text_from_an_unnamed_key_is_not_paired_with_a_modifier_or_named_key() {
+        // egui reports modifier keys as keys but has no key for `<`, so the
+        // ISO key that types it yields text alone.
+        for before in [egui::Key::ShiftLeft, egui::Key::ArrowLeft] {
+            let got = translate(
+                &[
+                    egui::Event::Key {
+                        key: before,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: true,
+                        modifiers: egui::Modifiers::ALT,
+                    },
+                    text("<"),
+                ],
+                egui::Modifiers::SHIFT,
+                false,
+                false,
+            );
+            assert_eq!(
+                got.last(),
+                Some(&sent(
+                    character("<"),
+                    Some("<"),
+                    KeyMods::SHIFT,
+                    KeyEventKind::Press
+                )),
+                "{before:?}"
+            );
+        }
+        let ctrl = egui::Modifiers::CTRL;
+        assert_eq!(
+            translate(&[press(egui::Key::A, ctrl), text("<")], ctrl, false, false)[0],
+            sent(character("a"), None, KeyMods::CTRL, KeyEventKind::Press),
+            "a key that cannot have typed the text still reaches the program"
+        );
     }
 
     #[test]
