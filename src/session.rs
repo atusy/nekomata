@@ -1071,6 +1071,15 @@ mod tests {
     }
 
     #[test]
+    fn session_failures_outrank_renderer_errors_in_the_pane_message() {
+        let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        state.renderer_error = Some("renderer".into());
+        assert_eq!(state.error(), Some("renderer"), "a live pane shows it");
+        state.lifecycle = Lifecycle::Failed("session".into());
+        assert_eq!(state.error(), Some("session"));
+    }
+
+    #[test]
     fn disconnected_panes_do_not_enqueue_scroll_steps() {
         let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
         state.lifecycle = Lifecycle::Reconnecting;
