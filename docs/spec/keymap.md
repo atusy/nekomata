@@ -40,6 +40,11 @@ Terminal keymap defaults are felis's, except that nekomata unbinds unmodified
 `End` so that shells and editors receive it; binding it in felis's keymap
 restores a binding.
 
+nekomata keeps felis's Ctrl+Shift+- font-size binding outside macOS, although
+that chord is Ctrl+_ on US layouts. The window reports it as `-` with Shift,
+never as `_`, so with the binding removed it reaches the program as Ctrl+Shift+-,
+which has no control byte. Ctrl+/ sends the Ctrl+_ byte (0x1F).
+
 ## Application keymap entries
 
 An entry has the same form as felis's keymap: `"keys" = { kind = "…", … }`.
