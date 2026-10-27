@@ -83,6 +83,23 @@ window after the GUI restarts. A shell carries the IDs it was started with,
 so a shell moved to another workspace by hand still targets its original
 workspace's window; pass `--window` there.
 
+## Runtime directory
+
+Windows and the nekomata daemon publish their sockets (`<window>.sock`,
+`daemon.sock`) in one per-user directory, chosen as the first of:
+
+1. `$NEKOMATA_RUNTIME_DIR`.
+2. On macOS, `nekomata` in the per-user temporary directory the system derives
+   from the user ID (`confstr(_CS_DARWIN_USER_TEMP_DIR)`); `$TMPDIR` is not
+   consulted, because development shells override it.
+3. `$XDG_RUNTIME_DIR/nekomata`, when that variable holds an absolute path.
+4. `/tmp/nekomata-<uid>`.
+
+Candidates 2 and 3 are skipped when a socket path inside them would exceed
+the Unix socket path limit. The directory is created with mode 0700; if it
+exists but is not a directory owned by the current user with no group or
+other permissions, windows and CLI commands fail and name the directory.
+
 ## SSH
 
 - SSH commands run on the machine running the GUI. Hosts may be

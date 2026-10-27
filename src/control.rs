@@ -1,8 +1,6 @@
 //! Per-window control socket. Only the GUI thread mutates panes.
 use std::{
-    collections::hash_map::DefaultHasher,
     ffi::OsString,
-    hash::{Hash, Hasher},
     os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
@@ -51,30 +49,76 @@ const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_MESSAGE: u64 = 65536;
 
 pub(crate) fn directory() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is required for GUI discovery")?;
-    let owner = std::fs::metadata(&home)?.uid();
-    let path = default_directory(|name| std::env::var_os(name), owner);
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let owner = unsafe { libc::geteuid() };
+    let path = default_directory(|name| std::env::var_os(name), owner, user_temp_directory());
     match std::fs::DirBuilder::new().mode(0o700).create(&path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(err.into()),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("create control directory {}", path.display()));
+        }
     }
     let metadata = std::fs::symlink_metadata(&path)?;
     if !metadata.is_dir() || metadata.uid() != owner || metadata.permissions().mode() & 0o077 != 0 {
-        bail!("control directory must be private and owned by the current user");
+        bail!(
+            "control directory {} must be private and owned by the current user",
+            path.display()
+        );
     }
     Ok(path)
 }
 
-fn default_directory(env: impl Fn(&str) -> Option<OsString>, owner: u32) -> PathBuf {
+/// Longest name bound in the directory: `{u32::MAX}.sock`.
+const LONGEST_SOCKET_NAME: usize = "4294967295.sock".len();
+/// `sun_path` holds 104 bytes on macOS (108 on Linux), including the NUL.
+const MAX_SOCKET_PATH: usize = 103;
+
+/// Every process of one user must agree on this path whatever its build or
+/// environment, so it uses no hash and no per-shell variable like TMPDIR.
+fn default_directory(
+    env: impl Fn(&str) -> Option<OsString>,
+    owner: u32,
+    user_temp: Option<PathBuf>,
+) -> PathBuf {
     if let Some(path) = env("NEKOMATA_RUNTIME_DIR") {
         return PathBuf::from(path);
     }
-    let home = env("HOME").unwrap_or_default();
-    let mut hash = DefaultHasher::new();
-    home.hash(&mut hash);
-    // Keep Unix socket paths short, including on macOS.
-    PathBuf::from("/tmp").join(format!("nekomata-{owner}-{:x}", hash.finish()))
+    let xdg = env("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    user_temp
+        .into_iter()
+        .chain(xdg)
+        .map(|base| base.join("nekomata"))
+        .find(|path| path.as_os_str().len() + 1 + LONGEST_SOCKET_NAME <= MAX_SOCKET_PATH)
+        .unwrap_or_else(|| PathBuf::from(format!("/tmp/nekomata-{owner}")))
+}
+
+/// The per-user temporary directory macOS derives from the uid, unlike TMPDIR.
+#[cfg(target_os = "macos")]
+fn user_temp_directory() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buffer = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: the buffer is writable for its full length.
+    let length = unsafe {
+        libc::confstr(
+            libc::_CS_DARWIN_USER_TEMP_DIR,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+        )
+    };
+    if length == 0 || length > buffer.len() {
+        return None;
+    }
+    let path = std::ffi::CStr::from_bytes_until_nul(&buffer).ok()?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes())))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn user_temp_directory() -> Option<PathBuf> {
+    None
 }
 
 impl Server {
@@ -325,6 +369,83 @@ mod tests {
             ])),
             Some(5)
         );
+    }
+
+    fn vars(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
+        move |name: &str| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        }
+    }
+
+    #[test]
+    fn runtime_directory_does_not_depend_on_home_or_build() {
+        // A hash of HOME could change between Rust releases; the path must not.
+        assert_eq!(
+            default_directory(vars(&[("HOME", "/home/a")]), 501, None),
+            PathBuf::from("/tmp/nekomata-501")
+        );
+        assert_eq!(
+            default_directory(vars(&[("HOME", "/home/b")]), 501, None),
+            PathBuf::from("/tmp/nekomata-501")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_prefers_the_override_then_per_user_locations() {
+        let darwin = Some(PathBuf::from("/var/folders/ab/cd/T/"));
+        assert_eq!(
+            default_directory(
+                vars(&[
+                    ("NEKOMATA_RUNTIME_DIR", "/x/gui"),
+                    ("XDG_RUNTIME_DIR", "/run/user/501")
+                ]),
+                501,
+                darwin.clone()
+            ),
+            PathBuf::from("/x/gui")
+        );
+        // TMPDIR differs per environment (nix develop sets its own), so the
+        // macOS directory comes from confstr, not the variable.
+        assert_eq!(
+            default_directory(
+                vars(&[
+                    ("TMPDIR", "/tmp/nix-shell.x"),
+                    ("XDG_RUNTIME_DIR", "/run/user/501")
+                ]),
+                501,
+                darwin
+            ),
+            PathBuf::from("/var/folders/ab/cd/T/nekomata")
+        );
+        assert_eq!(
+            default_directory(vars(&[("XDG_RUNTIME_DIR", "/run/user/501")]), 501, None),
+            PathBuf::from("/run/user/501/nekomata")
+        );
+        // The XDG specification ignores relative paths.
+        assert_eq!(
+            default_directory(vars(&[("XDG_RUNTIME_DIR", "run")]), 501, None),
+            PathBuf::from("/tmp/nekomata-501")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_skips_bases_too_long_for_socket_paths() {
+        let long = Some(PathBuf::from(format!("/{}", "d".repeat(90))));
+        assert_eq!(
+            default_directory(vars(&[]), 501, long),
+            PathBuf::from("/tmp/nekomata-501")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_user_temp_directory_is_owned_by_the_user() {
+        let path = user_temp_directory().unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
     }
 
     #[test]

@@ -15,6 +15,15 @@ pkill -f 'nekomata-bin daemon run'
 Your workspace layouts are lost, but your shells keep running in felis;
 [attach to them again](sessions.md) after restarting.
 
+## CLI commands report no running window after an update
+
+nekomata keeps its window and daemon sockets in a
+[per-user runtime directory](../spec/panes.md#runtime-directory). Versions
+before the directory moved there cannot be reached by newer CLI commands, and
+a newer window starts a second nekomata daemon beside the old one. Close every
+window, end the old daemon as [above](#nekomata-reports-an-incompatible-daemon),
+then start nekomata again.
+
 ## An update to felis does not take effect
 
 Restarting the GUI does not restart the felis daemon, which owns your shells.
