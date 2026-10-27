@@ -160,11 +160,12 @@ daemon delivers each write to at most one window attached to the session.
 - Shell input — keys, pastes, and mouse button, drag or wheel reports — made
   while the pane is reconnecting, or queued or being written when the
   connection was lost, is discarded; so is a paste made before the first
-  connection. Keys typed before the first connection are queued and
-  delivered once it is made. The pane then shows that some input was not delivered. The
+  connection. The pane then shows that some input was not delivered. The
   notice stays until the next shell input is accepted for sending; while the
   pane is connecting, reconnecting or showing an error, that status is shown
   instead.
+- Keys typed before the first connection are queued and delivered once it is
+  made.
 - Pane size and focus reports, buttonless mouse motion, scrollback navigation
   and frame requests are not shell input and show no notice when discarded.
   The pane reports its current size and focus again on every new connection.
