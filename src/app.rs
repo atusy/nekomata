@@ -1176,6 +1176,7 @@ impl App {
                     ui.label("Connecting to workspace…");
                 }
             });
+            control::reject_all(&mut self.control.requests, "workspace is not ready");
             return;
         }
         self.control_requests(ctx);

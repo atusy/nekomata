@@ -1,8 +1,7 @@
 //! Per-window control socket. Only the GUI thread mutates panes.
 use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
+    ffi::OsString,
+    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -48,28 +47,99 @@ pub struct Server {
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_MESSAGE: u64 = 65536;
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+const MAX_ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 
 pub(crate) fn directory() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is required for GUI discovery")?;
-    let owner = std::fs::metadata(&home)?.uid();
-    let mut hash = DefaultHasher::new();
-    home.hash(&mut hash);
-    // Keep Unix socket paths short, including on macOS.
-    let path = std::env::var_os("NEKOMATA_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from("/tmp").join(format!("nekomata-{owner}-{:x}", hash.finish()))
-        });
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let owner = unsafe { libc::geteuid() };
+    let path = default_directory(
+        |name| std::env::var_os(name),
+        owner,
+        user_temp_directory(),
+        |base| is_private_directory(base, owner),
+    );
     match std::fs::DirBuilder::new().mode(0o700).create(&path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(err.into()),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("create control directory {}", path.display()));
+        }
     }
-    let metadata = std::fs::symlink_metadata(&path)?;
-    if !metadata.is_dir() || metadata.uid() != owner || metadata.permissions().mode() & 0o077 != 0 {
-        bail!("control directory must be private and owned by the current user");
+    if !is_private_directory(&path, owner) {
+        bail!(
+            "control directory {} must be private and owned by the current user",
+            path.display()
+        );
     }
     Ok(path)
+}
+
+/// Longest name bound in the directory: `{u32::MAX}.sock`.
+const LONGEST_SOCKET_NAME: usize = "4294967295.sock".len();
+/// `sun_path` (104 bytes on macOS, 108 on Linux) less its NUL terminator.
+const MAX_SOCKET_PATH: usize = std::mem::size_of::<libc::sockaddr_un>()
+    - std::mem::offset_of!(libc::sockaddr_un, sun_path)
+    - 1;
+
+/// Every process of one user must agree on this path whatever its build or
+/// environment, so it uses no hash and no per-shell variable like TMPDIR.
+/// `XDG_RUNTIME_DIR` is read but also implied: logind's `/run/user/<uid>` is
+/// probed for processes started without it.
+fn default_directory(
+    env: impl Fn(&str) -> Option<OsString>,
+    owner: u32,
+    user_temp: Option<PathBuf>,
+    private: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    if let Some(path) = env("NEKOMATA_RUNTIME_DIR") {
+        return PathBuf::from(path);
+    }
+    let xdg = env("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    user_temp
+        .into_iter()
+        .chain(xdg)
+        .chain([PathBuf::from(format!("/run/user/{owner}"))])
+        .filter(|base| private(base))
+        .map(|base| base.join("nekomata"))
+        .find(|path| path.as_os_str().len() + 1 + LONGEST_SOCKET_NAME <= MAX_SOCKET_PATH)
+        .unwrap_or_else(|| PathBuf::from(format!("/tmp/nekomata-{owner}")))
+}
+
+/// Whether `path` is an existing directory only `owner` can use, as the XDG
+/// specification requires of `XDG_RUNTIME_DIR`.
+fn is_private_directory(path: &Path, owner: u32) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.is_dir() && metadata.uid() == owner && metadata.permissions().mode() & 0o077 == 0
+    })
+}
+
+/// The per-user temporary directory macOS derives from the uid, unlike TMPDIR.
+#[cfg(target_os = "macos")]
+fn user_temp_directory() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buffer = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: the buffer is writable for its full length.
+    let length = unsafe {
+        libc::confstr(
+            libc::_CS_DARWIN_USER_TEMP_DIR,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+        )
+    };
+    if length == 0 || length > buffer.len() {
+        return None;
+    }
+    let path = std::ffi::CStr::from_bytes_until_nul(&buffer).ok()?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes())))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn user_temp_directory() -> Option<PathBuf> {
+    None
 }
 
 impl Server {
@@ -77,17 +147,23 @@ impl Server {
         let window = std::process::id();
         let path = directory()?.join(format!("{window}.sock"));
         let _guard = runtime.enter();
-        let listener = UnixListener::bind(&path).context("bind nekomata control socket")?;
+        let listener = listen(&path).context("bind nekomata control socket")?;
+        listener.set_nonblocking(true)?;
+        let listener = std::sync::Arc::new(UnixListener::from_std(listener)?);
         let (tx, requests) = mpsc::channel::<Message>(16);
-        let task = runtime.spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
+        let task = runtime.spawn(accept_each(
+            move || {
+                let listener = listener.clone();
+                async move { listener.accept().await.map(|(stream, _)| stream) }
+            },
+            move |stream| {
                 let tx = tx.clone();
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(DEADLINE, serve(stream, tx, ctx)).await;
                 });
-            }
-        });
+            },
+        ));
         Ok(Self {
             window,
             requests,
@@ -97,10 +173,63 @@ impl Server {
     }
 }
 
+async fn accept_each<S, F>(mut accept: impl FnMut() -> F, mut handle: impl FnMut(S))
+where
+    F: Future<Output = std::io::Result<S>>,
+{
+    let mut backoff = ACCEPT_BACKOFF;
+    loop {
+        match accept().await {
+            Ok(stream) => {
+                backoff = ACCEPT_BACKOFF;
+                handle(stream);
+            }
+            // Errors such as EMFILE pass once connections close; retrying
+            // without a pause would spin while the condition lasts.
+            Err(err) => {
+                eprintln!("nekomata: accept control connection: {err}");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(MAX_ACCEPT_BACKOFF);
+            }
+        }
+    }
+}
+
+/// Window sockets are named by PID and removed only on a clean exit, so a
+/// crashed window's socket can occupy the name of a later process.
+fn listen(path: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
+    use std::os::unix::net::{UnixListener, UnixStream};
+    match UnixListener::bind(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+            match UnixStream::connect(path) {
+                // Linux also refuses connections to a regular file.
+                Err(refused)
+                    if refused.kind() == std::io::ErrorKind::ConnectionRefused
+                        && std::fs::symlink_metadata(path)
+                            .is_ok_and(|metadata| metadata.file_type().is_socket()) =>
+                {
+                    std::fs::remove_file(path)?;
+                    UnixListener::bind(path)
+                }
+                _ => Err(err),
+            }
+        }
+        result => result,
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Answers queued requests at once, so CLI calls fail fast instead of
+/// waiting out [`DEADLINE`] while the window cannot act on them.
+pub fn reject_all(requests: &mut mpsc::Receiver<Message>, reason: &str) {
+    while let Ok(message) = requests.try_recv() {
+        let _ = message.reply.send(Err(reason.into()));
     }
 }
 
@@ -320,6 +449,231 @@ mod tests {
             ])),
             Some(5)
         );
+    }
+
+    fn vars(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<OsString> {
+        move |name: &str| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        }
+    }
+
+    /// Treats exactly `bases` as existing private directories of the user.
+    fn private(bases: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |path| bases.iter().any(|base| path == Path::new(base))
+    }
+
+    #[test]
+    fn runtime_directory_falls_back_to_a_name_fixed_by_the_uid() {
+        // The name once hashed HOME with an algorithm Rust may change.
+        assert_eq!(
+            default_directory(vars(&[("HOME", "/home/a")]), 501, None, private(&[])),
+            PathBuf::from("/tmp/nekomata-501")
+        );
+        assert_eq!(
+            default_directory(vars(&[("HOME", "/home/b")]), 501, None, private(&[])),
+            PathBuf::from("/tmp/nekomata-501")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_prefers_the_override_then_per_user_locations() {
+        let darwin = Some(PathBuf::from("/var/folders/ab/cd/T"));
+        let all = private(&["/var/folders/ab/cd/T", "/run/user/501", "/xdg"]);
+        assert_eq!(
+            default_directory(
+                vars(&[
+                    ("NEKOMATA_RUNTIME_DIR", "/x/gui"),
+                    ("XDG_RUNTIME_DIR", "/xdg")
+                ]),
+                501,
+                darwin.clone(),
+                &all
+            ),
+            PathBuf::from("/x/gui")
+        );
+        // TMPDIR differs per environment (nix develop sets its own), so the
+        // macOS directory comes from confstr, not the variable.
+        assert_eq!(
+            default_directory(
+                vars(&[("TMPDIR", "/tmp/nix-shell.x"), ("XDG_RUNTIME_DIR", "/xdg")]),
+                501,
+                darwin,
+                &all
+            ),
+            PathBuf::from("/var/folders/ab/cd/T/nekomata")
+        );
+        assert_eq!(
+            default_directory(vars(&[("XDG_RUNTIME_DIR", "/xdg")]), 501, None, &all),
+            PathBuf::from("/xdg/nekomata")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_on_linux_does_not_need_xdg_runtime_dir() {
+        // Shells started by felis, cron or a bare ssh login may lack the
+        // variable; they must still meet a desktop-launched GUI.
+        let logind = private(&["/run/user/501"]);
+        assert_eq!(
+            default_directory(vars(&[]), 501, None, &logind),
+            PathBuf::from("/run/user/501/nekomata")
+        );
+        // The XDG specification ignores relative paths.
+        assert_eq!(
+            default_directory(vars(&[("XDG_RUNTIME_DIR", "run")]), 501, None, &logind),
+            PathBuf::from("/run/user/501/nekomata")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_skips_bases_that_are_missing_or_not_private() {
+        // `sudo -E` keeps another user's XDG_RUNTIME_DIR; a logout removes it.
+        assert_eq!(
+            default_directory(
+                vars(&[("XDG_RUNTIME_DIR", "/run/user/1000")]),
+                0,
+                Some(PathBuf::from("/var/folders/ab/cd/T")),
+                private(&[])
+            ),
+            PathBuf::from("/tmp/nekomata-0")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_skips_bases_too_long_for_socket_paths() {
+        // `{base}/nekomata/4294967295.sock` must fit in sun_path.
+        let longest = MAX_SOCKET_PATH - "/nekomata/4294967295.sock".len();
+        let base = |len: usize| PathBuf::from(format!("/{}", "d".repeat(len - 1)));
+        assert_eq!(
+            default_directory(vars(&[]), 501, Some(base(longest)), |_| true),
+            base(longest).join("nekomata")
+        );
+        assert_eq!(
+            default_directory(vars(&[]), 501, Some(base(longest + 1)), |_| true),
+            PathBuf::from("/run/user/501/nekomata")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_user_temp_directory_is_owned_by_the_user() {
+        let path = user_temp_directory().unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+    }
+
+    #[test]
+    fn a_crashed_window_socket_does_not_block_its_pid() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("7.sock");
+        // A crash skips Drop, leaving the bound path behind with no listener.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        assert!(path.exists());
+        let listener = listen(&path).unwrap();
+        std::os::unix::net::UnixStream::connect(&path).unwrap();
+        drop(listener);
+    }
+
+    // Discriminates on Linux, where connecting to a regular file is refused;
+    // macOS reports ENOTSOCK, which never reaches the reclaim path.
+    #[test]
+    fn only_sockets_are_reclaimed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("7.sock");
+        std::fs::write(&path, "keep").unwrap();
+        listen(&path).unwrap_err();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep");
+    }
+
+    #[test]
+    fn a_live_window_socket_is_not_taken_over() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("7.sock");
+        let _live = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert_eq!(
+            listen(&path).unwrap_err().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+        std::os::unix::net::UnixStream::connect(&path).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transient_accept_errors_do_not_stop_the_control_socket() {
+        let mut results = std::collections::VecDeque::from([
+            Err(std::io::Error::from_raw_os_error(libc::EMFILE)),
+            Ok(1),
+        ]);
+        let (tx, mut handled) = mpsc::unbounded_channel();
+        let task = tokio::spawn(accept_each(
+            move || {
+                let next = results.pop_front();
+                async move {
+                    match next {
+                        Some(result) => result,
+                        None => std::future::pending().await,
+                    }
+                }
+            },
+            move |stream| tx.send(stream).unwrap(),
+        ));
+        assert_eq!(handled.recv().await, Some(1));
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sustained_accept_errors_back_off_until_one_succeeds() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = calls.clone();
+        let mut results: std::collections::VecDeque<std::io::Result<u8>> = (0..5)
+            .map(|_| Err(std::io::Error::from_raw_os_error(libc::EMFILE)))
+            .chain([Ok(1)])
+            .chain((0..2).map(|_| Err(std::io::Error::from_raw_os_error(libc::EMFILE))))
+            .chain([Ok(2)])
+            .collect();
+        let (tx, mut handled) = mpsc::unbounded_channel();
+        let task = tokio::spawn(accept_each(
+            move || {
+                record.lock().unwrap().push(tokio::time::Instant::now());
+                let next = results.pop_front();
+                async move {
+                    match next {
+                        Some(result) => result,
+                        None => std::future::pending().await,
+                    }
+                }
+            },
+            move |stream| tx.send(stream).unwrap(),
+        ));
+        assert_eq!(handled.recv().await, Some(1));
+        assert_eq!(handled.recv().await, Some(2));
+        task.abort();
+        let calls = calls.lock().unwrap();
+        let gaps: Vec<_> = calls
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).as_millis())
+            .collect();
+        // Doubles to the cap while errors persist; a success resets it.
+        assert_eq!(gaps, [100, 200, 400, 800, 1000, 0, 100, 200, 0]);
+    }
+
+    #[test]
+    fn pending_requests_are_answered_when_the_window_cannot_serve_them() {
+        let (tx, mut requests) = mpsc::channel(2);
+        let mut replies = Vec::new();
+        for request in [Request::List, Request::Switch { workspace: None }] {
+            let (reply, result) = oneshot::channel();
+            tx.try_send(Message { request, reply }).unwrap();
+            replies.push(result);
+        }
+        reject_all(&mut requests, "workspace is not ready");
+        for mut result in replies {
+            assert_eq!(
+                result.try_recv().unwrap(),
+                Err("workspace is not ready".into())
+            );
+        }
     }
 
     #[test]

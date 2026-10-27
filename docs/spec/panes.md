@@ -76,12 +76,43 @@ A CLI command targets a window as follows:
    the command fails; it does not fall back further.
 3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
 4. Otherwise the only running GUI window. With no window or several, the
-   command fails; with several, it reports the window discovery directory.
+   command fails; with several, it reports the
+   [runtime directory](#runtime-directory).
 
 Because resolution goes through the workspace ID, a shell keeps reaching its
 window after the GUI restarts. A shell carries the IDs it was started with,
 so a shell moved to another workspace by hand still targets its original
 workspace's window; pass `--window` there.
+
+A window that has not yet attached a workspace, because it is still
+connecting to the nekomata daemon or failed to, answers every command at once
+with the error `workspace is not ready`.
+
+## Runtime directory
+
+Windows and the nekomata daemon publish their sockets (`<window>.sock`,
+`daemon.sock`) in one per-user directory, chosen as the first of:
+
+1. `$NEKOMATA_RUNTIME_DIR`.
+2. On macOS, `nekomata` in the per-user temporary directory the system derives
+   from the user ID (`confstr(_CS_DARWIN_USER_TEMP_DIR)`); `$TMPDIR` is not
+   consulted, because development shells override it.
+3. `$XDG_RUNTIME_DIR/nekomata`, when that variable holds an absolute path.
+4. `/run/user/<uid>/nekomata`, so that processes started without
+   `$XDG_RUNTIME_DIR` (cron, some SSH logins) still meet a desktop session.
+5. `/tmp/nekomata-<uid>`.
+
+Candidates 2 to 4 are skipped when their base is not an existing directory
+owned by the current user with no group or other permissions, or when a
+socket path inside them would exceed the Unix socket path limit. The
+directory is created with mode 0700; if it exists but is not a directory
+owned by the current user with no group or other permissions, windows and CLI
+commands fail and name the directory.
+
+A window socket is named after the GUI's process ID and removed when the
+window closes. A window that finds its name taken by a socket nothing listens
+on, left by a crashed process, replaces it; it does not replace a socket that
+accepts connections.
 
 ## SSH
 

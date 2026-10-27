@@ -2025,6 +2025,7 @@ dependencies = [
  "felis-shaping",
  "felis-transport",
  "gethostname",
+ "libc",
  "memmap2",
  "objc2-core-foundation",
  "objc2-core-text",
