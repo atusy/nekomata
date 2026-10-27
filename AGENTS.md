@@ -43,7 +43,7 @@ cargo clippy --locked --all-targets -- -D warnings
 bash scripts/test-live.sh                   # Run isolated daemon integration tests
 ```
 
-Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` for package and fish integration checks. Format Nix with `nix fmt -- flake.nix`.
+Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` to run the package build and its Rust tests, rustfmt, clippy and fish integration checks. Format Nix with `nix fmt -- flake.nix`.
 
 On macOS, `bash scripts/install-macos.sh` installs or updates `~/Applications/nekomata.app`; restart the GUI to load changes.
 

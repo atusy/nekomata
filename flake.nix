@@ -227,9 +227,19 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          inherit (rustBuild system) craneLib common cargoArtifacts;
         in
         {
           build = self.packages.${system}.default;
+          clippy = craneLib.cargoClippy (
+            common
+            // {
+              inherit cargoArtifacts;
+              cargoClippyExtraArgs = "--all-targets -- -D warnings";
+              doInstallCargoArtifacts = false;
+            }
+          );
+          fmt = craneLib.cargoFmt { inherit (common) src; };
           fish-integration =
             pkgs.runCommand "nekomata-fish-integration"
               {
