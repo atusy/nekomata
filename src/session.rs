@@ -133,6 +133,28 @@ impl State {
         )
     }
 
+    /// `clipboard` decides whether an OSC 52 write reaches the system
+    /// clipboard (see [`system_clipboard_text`]).
+    fn apply_grid(
+        &mut self,
+        msg: &GridMsg,
+        clipboard: &felis_client_core::config::ClipboardConfig,
+    ) -> Result<()> {
+        self.pull.on_frame(msg);
+        self.screen.apply(msg)?;
+        self.redraw.request();
+        self.colors.apply_grid(msg);
+        if matches!(msg, GridMsg::RehydrateBegin) {
+            self.images = felis_client_core::ImageShadow::new();
+        }
+        if let GridMsg::ClipboardSet { write } = msg
+            && let Some(text) = system_clipboard_text(write, clipboard)
+        {
+            self.clipboard = Some(text);
+        }
+        Ok(())
+    }
+
     pub fn render_ready(&self) -> bool {
         self.connected && !self.screen.is_rehydrating() && !self.pull.cycle_open()
     }
@@ -572,18 +594,7 @@ async fn pump(
                     Incoming::Payload(payload) => match payload.kind {
                         MessageKind::Grid => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<GridMsg>(&payload)? {
-                                let mut state = shared.lock().unwrap();
-                                state.pull.on_frame(&delivery.msg);
-                                state.screen.apply(&delivery.msg)?;
-                                state.redraw.request();
-                                state.colors.apply_grid(&delivery.msg);
-                                if matches!(delivery.msg, GridMsg::RehydrateBegin) {
-                                    state.images = felis_client_core::ImageShadow::new();
-                                }
-                                if let GridMsg::ClipboardSet { write } = &delivery.msg
-                                    && let Some(text) = system_clipboard_text(write, &clipboard) {
-                                    state.clipboard = Some(text);
-                                }
+                                shared.lock().unwrap().apply_grid(&delivery.msg, &clipboard)?;
                                 ctx.request_repaint();
                             }
                         }
