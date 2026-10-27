@@ -2040,11 +2040,7 @@ fn draw_pane(
             })
         });
     }
-    if pane
-        .session
-        .input_failed
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
+    if pane.session.input_lost() {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,

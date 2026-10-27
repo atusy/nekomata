@@ -194,6 +194,7 @@ struct InputQueue {
     frames: Mutex<OutgoingQueue>,
     ready: Notify,
     accepting: AtomicBool,
+    lost: AtomicBool,
 }
 
 impl Default for InputQueue {
@@ -202,12 +203,21 @@ impl Default for InputQueue {
             frames: Mutex::new(OutgoingQueue::default()),
             ready: Notify::new(),
             accepting: AtomicBool::new(true),
+            lost: AtomicBool::new(false),
         }
     }
 }
 
 impl InputQueue {
     fn push(&self, msg: &InputMsg) -> Result<()> {
+        let result = self.enqueue(msg);
+        if result.is_err() {
+            self.mark_lost();
+        }
+        result
+    }
+
+    fn enqueue(&self, msg: &InputMsg) -> Result<()> {
         let frame = OutgoingFrame::input(msg)?;
         let mut frames = self.frames.lock().unwrap();
         if !self.accepting.load(Ordering::Acquire) {
@@ -232,6 +242,14 @@ impl InputQueue {
         self.accepting.store(true, Ordering::Release);
     }
 
+    fn mark_lost(&self) {
+        self.lost.store(true, Ordering::Relaxed);
+    }
+
+    fn input_lost(&self) -> bool {
+        self.lost.load(Ordering::Relaxed)
+    }
+
     async fn next(&self) -> OutgoingFrame {
         loop {
             let notified = self.ready.notified();
@@ -245,7 +263,6 @@ impl InputQueue {
 
 pub struct Session {
     pub state: Arc<Mutex<State>>,
-    pub input_failed: Arc<AtomicBool>,
     pub target: Target,
     pub attachment: Option<String>,
     pub search: crate::terminal_search::Tools,
@@ -302,8 +319,6 @@ impl Session {
             crate::terminal_search::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
         let tx = Arc::new(InputQueue::default());
         let rx = tx.clone();
-        let input_failed = Arc::new(AtomicBool::new(false));
-        let failed = input_failed.clone();
         let attachment = attach.clone();
         let shared = state.clone();
         let destination = target.clone();
@@ -316,7 +331,6 @@ impl Session {
                 attach,
                 cwd,
                 env,
-                failed,
             )
             .await;
             rx.close();
@@ -339,7 +353,6 @@ impl Session {
             state,
             tx,
             task,
-            input_failed,
             target,
             attachment,
             search,
@@ -373,9 +386,12 @@ impl Session {
     }
 
     pub fn send(&self, msg: InputMsg) {
-        if self.tx.push(&msg).is_err() {
-            self.input_failed.store(true, Ordering::Relaxed);
-        }
+        let _ = self.tx.push(&msg);
+    }
+
+    /// Whether input may not have reached the shell.
+    pub fn input_lost(&self) -> bool {
+        self.tx.input_lost()
     }
 }
 
@@ -416,7 +432,6 @@ async fn run(
     attach: Option<String>,
     cwd: Option<String>,
     env: Vec<(String, String)>,
-    input_failed: Arc<AtomicBool>,
 ) -> Result<()> {
     let (mut conn, info, mut relay) = tokio::time::timeout(Duration::from_secs(20), async {
         let carrier = target.carrier();
@@ -485,7 +500,7 @@ async fn run(
     }
     ctx.request_repaint();
     loop {
-        let result = pump(&mut conn, &shared, &ctx, &rx, &input_failed).await;
+        let result = pump(&mut conn, &shared, &ctx, &rx).await;
         let Err(error) = result else {
             return Ok(());
         };
@@ -493,7 +508,7 @@ async fn run(
             return Err(error);
         }
         if rx.close() {
-            input_failed.store(true, Ordering::Relaxed);
+            rx.mark_lost();
         }
         {
             let mut state = shared.lock().unwrap();
@@ -607,7 +622,6 @@ async fn pump(
     shared: &Arc<Mutex<State>>,
     ctx: &egui::Context,
     rx: &InputQueue,
-    input_failed: &AtomicBool,
 ) -> Result<()> {
     let clipboard = crate::terminal_config::get(ctx).clipboard.clone();
     loop {
@@ -615,8 +629,8 @@ async fn pump(
             command = rx.next() => {
                 match tokio::time::timeout(Duration::from_secs(10), conn.writer.send_checked(command.frame())).await {
                     Ok(Ok(())) => {},
-                    Ok(Err(error)) => { input_failed.store(true, Ordering::Relaxed); return Err(error.into()); }
-                    Err(error) => { input_failed.store(true, Ordering::Relaxed); return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()); }
+                    Ok(Err(error)) => { rx.mark_lost(); return Err(error.into()); }
+                    Err(error) => { rx.mark_lost(); return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()); }
                 }
             }
             frame = conn.next_frame() => {
