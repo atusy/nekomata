@@ -190,17 +190,16 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
         // Configuration problems never stop startup: a window launched from
         // the Finder or Dock has nowhere else to show them.
-        let (terminal, mut config_problems) = crate::terminal_config::load();
-        crate::terminal_config::install(&cc.egui_ctx, terminal);
         let (
+            terminal,
             crate::app_config::Settings {
                 ui_size,
                 ui_face,
                 keymap,
             },
-            app_problems,
-        ) = crate::app_config::load();
-        config_problems.extend(app_problems);
+            config_problems,
+        ) = crate::config_report::load_both(crate::terminal_config::load, crate::app_config::load);
+        crate::terminal_config::install(&cc.egui_ctx, terminal);
         for problem in &config_problems {
             eprintln!("nekomata: {problem}");
         }

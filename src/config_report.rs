@@ -48,6 +48,18 @@ impl std::fmt::Display for Problem {
     }
 }
 
+/// Loads the terminal layer, then the application layer, keeping every
+/// problem of both: a broken document never stops the other's load.
+pub fn load_both<T, A>(
+    terminal: impl FnOnce() -> (T, Vec<Problem>),
+    app: impl FnOnce() -> (A, Vec<Problem>),
+) -> (T, A, Vec<Problem>) {
+    let (terminal, mut problems) = terminal();
+    let (app, app_problems) = app();
+    problems.extend(app_problems);
+    (terminal, app, problems)
+}
+
 /// Escapes control characters, which TOML strings and quoted keys can
 /// carry, so a config file cannot drive the terminal showing stderr.
 /// Line breaks and tabs stay: they cannot, and toml's parse errors lay
@@ -83,6 +95,21 @@ mod tests {
             "/c/config.toml is ignored: TOML parse error"
         );
         assert_eq!(warning.to_string(), "/c/config.toml: unknown key `x`");
+    }
+
+    #[test]
+    fn both_layers_report_their_errors_terminal_layer_first() {
+        let (_, _, problems) = load_both(
+            || ((), vec![Problem::error("/felis.toml", "broken")]),
+            || ((), vec![Problem::error("/nekomata.toml", "broken")]),
+        );
+        assert_eq!(
+            problems,
+            [
+                Problem::error("/felis.toml", "broken"),
+                Problem::error("/nekomata.toml", "broken"),
+            ]
+        );
     }
 
     #[test]
