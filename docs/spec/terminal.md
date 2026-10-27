@@ -98,8 +98,8 @@ daemon delivers each write to at most one window attached to the session.
   discarded.
 - A paste larger than felis's paste limit (16 MiB minus 64 bytes) is refused
   before any confirmation, never truncated, and the pane shows its size and
-  the limit. The notice stays until the next key, paste or mouse report is
-  accepted for sending.
+  the limit. The notice stays until the next key, paste, or mouse button, drag
+  or wheel report is accepted for sending.
 
 ## Scrolling
 
@@ -153,16 +153,17 @@ daemon delivers each write to at most one window attached to the session.
   same session for a bounded period. When retries run out, or on any other
   connection error, the pane shows the error.
 - A frame from felis that the pane cannot apply is a connection error of that
-  pane alone: its screen is cleared to the error, and the window and its other
-  panes keep working.
+  pane alone; the window and its other panes keep working. If applying it
+  panicked, the pane's screen is also cleared, since it may be half-updated.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
-- Keys, pastes and mouse clicks or wheel reports that are typed while the pane
-  is reconnecting, or that were queued or being written when the connection
-  was lost, are discarded. The pane then shows that some input was not
-  delivered. The notice stays until the next key, paste or mouse report is
-  accepted for sending; while the pane is connecting, reconnecting or showing
-  an error, that status is shown instead.
-- Pane size and focus reports, scrollback navigation and frame requests are
-  not shell input and show no notice when discarded. The pane reports its
-  current size and focus again on every new connection.
+- Shell input — keys, pastes, and mouse button, drag or wheel reports — made
+  while the pane is reconnecting, or queued or being written when the
+  connection was lost, is discarded; so is a paste made before the first
+  connection. The pane then shows that some input was not delivered. The
+  notice stays until the next shell input is accepted for sending; while the
+  pane is connecting, reconnecting or showing an error, that status is shown
+  instead.
+- Pane size and focus reports, buttonless mouse motion, scrollback navigation
+  and frame requests are not shell input and show no notice when discarded.
+  The pane reports its current size and focus again on every new connection.
