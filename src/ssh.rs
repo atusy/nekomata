@@ -19,7 +19,7 @@ fn relay_command(host: &str, socket: Option<&str>) -> Command {
         remote.push_str(&format!(" --socket '{}'", socket.replace('\'', "'\\''")));
     }
     let mut command = Command::new("ssh");
-    command.arg("-oBatchMode=yes").arg(host).arg(remote);
+    command.args(["-oBatchMode=yes", "--", host, &remote]);
     command
 }
 
@@ -100,6 +100,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_cannot_be_read_as_an_ssh_option() {
+        let command = relay_command("-oProxyCommand=false", None);
+        let args: Vec<_> = command.as_std().get_args().collect();
+        assert_eq!(args[..3], ["-oBatchMode=yes", "--", "-oProxyCommand=false"]);
+    }
 
     #[test]
     fn default_socket_is_resolved_on_the_remote_host() {

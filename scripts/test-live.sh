@@ -24,6 +24,11 @@ cat > "$test_directory/bin/ssh" <<'SSH'
 #!/bin/sh
 set -eu
 [ "$1" = '-oBatchMode=yes' ]
+# Options end before the host; drop the marker to check the rest by position.
+[ "$2" = '--' ]
+option=$1
+shift 2
+set -- "$option" "$@"
 [ "$2" = 'nekomata-test-host' ]
 if [ "$#" = 3 ]; then
   if [ "$3" = 'exec felis-daemon relay --no-spawn' ]; then

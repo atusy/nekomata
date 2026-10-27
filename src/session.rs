@@ -68,7 +68,8 @@ impl Target {
             Self::Local(path) => Carrier::Local(path.clone().into()),
             Self::Ssh { host, .. } => Carrier::Ssh {
                 destination: host.clone(),
-                ssh_args: vec!["-oBatchMode=yes".into()],
+                // felis splices these before the destination; end options there.
+                ssh_args: vec!["-oBatchMode=yes".into(), "--".into()],
             },
         }
     }
@@ -940,6 +941,18 @@ mod tests {
         assert!(transport_loss(
             &std::io::Error::from(std::io::ErrorKind::BrokenPipe).into()
         ));
+    }
+
+    #[test]
+    fn ssh_carrier_ends_options_before_the_host() {
+        let target = Target::Ssh {
+            host: "dev".into(),
+            socket: None,
+        };
+        let Carrier::Ssh { ssh_args, .. } = target.carrier() else {
+            panic!("SSH target must use the SSH carrier");
+        };
+        assert_eq!(ssh_args.last().map(String::as_str), Some("--"));
     }
 
     #[test]
