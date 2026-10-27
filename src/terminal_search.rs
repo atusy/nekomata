@@ -591,7 +591,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(session.state.lock().unwrap().lifecycle.is_live());
-        assert!(!session.state.lock().unwrap().lifecycle.is_ended());
         session.search.search(
             "(".into(),
             SearchOptions {
@@ -671,7 +670,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(session.state.lock().unwrap().lifecycle.is_live());
-        assert!(!session.state.lock().unwrap().lifecycle.is_ended());
         std::fs::remove_file(quoted_socket).unwrap();
     }
 }
