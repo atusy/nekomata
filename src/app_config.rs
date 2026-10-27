@@ -249,26 +249,6 @@ fn parse_keymap(
         .collect()
 }
 
-/// felis's binding kinds that act on one terminal or felis session; they
-/// belong in felis's `[keymap]`.
-const TERMINAL_KINDS: &[&str] = &[
-    "send_string",
-    "paste",
-    "copy",
-    "reload",
-    "detach",
-    "toggle_fullscreen",
-    "font_size",
-    "scroll",
-    "scroll_to_prompt",
-    "open_scrollback_search",
-    "switch_session",
-    "new_session",
-    "kill_session",
-    "pipe",
-    "run",
-];
-
 /// `None` is `unbind`.
 fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
     let binding = value
@@ -348,12 +328,11 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
         "command_palette" => (Some(Action::Palette), &[]),
         "new_workspace" => (Some(Action::NewWorkspace), &[]),
         "open_workspaces" => (Some(Action::OpenWorkspaces), &[]),
-        kind if TERMINAL_KINDS.contains(&kind) => {
+        _ => {
             return Err(format!(
-                "`{kind}` is a terminal binding; set it in felis's config.toml"
+                "unknown kind `{kind}`; terminal bindings may belong in felis's config.toml"
             ));
         }
-        _ => return Err(format!("unknown kind `{kind}`")),
     };
     if let Some(unknown) = binding
         .keys()
@@ -786,14 +765,54 @@ mod tests {
     }
 
     #[test]
-    fn every_felis_terminal_kind_points_to_felis_document() {
-        for kind in TERMINAL_KINDS {
+    fn application_kinds_do_not_shadow_felis_kinds_except_unbind() {
+        let schema = schemars::schema_for!(felis_client_core::BindingValue);
+        let variants = schema.as_value()["oneOf"]
+            .as_array()
+            .expect("felis binding schema must enumerate its variants");
+        assert!(
+            variants.len() > 1,
+            "the binding schema must not be empty or just unbind"
+        );
+        let mut shared_unbind = false;
+        for variant in variants {
+            let kind = variant["properties"]["kind"]["const"]
+                .as_str()
+                .expect("each binding variant must name its kind");
+            let binding = toml::Value::Table(toml::Table::from_iter([(
+                "kind".into(),
+                toml::Value::String(kind.into()),
+            )]));
+            let result = parse_binding(&binding);
+            if kind == "unbind" {
+                assert_eq!(result, Ok(None));
+                shared_unbind = true;
+            } else {
+                // Missing required arguments still identify a recognized application
+                // kind; only an unknown-kind error proves the names do not overlap.
+                assert!(
+                    matches!(&result, Err(error) if error.starts_with(&format!("unknown kind `{kind}`;"))),
+                    "felis kind `{kind}` overlaps the application vocabulary: {result:?}"
+                );
+            }
+        }
+        assert!(
+            shared_unbind,
+            "unbind must remain the explicit shared exception"
+        );
+    }
+
+    #[test]
+    fn unknown_kinds_suggest_the_terminal_document_without_claiming_support() {
+        for kind in ["copy", "run", "new_tba", "future_terminal_action"] {
             let (config, warnings) =
                 parse(&format!("[keymap]\n\"alt+q\" = {{ kind = \"{kind}\" }}")).unwrap();
             assert_eq!(config.keymap, AppKeymap::default(), "{kind}");
-            assert!(
-                matches!(&warnings[..], [warning] if warning.contains("is a terminal binding")),
-                "{kind}: {warnings:?}"
+            assert_eq!(
+                warnings,
+                [format!(
+                    "`keymap.\"alt+q\"` is dropped: unknown kind `{kind}`; terminal bindings may belong in felis's config.toml"
+                )]
             );
         }
     }
