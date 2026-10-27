@@ -69,21 +69,24 @@ const MAX_REQUESTED_ROWS: u32 = 500;
 /// when not even one fits: a 1x1 request would resize a shared session for
 /// every other client attached to it.
 pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<RequestedDims> {
-    let fit = |extent: f32, cell: u32, max: u32| {
-        // A zero cell (a degenerate font metric) would divide to infinity; a
-        // NaN extent or ppp fails the comparison by itself.
-        let count = (extent * ppp / cell as f32).floor();
-        (cell > 0 && count >= 1.0).then(|| (count as u32).min(max))
-    };
     let [cell_w, cell_h] = cell_px;
-    let cols = fit(rect.width(), cell_w, MAX_REQUESTED_COLS)?;
-    let rows = fit(rect.height(), cell_h, MAX_REQUESTED_ROWS)?;
+    let cols = whole_cells(rect.width(), cell_w, ppp, MAX_REQUESTED_COLS)?;
+    let rows = whole_cells(rect.height(), cell_h, ppp, MAX_REQUESTED_ROWS)?;
     Some(RequestedDims {
         rows,
         cols,
         pixel_w: cols * cell_w,
         pixel_h: rows * cell_h,
     })
+}
+
+/// How many whole `cell` physical pixels fit in `extent` points, capped at
+/// `max`; `None` when not one does.
+fn whole_cells(extent: f32, cell: u32, ppp: f32, max: u32) -> Option<u32> {
+    // A zero cell (a degenerate font metric) would divide to infinity; a NaN
+    // extent or ppp fails the comparison by itself.
+    let count = (extent * ppp / cell as f32).floor();
+    (cell > 0 && count >= 1.0).then(|| (count as u32).min(max))
 }
 
 /// The pane area around the terminal grid. Under DECSCNM it takes the
