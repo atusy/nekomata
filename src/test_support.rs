@@ -22,3 +22,16 @@ impl CpuFrame {
 pub fn run(ctx: &egui::Context, input: egui::RawInput, ui: impl FnMut(&mut egui::Ui)) -> CpuFrame {
     CpuFrame(ctx.run_ui(input, ui))
 }
+
+/// The private felis socket `scripts/test-live.sh` provisions. Live tests
+/// call this first so a test run outside the runner, which would otherwise
+/// reach the user's normal daemon through `FELIS_SOCKET`, fails instead.
+pub fn private_felis_socket() -> String {
+    let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
+    assert_eq!(
+        std::env::var("FELIS_SOCKET").ok().as_deref(),
+        Some(socket.as_str()),
+        "FELIS_SOCKET must name the private test daemon"
+    );
+    socket
+}

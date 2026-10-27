@@ -2820,8 +2820,7 @@ mod tests {
         use felis_protocol::messages::SpawnArgs;
         use std::{sync::mpsc, time::Instant};
 
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let other_socket = std::path::Path::new(&socket).with_file_name("other.sock");
         struct StopDaemon(std::path::PathBuf);
         impl Drop for StopDaemon {
