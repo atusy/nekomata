@@ -2659,8 +2659,8 @@ mod tests {
             Default::default(),
         )
         .unwrap();
-        // Without a GPU host the pane shows a renderer error instead of a
-        // blinking cursor, so once connected nothing remains to repaint for.
+        // Without a GPU host the pane renderer cannot be created, so no blink
+        // deadline is requested and, once connected, nothing remains to repaint for.
         let deadline = Instant::now() + Duration::from_secs(25);
         loop {
             let output =
