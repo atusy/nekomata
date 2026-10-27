@@ -569,9 +569,14 @@ mod tests {
     fn search_shortcuts_follow_the_shared_keymap_and_capture_only_its_chords() {
         for (modifiers, opens_search) in [
             (Modifiers::CTRL | Modifiers::SHIFT, true),
-            (Modifiers::MAC_CMD, true),
+            // felis adds the Cmd chords to its default keymap on macOS only.
+            (Modifiers::MAC_CMD, cfg!(target_os = "macos")),
             (Modifiers::CTRL, false),
-            (Modifiers::MAC_CMD | Modifiers::SHIFT, true), // felis ignores Shift on Cmd chords
+            // felis ignores Shift on Cmd chords.
+            (
+                Modifiers::MAC_CMD | Modifiers::SHIFT,
+                cfg!(target_os = "macos"),
+            ),
             (Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT, false),
             (Modifiers::NONE, false),
         ] {
