@@ -1225,7 +1225,13 @@ fn config_problems_banner(
                         Severity::Error => ui.visuals().error_fg_color,
                         Severity::Warning => ui.visuals().warn_fg_color,
                     };
-                    ui.colored_label(color, problem.to_string());
+                    // Monospace keeps the caret of toml's source excerpt
+                    // under the offending column.
+                    ui.label(
+                        egui::RichText::new(problem.to_string())
+                            .monospace()
+                            .color(color),
+                    );
                 }
             });
     });
@@ -3226,6 +3232,50 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    /// Each banner entry's text with its font family and color.
+    fn banner_entries(
+        problems: &mut Vec<crate::config_report::Problem>,
+    ) -> Vec<(String, egui::FontFamily, egui::Color32)> {
+        let ctx = egui::Context::default();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, problems)
+        });
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, problems)
+        });
+        frame
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => {
+                    let section = &text.galley.job.sections[0];
+                    Some((
+                        text.galley.text().to_owned(),
+                        section.format.font_id.family.clone(),
+                        section.format.color,
+                    ))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn configuration_problems_keep_toml_excerpts_aligned_in_monospace() {
+        use crate::config_report::Problem;
+        let mut problems = vec![Problem::error(
+            "/c.toml",
+            "TOML parse error at line 1, column 8\n  |\n1 | [font\n  |      ^",
+        )];
+        let shown = problems[0].to_string();
+        let entries = banner_entries(&mut problems);
+        let (_, family, _) = entries
+            .iter()
+            .find(|(text, ..)| *text == shown)
+            .expect("the problem is listed");
+        assert_eq!(*family, egui::FontFamily::Monospace);
     }
 
     #[test]

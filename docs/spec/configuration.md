@@ -125,6 +125,7 @@ standard error as `nekomata: <path>: <message>` for a warning and
 first. Control characters other than line breaks and tabs are escaped.
 
 The same entries, without the `nekomata: ` prefix, are listed in a
-"Configuration problems" banner at the top of the window, errors and warnings
-in distinct colors, until its Dismiss button is pressed. A dismissed banner
+"Configuration problems" banner at the top of the window, in a monospace font
+so TOML's source excerpts stay aligned, errors and warnings in distinct colors,
+until its Dismiss button is pressed. A dismissed banner
 returns only when the GUI restarts.
