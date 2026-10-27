@@ -199,7 +199,7 @@ mod platform {
         };
         // SAFETY: CoreText documents the array as holding font descriptors.
         let matched = unsafe { CFRetained::cast_unchecked::<CFArray<CTFontDescriptor>>(matched) };
-        Ok(matched
+        let listed: Vec<_> = matched
             .iter()
             .filter_map(|descriptor| {
                 // SAFETY: CoreText stores the URL as a CFURL and the name
@@ -219,7 +219,14 @@ mod platform {
                     face: FaceRef::PostScript(post_script.to_string()),
                 })
             })
-            .collect())
+            .collect();
+        // Matched faces without a file are not "not installed".
+        if listed.is_empty() && !matched.is_empty() {
+            return Err(Unavailable::Unreadable(
+                "CoreText names no font file for it".into(),
+            ));
+        }
+        Ok(listed)
     }
 }
 
@@ -561,6 +568,18 @@ mod tests {
         assert_eq!(
             japanese.map(|face| face.index).ok(),
             english.map(|face| face.index).ok()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_hidden_system_family_is_not_reported_as_missing() {
+        // CoreText matches the system UI family but names no file for it.
+        assert_eq!(
+            find(".AppleSystemUIFont").err(),
+            Some(Unavailable::Unreadable(
+                "CoreText names no font file for it".into()
+            ))
         );
     }
 
