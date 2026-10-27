@@ -9,8 +9,8 @@ use std::{
     time::Duration,
 };
 
-/// Bounds a launcher that never exits, so one stuck opener cannot keep the
-/// pane busy forever.
+/// Bounds a whole activation, file resolution and every launcher attempt
+/// included, so one stuck opener cannot keep the pane busy forever.
 const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
 
 const BUSY: &str = "Still opening the previous link; click again when it finishes";
@@ -285,9 +285,24 @@ fn command(step: &[OsString]) -> tokio::process::Command {
     command
 }
 
+/// One deadline covers resolving the file and every fallback, so a hung
+/// mount or a slow first launcher cannot stretch the busy period past
+/// `OPENER_TIMEOUT`.
 async fn open(target: ActivationTarget) -> Result<(), String> {
+    tokio::time::timeout(OPENER_TIMEOUT, attempt(target))
+        .await
+        .unwrap_or_else(|_| {
+            Err("Opening the link timed out; check the default application for this type".into())
+        })
+}
+
+async fn attempt(target: ActivationTarget) -> Result<(), String> {
     let platform = Platform::current().ok_or("Opening links is not supported on this platform")?;
-    let launch = resolve(&target)?;
+    // Filesystem calls can block indefinitely on a stale network mount;
+    // keep them off the async workers so the deadline above still fires.
+    let launch = tokio::task::spawn_blocking(move || resolve(&target))
+        .await
+        .map_err(|error| format!("Could not resolve the link: {error}"))??;
     let mut outcome = Ok(());
     for step in plan(platform, &launch) {
         outcome = run(&step, launch.verb()).await;
@@ -299,15 +314,12 @@ async fn open(target: ActivationTarget) -> Result<(), String> {
 }
 
 async fn run(step: &[OsString], verb: &str) -> Result<(), String> {
-    match tokio::time::timeout(OPENER_TIMEOUT, command(step).status()).await {
-        Ok(Ok(status)) if status.success() => Ok(()),
-        Ok(Ok(status)) => Err(format!(
+    match command(step).status().await {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!(
             "Could not {verb} ({status}); check the default application for this type"
         )),
-        Ok(Err(error)) => Err(format!("Could not start the link opener: {error}")),
-        Err(_) => Err(format!(
-            "Timed out trying to {verb}; check the default application for this type"
-        )),
+        Err(error) => Err(format!("Could not start the link opener: {error}")),
     }
 }
 
