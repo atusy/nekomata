@@ -11,6 +11,11 @@ using its [public kind](keymap.md#application-keymap-entries). The palette
 shows bindings from nekomata's keymap, including bindings for terminal
 commands; it does not show fallback bindings from felis's shared keymap.
 
+`Font: Increase size`, `Font: Decrease size` and `Font: Reset size` execute
+directly; `Font: Change size…` opens the existing size controls. These commands
+change terminal text size using the [font size rules](terminal.md#font-size),
+not the UI font.
+
 ## Finding a command
 
 Each word of the query must appear, ignoring case, in the command's label or

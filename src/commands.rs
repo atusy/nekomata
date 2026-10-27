@@ -206,7 +206,23 @@ pub(crate) fn commands() -> &'static [Command] {
             "Change size…",
             Action::ChangeFontSize,
         )
-        .keywords(&["zoom", "larger", "smaller", "reset", "text"]),
+        .keywords(&["zoom", "text"]),
+        Command::new(
+            "font:increase_size",
+            Font,
+            "Increase size",
+            Action::FontScale(crate::font_size::STEP),
+        )
+        .keywords(&["zoom", "larger", "text"]),
+        Command::new(
+            "font:decrease_size",
+            Font,
+            "Decrease size",
+            Action::FontScale(1.0 / crate::font_size::STEP),
+        )
+        .keywords(&["zoom", "smaller", "text"]),
+        Command::new("font:reset_size", Font, "Reset size", Action::FontReset)
+            .keywords(&["zoom", "text"]),
         Command::new(
             "command_palette:open",
             CommandPalette,

@@ -67,6 +67,9 @@ For example, bind the session picker and font size controls directly:
 [keymap]
 "alt+a" = { kind = "session:attach" }
 "alt+f" = { kind = "font:change_size" }
+"alt+=" = { kind = "font:increase_size" }
+"alt+-" = { kind = "font:decrease_size" }
+"alt+0" = { kind = "font:reset_size" }
 ```
 
 See the [complete kind catalog](../spec/keymap.md#application-keymap-entries).

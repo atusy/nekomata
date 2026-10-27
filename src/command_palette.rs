@@ -293,6 +293,20 @@ mod tests {
     }
 
     #[test]
+    fn font_reset_is_a_direct_command_instead_of_opening_the_size_control() {
+        let ctx = egui::Context::default();
+        let mut palette = CommandPalette {
+            query: "font reset".into(),
+            selected: 0,
+        };
+        frame(&ctx, &mut palette, &[]);
+        assert_eq!(
+            frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+            Some(Action::FontReset)
+        );
+    }
+
+    #[test]
     fn shortcut_help_is_not_a_palette_command() {
         assert!(matching("keyboard shortcuts").is_empty());
     }
@@ -309,8 +323,8 @@ mod tests {
             "Font",
         ];
         const VERBS: &[&str] = &[
-            "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
-            "Scroll", "Show", "Split", "Switch",
+            "Attach", "Change", "Close", "Copy", "Create", "Decrease", "Find", "Focus", "Increase",
+            "Jump", "Paste", "Reset", "Scroll", "Show", "Split", "Switch",
         ];
         for command in commands() {
             let label = command.label();

@@ -77,6 +77,9 @@ dropped with a warning. Labels may change without changing the kind.
 | `clipboard:copy_selection` | Clipboard: Copy selection |
 | `clipboard:paste` | Clipboard: Paste |
 | `font:change_size` | Font: Change size… |
+| `font:increase_size` | Font: Increase size |
+| `font:decrease_size` | Font: Decrease size |
+| `font:reset_size` | Font: Reset size |
 | `command_palette:open` | Command palette: Open |
 
 Labels ending in `…` open a selection or control. Binding them opens that same
