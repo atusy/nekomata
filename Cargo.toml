@@ -29,7 +29,6 @@ memmap2 = "0.9"
 swash = "0.2"
 toml = "1"
 gethostname = "1"
-libc = "0.2"
 
 # Small shared-device embedding API over the pinned upstream renderer.
 felis-render-wgpu = { path = "vendor/felis-render-wgpu" }
