@@ -2,6 +2,7 @@
 use eframe::egui;
 use felis_client_core::ActivationTarget;
 use std::{
+    ffi::OsString,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -91,25 +92,61 @@ pub fn modifier(modifiers: egui::Modifiers, macos: bool) -> bool {
         }
 }
 
-fn command(target: &ActivationTarget) -> Result<tokio::process::Command, String> {
-    let program = if cfg!(target_os = "macos") {
-        "/usr/bin/open"
-    } else if cfg!(target_os = "linux") {
-        "xdg-open"
-    } else {
-        return Err("Opening links is not supported on this platform".into());
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Platform {
+    MacOs,
+    Linux,
+}
+
+impl Platform {
+    fn current() -> Option<Self> {
+        if cfg!(target_os = "macos") {
+            Some(Self::MacOs)
+        } else if cfg!(target_os = "linux") {
+            Some(Self::Linux)
+        } else {
+            None
+        }
+    }
+}
+
+/// One launcher invocation: the program followed by its arguments.
+type Step = Vec<OsString>;
+
+/// Launchers to try in order until one succeeds. Pure so every platform's
+/// argv is testable on any host.
+fn plan(platform: Platform, target: &ActivationTarget) -> Vec<Step> {
+    let program = match platform {
+        Platform::MacOs => "/usr/bin/open",
+        Platform::Linux => "xdg-open",
     };
-    let mut command = tokio::process::Command::new(program);
-    command.arg(target.as_str()).kill_on_drop(true);
+    vec![vec![program.into(), target.as_str().into()]]
+}
+
+fn command(step: &[OsString]) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(&step[0]);
+    command.args(&step[1..]).kill_on_drop(true);
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    Ok(command)
+    command
 }
 
 async fn open(target: ActivationTarget) -> Result<(), String> {
-    match tokio::time::timeout(OPENER_TIMEOUT, command(&target)?.status()).await {
+    let platform = Platform::current().ok_or("Opening links is not supported on this platform")?;
+    let mut outcome = Ok(());
+    for step in plan(platform, &target) {
+        outcome = run(&step).await;
+        if outcome.is_ok() {
+            break;
+        }
+    }
+    outcome
+}
+
+async fn run(step: &[OsString]) -> Result<(), String> {
+    match tokio::time::timeout(OPENER_TIMEOUT, command(step).status()).await {
         Ok(Ok(status)) if status.success() => Ok(()),
         Ok(Ok(status)) => Err(format!(
             "Could not open the link ({status}); check the default application for this URL type"
@@ -147,9 +184,15 @@ mod tests {
     fn opener_preserves_the_validated_uri_as_one_literal_argument() {
         let target =
             ActivationTarget::parse("https://example.org/?q=$(echo%20x)&a='hello'").unwrap();
-        let command = command(&target).unwrap();
-        let args: Vec<_> = command.as_std().get_args().collect();
-        assert_eq!(args, [std::ffi::OsStr::new(target.as_str())]);
+        let uri = OsString::from(target.as_str());
+        assert_eq!(
+            plan(Platform::MacOs, &target),
+            [vec!["/usr/bin/open".into(), uri.clone()]]
+        );
+        assert_eq!(
+            plan(Platform::Linux, &target),
+            [vec!["xdg-open".into(), uri]]
+        );
         assert!(ActivationTarget::parse("javascript:alert(1)").is_err());
         assert!(ActivationTarget::parse("https://example.org/\u{202e}hidden").is_err());
     }
