@@ -1,7 +1,7 @@
 //! What the focused terminal program receives for a frame's egui events.
 //!
 //! Pure translation: the caller owns the session, the selection and the
-//! clipboard, so every encoding rule here is testable without a window.
+//! clipboard, so every translation rule here is testable without a window.
 
 use eframe::egui;
 use felis_protocol::messages::{FKey, Key, KeyEvent, KeyEventKind, KeyLocation, KeyMods, NamedKey};
@@ -178,7 +178,7 @@ fn physical_key(key: egui::Key, mods: egui::Modifiers, has_text: bool) -> Option
     }
 }
 
-/// The ASCII character a character key types without modifiers, as keymaps
+/// The ASCII character egui names a key by, letters in lowercase, as keymaps
 /// spell it and felis encodes it; `None` for keys that name no character.
 pub fn key_char(key: egui::Key) -> Option<char> {
     match key {
