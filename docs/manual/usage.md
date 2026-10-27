@@ -32,20 +32,28 @@ Default keys are below. `→` means "then press".
 | Jump to oldest / live output | Ctrl+Shift+Home / Ctrl+Shift+End |
 | Previous / next prompt | Ctrl+Shift+Z / Ctrl+Shift+X |
 
-Tab, pane and palette keys are set in nekomata's configuration; copy, paste
-and the other terminal keys are set in felis's (see
+nekomata's configuration can bind any public command. Shared terminal defaults
+come from felis's keymap (see
 [Configuration](configuration.md)). Cmd+C and Cmd+V on macOS are fixed and
 cannot be rebound; on Linux, plain Ctrl+C always goes to the program, and so
 does Ctrl+V while the clipboard holds text.
 
 Each font size step scales by 1.1; `Font: Change size…` in the command
 palette shows the current size with buttons to step or reset it (limits are
-in the [terminal specification](../spec/terminal.md#font-size)). Prompt
-navigation needs a shell that reports prompt boundaries with OSC 133.
+in the [terminal specification](../spec/terminal.md#font-size)). The palette
+also offers `Font: Increase size`, `Font: Decrease size` and `Font: Reset size`
+as direct commands, and each can be assigned a key in nekomata's config.
+
+![Font commands with example custom bindings](../images/public-font-commands.png)
+
+Prompt navigation needs a shell that reports prompt boundaries with OSC 133.
+One-line and half-page scrolls,
 `Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
 `Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
 are also in the command palette. Prompt jumps are disabled with a reason while
 the active session is disconnected or in the alternate screen.
+
+![Scrollback commands including line and half-page steps](../images/public-scrollback-commands.png)
 
 ## Tabs and panes
 

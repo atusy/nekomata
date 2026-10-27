@@ -2,9 +2,22 @@
 
 ## Opening and closing
 
-The command palette button at the left of the tab bar and the `command_palette`
+The command palette button at the left of the tab bar and the `command_palette:open`
 binding open the palette. Escape or a click outside closes it without running a
 command.
+
+Every listed command can also be invoked through nekomata's application keymap
+using its [public kind](keymap.md#application-keymap-entries). The palette
+shows bindings from nekomata's keymap, including bindings for terminal
+commands; it does not show fallback bindings from felis's shared keymap.
+
+`Font: Increase size`, `Font: Decrease size` and `Font: Reset size` execute
+directly; `Font: Change size…` opens the existing size controls. These commands
+change terminal text size using the [font size rules](terminal.md#font-size),
+not the UI font.
+
+The palette exposes one-line and half-page scrolls in either direction as
+separate commands, as well as scroll-to-top and scroll-to-bottom operations.
 
 ## Finding a command
 

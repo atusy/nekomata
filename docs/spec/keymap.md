@@ -28,13 +28,13 @@ Application keymap:
 
 | Sequence | Action |
 | --- | --- |
-| `alt+c` | `new_tab` |
-| `alt+t` / `alt+shift+t` | `switch_tab` next / previous |
-| `alt+w alt+s` | `split` below |
-| `alt+w alt+v` | `split` right |
-| `alt+w c` | `close_pane` |
-| `alt+w h` / `j` / `k` / `l` | `focus_pane` left / down / up / right |
-| `alt+shift+p` | `command_palette` |
+| `alt+c` | `tab:create` |
+| `alt+t` / `alt+shift+t` | `tab:switch_next` / `tab:switch_previous` |
+| `alt+w alt+s` | `pane:split_below` |
+| `alt+w alt+v` | `pane:split_right` |
+| `alt+w c` | `pane:close` |
+| `alt+w h` / `j` / `k` / `l` | `pane:focus_left` / `pane:focus_down` / `pane:focus_up` / `pane:focus_right` |
+| `alt+shift+p` | `command_palette:open` |
 
 Terminal keymap defaults are felis's, except that nekomata unbinds unmodified
 `End` so that shells and editors receive it; binding it in felis's keymap
@@ -46,6 +46,59 @@ An entry has the same form as felis's keymap: `"keys" = { kind = "…", … }`.
 A single keystroke is written as in felis (`alt+shift+t`, `f5`,
 `ctrl+shift++`). Keystrokes separated by spaces form a sequence: `"alt+w c"`
 means Alt+W followed by C.
+
+Every public command has a stable, case-sensitive `category:operation` kind.
+The palette and application bindings use the same command definitions. All
+canonical kinds below take no arguments; extra fields cause that entry to be
+dropped with a warning. Labels may change without changing the kind.
+
+| `kind` | Command |
+| --- | --- |
+| `workspace:create` | Workspace: Create |
+| `workspace:switch` | Workspace: Switch… |
+| `tab:create` | Tab: Create |
+| `tab:switch_next` | Tab: Switch to next |
+| `tab:switch_previous` | Tab: Switch to previous |
+| `tab:close` | Tab: Close |
+| `pane:split_right` | Pane: Split right |
+| `pane:split_below` | Pane: Split below |
+| `pane:focus_next` | Pane: Focus next |
+| `pane:focus_left` | Pane: Focus left |
+| `pane:focus_down` | Pane: Focus down |
+| `pane:focus_up` | Pane: Focus up |
+| `pane:focus_right` | Pane: Focus right |
+| `pane:close` | Pane: Close |
+| `session:attach` | Session: Attach… |
+| `scrollback:find` | Scrollback: Find… |
+| `scrollback:jump_next_prompt` | Scrollback: Jump to next prompt |
+| `scrollback:jump_previous_prompt` | Scrollback: Jump to previous prompt |
+| `scrollback:scroll_line_up` | Scrollback: Scroll one line up |
+| `scrollback:scroll_line_down` | Scrollback: Scroll one line down |
+| `scrollback:scroll_half_page_up` | Scrollback: Scroll half a page up |
+| `scrollback:scroll_half_page_down` | Scrollback: Scroll half a page down |
+| `scrollback:scroll_to_top` | Scrollback: Scroll to top |
+| `scrollback:scroll_to_bottom` | Scrollback: Scroll to bottom |
+| `clipboard:copy_selection` | Clipboard: Copy selection |
+| `clipboard:paste` | Clipboard: Paste |
+| `font:change_size` | Font: Change size… |
+| `font:increase_size` | Font: Increase size |
+| `font:decrease_size` | Font: Decrease size |
+| `font:reset_size` | Font: Reset size |
+| `command_palette:open` | Command palette: Open |
+
+Labels ending in `…` open a selection or control. Binding them opens that same
+UI; it does not choose a session or workspace. `command_palette:open` is
+bindable but is not listed inside the palette itself. Terminal operations use
+the same execution and confirmation rules as their felis bindings.
+
+`unbind` is a configuration directive, not a command. It takes no arguments
+and removes bindings as described below.
+
+### Compatibility aliases
+
+The following existing spellings remain accepted with their existing
+arguments. They execute the same operations as the canonical kinds. New
+configuration should use the canonical kinds above.
 
 | `kind` | Arguments | Action |
 | --- | --- | --- |
@@ -83,8 +136,9 @@ means Alt+W followed by C.
     without Alt or Shift, which the window turns into clipboard events;
   - `super` outside macOS;
   - characters egui does not treat as keys, such as `é`.
-- Copy, paste, font size, scrolling and search are terminal actions and are
-  bound in felis's keymap, not here.
+- nekomata bindings can invoke public terminal commands as well as workspace,
+  tab and pane commands. felis's shared keymap remains the fallback and uses
+  its own unchanged vocabulary.
 
 Unknown application `kind` values are dropped with a warning suggesting that
 terminal bindings may belong in felis's `config.toml`. This is a general hint,

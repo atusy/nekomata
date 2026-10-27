@@ -1,8 +1,4 @@
-use crate::{
-    layout::{Axis, Direction},
-    shortcuts::Action,
-    theme,
-};
+use crate::{shortcuts::Action, theme};
 use eframe::egui;
 
 #[derive(Default)]
@@ -11,73 +7,9 @@ pub struct CommandPalette {
     selected: usize,
 }
 
-/// The closed set of label prefixes; see the ADR
-/// name-palette-commands-by-category-and-verb-phrase.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Category {
-    Workspace,
-    Tab,
-    Pane,
-    Session,
-    Scrollback,
-    Clipboard,
-    Font,
-}
-
-impl Category {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Workspace => "Workspace",
-            Self::Tab => "Tab",
-            Self::Pane => "Pane",
-            Self::Session => "Session",
-            Self::Scrollback => "Scrollback",
-            Self::Clipboard => "Clipboard",
-            Self::Font => "Font",
-        }
-    }
-}
-
-struct Command {
-    category: Category,
-    phrase: &'static str,
-    action: Action,
-    detail: Option<&'static str>,
-    /// Words that find the command without appearing in it.
-    keywords: &'static [&'static str],
-}
+use crate::commands::{Command, commands as public_commands};
 
 impl Command {
-    fn new(category: Category, phrase: &'static str, action: Action) -> Self {
-        Self {
-            category,
-            phrase,
-            action,
-            detail: None,
-            keywords: &[],
-        }
-    }
-
-    fn keywords(self, keywords: &'static [&'static str]) -> Self {
-        Self { keywords, ..self }
-    }
-
-    fn matches(&self, words: &[String]) -> bool {
-        let text = format!("{} {}", self.label(), self.keywords.join(" ")).to_lowercase();
-        words.iter().all(|word| text.contains(word.as_str()))
-    }
-
-    fn detail(self, detail: &'static str) -> Self {
-        Self {
-            detail: Some(detail),
-            ..self
-        }
-    }
-
-    fn label(&self) -> String {
-        format!("{}: {}", self.category.name(), self.phrase)
-    }
-
     /// The label, with any detail on a dimmer second line.
     fn row_text(&self, style: &egui::Style) -> egui::text::LayoutJob {
         let mut job = egui::text::LayoutJob::default();
@@ -104,63 +36,11 @@ impl Command {
 }
 
 fn commands() -> Vec<Command> {
-    use Category::*;
-    use felis_client_core::{Action::Scroll, Action::ScrollToPrompt, ScrollStep};
-    use felis_protocol::messages::PromptJump;
-    let command = Command::new;
-    let terminal = Action::Terminal;
-    vec![
-        command(Workspace, "Create", Action::NewWorkspace).keywords(&["new"]),
-        command(Workspace, "Switch…", Action::OpenWorkspaces).keywords(&["open", "list"]),
-        command(Tab, "Create", Action::NewTab).keywords(&["new"]),
-        command(Tab, "Switch to next", Action::NextTab),
-        command(Tab, "Switch to previous", Action::PreviousTab),
-        command(Tab, "Close", Action::CloseTab)
-            .detail("Detaches its sessions; the shells keep running")
-            .keywords(&["detach"]),
-        command(Pane, "Split right", Action::Split(Axis::Horizontal)).keywords(&["side by side"]),
-        command(Pane, "Split below", Action::Split(Axis::Vertical)).keywords(&["down"]),
-        command(Pane, "Focus next", Action::NextPane),
-        command(Pane, "Focus left", Action::Focus(Direction::Left)),
-        command(Pane, "Focus down", Action::Focus(Direction::Down)),
-        command(Pane, "Focus up", Action::Focus(Direction::Up)),
-        command(Pane, "Focus right", Action::Focus(Direction::Right)),
-        command(Pane, "Close", Action::ClosePane)
-            .detail("Detaches its session; the shell keeps running")
-            .keywords(&["detach"]),
-        command(Session, "Attach…", Action::AttachSession)
-            .detail("Opens a local daemon session in a new tab")
-            .keywords(&["picker", "open"]),
-        command(Scrollback, "Find…", Action::Search).keywords(&["search", "grep"]),
-        command(
-            Scrollback,
-            "Jump to next prompt",
-            terminal(ScrollToPrompt(PromptJump::Next)),
-        )
-        .detail("Needs a shell that marks prompts with OSC 133"),
-        command(
-            Scrollback,
-            "Jump to previous prompt",
-            terminal(ScrollToPrompt(PromptJump::Previous)),
-        )
-        .detail("Needs a shell that marks prompts with OSC 133"),
-        command(
-            Scrollback,
-            "Scroll to top",
-            terminal(Scroll(ScrollStep::Home)),
-        )
-        .keywords(&["oldest", "home"]),
-        command(
-            Scrollback,
-            "Scroll to bottom",
-            terminal(Scroll(ScrollStep::End)),
-        )
-        .keywords(&["live", "end"]),
-        command(Clipboard, "Copy selection", Action::Copy),
-        command(Clipboard, "Paste", Action::Paste),
-        command(Font, "Change size…", Action::ChangeFontSize)
-            .keywords(&["zoom", "larger", "smaller", "reset", "text"]),
-    ]
+    public_commands()
+        .iter()
+        .filter(|command| command.visible)
+        .cloned()
+        .collect()
 }
 
 /// Every query word must appear in the label or the keywords, in any
@@ -175,8 +55,7 @@ fn matching(query: &str) -> Vec<Command> {
 }
 
 impl CommandPalette {
-    /// Terminal bindings belong to felis's document, so `hints` covers only
-    /// the shortcuts nekomata's own keymap binds.
+    /// Hints cover application bindings; felis fallback bindings are not shown.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -295,6 +174,7 @@ impl CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::{Axis, Direction};
     fn frame(
         ctx: &egui::Context,
         palette: &mut CommandPalette,
@@ -413,6 +293,43 @@ mod tests {
     }
 
     #[test]
+    fn font_reset_is_a_direct_command_instead_of_opening_the_size_control() {
+        let ctx = egui::Context::default();
+        let mut palette = CommandPalette {
+            query: "font reset".into(),
+            selected: 0,
+        };
+        frame(&ctx, &mut palette, &[]);
+        assert_eq!(
+            frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+            Some(Action::FontReset)
+        );
+    }
+
+    #[test]
+    fn line_and_half_page_scrolls_are_direct_palette_commands() {
+        use felis_client_core::{Action::Scroll, ScrollStep};
+        for (query, step) in [
+            ("scroll one line up", ScrollStep::LineUp),
+            ("scroll one line down", ScrollStep::LineDown),
+            ("scroll half page up", ScrollStep::HalfPageUp),
+            ("scroll half page down", ScrollStep::HalfPageDown),
+        ] {
+            let ctx = egui::Context::default();
+            let mut palette = CommandPalette {
+                query: query.into(),
+                selected: 0,
+            };
+            frame(&ctx, &mut palette, &[]);
+            assert_eq!(
+                frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+                Some(Action::Terminal(Scroll(step))),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
     fn shortcut_help_is_not_a_palette_command() {
         assert!(matching("keyboard shortcuts").is_empty());
     }
@@ -429,8 +346,8 @@ mod tests {
             "Font",
         ];
         const VERBS: &[&str] = &[
-            "Attach", "Change", "Close", "Copy", "Create", "Find", "Focus", "Jump", "Paste",
-            "Scroll", "Show", "Split", "Switch",
+            "Attach", "Change", "Close", "Copy", "Create", "Decrease", "Find", "Focus", "Increase",
+            "Jump", "Paste", "Reset", "Scroll", "Show", "Split", "Switch",
         ];
         for command in commands() {
             let label = command.label();
