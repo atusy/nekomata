@@ -30,12 +30,35 @@ pub fn default_size_px() -> f32 {
 /// costs a few hundred milliseconds on its first query, but by the time
 /// the app is created opening the window has already paid it, so this
 /// does not wait on it there.
-pub fn find(family: &str) -> Option<Face> {
-    let (path, index) = select(&platform::candidates(family), family)?;
-    Some(Face {
-        bytes: std::fs::read(path).ok()?,
-        index,
-    })
+pub fn find(family: &str) -> Result<Face, Unavailable> {
+    let (path, index) = select(&platform::candidates(family)?, family)?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        Unavailable::Unreadable(format!("cannot read {}: {error}", path.display()))
+    })?;
+    Ok(Face { bytes, index })
+}
+
+/// Why no face of a family could be used, worded to follow the family's
+/// name in a warning.
+#[derive(Debug, PartialEq)]
+pub enum Unavailable {
+    /// The platform's font matching lists no face of the family.
+    NotInstalled,
+    /// Faces were listed but none could be used; the last failure.
+    Unreadable(String),
+    /// The platform's font matcher itself is unavailable.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    NoMatcher(String),
+}
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotInstalled => f.write_str("is not installed"),
+            Self::Unreadable(reason) => write!(f, "cannot be loaded ({reason})"),
+            Self::NoMatcher(reason) => write!(f, "cannot be looked up ({reason})"),
+        }
+    }
 }
 
 /// A face the platform matched to a family, before its file is read.
@@ -85,28 +108,36 @@ fn rank(font: &FontRef<'_>, family: &str) -> Rank {
     )
 }
 
-fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
+fn select(candidates: &[Candidate], family: &str) -> Result<(PathBuf, u32), Unavailable> {
     let family = family.to_lowercase();
     let mut best: Option<(Rank, &Path, u32)> = None;
     let mut mapped: Option<(&Path, memmap2::Mmap)> = None;
+    let mut failure = None;
     for candidate in candidates {
-        if mapped
-            .as_ref()
-            .is_none_or(|(path, _)| *path != candidate.path)
-        {
-            let Ok(file) = std::fs::File::open(&candidate.path) else {
-                continue;
+        let path = &candidate.path;
+        if mapped.as_ref().is_none_or(|(at, _)| *at != path) {
+            mapped = None;
+            let file = match std::fs::File::open(path) {
+                Ok(file) => file,
+                Err(error) => {
+                    failure = Some(format!("cannot open {}: {error}", path.display()));
+                    continue;
+                }
             };
             // SAFETY: installed fonts are not rewritten while mapped; a
             // truncation would at worst fault this startup read, the
             // hazard felis-shaping accepts for the same files.
-            let Ok(data) = (unsafe { memmap2::Mmap::map(&file) }) else {
-                continue;
-            };
-            mapped = Some((&candidate.path, data));
+            match unsafe { memmap2::Mmap::map(&file) } {
+                Ok(data) => mapped = Some((path, data)),
+                Err(error) => {
+                    failure = Some(format!("cannot map {}: {error}", path.display()));
+                    continue;
+                }
+            }
         }
         let Some((_, data)) = &mapped else { continue };
         let Some(collection) = swash::FontDataRef::new(data) else {
+            failure = Some(format!("{} is not a font file", path.display()));
             continue;
         };
         let found = match &candidate.face {
@@ -121,13 +152,20 @@ fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
                 })
             }
         };
-        let Some((index, font)) = found else { continue };
+        let Some((index, font)) = found else {
+            failure = Some(format!("{} lacks the listed face", path.display()));
+            continue;
+        };
         let rank = rank(&font, &family);
         if best.as_ref().is_none_or(|(at, ..)| rank < *at) {
-            best = Some((rank, &candidate.path, index));
+            best = Some((rank, path, index));
         }
     }
-    best.map(|(_, path, index)| (path.to_path_buf(), index))
+    match (best, failure) {
+        (Some((_, path, index)), _) => Ok((path.to_path_buf(), index)),
+        (None, Some(reason)) => Err(Unavailable::Unreadable(reason)),
+        (None, None) => Err(Unavailable::NotInstalled),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -137,11 +175,11 @@ mod platform {
         CTFontDescriptor, kCTFontFamilyNameAttribute, kCTFontNameAttribute, kCTFontURLAttribute,
     };
 
-    use super::{Candidate, FaceRef};
+    use super::{Candidate, FaceRef, Unavailable};
 
     /// The faces CoreText matches to `family`; it compares names ignoring
     /// case, accepts localized ones, and never substitutes another family.
-    pub(super) fn candidates(family: &str) -> Vec<Candidate> {
+    pub(super) fn candidates(family: &str) -> Result<Vec<Candidate>, Unavailable> {
         let name = CFString::from_str(family);
         // SAFETY: reading CoreText's immutable attribute-name constants.
         let (family_key, url_key, name_key) = unsafe {
@@ -157,11 +195,11 @@ mod platform {
         let descriptor = unsafe { CTFontDescriptor::with_attributes(attributes.as_ref()) };
         // SAFETY: `None` asks for no mandatory attributes.
         let Some(matched) = (unsafe { descriptor.matching_font_descriptors(None) }) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         // SAFETY: CoreText documents the array as holding font descriptors.
         let matched = unsafe { CFRetained::cast_unchecked::<CFArray<CTFontDescriptor>>(matched) };
-        matched
+        Ok(matched
             .iter()
             .filter_map(|descriptor| {
                 // SAFETY: CoreText stores the URL as a CFURL and the name
@@ -181,13 +219,13 @@ mod platform {
                     face: FaceRef::PostScript(post_script.to_string()),
                 })
             })
-            .collect()
+            .collect())
     }
 }
 
 #[cfg(not(target_os = "macos"))]
 mod platform {
-    pub(super) fn candidates(family: &str) -> Vec<super::Candidate> {
+    pub(super) fn candidates(family: &str) -> Result<Vec<super::Candidate>, super::Unavailable> {
         super::fontconfig::candidates(None, family)
     }
 }
@@ -203,7 +241,7 @@ mod fontconfig {
     use fontconfig_sys::constants::{FC_FAMILY, FC_FILE, FC_INDEX};
     use fontconfig_sys::{Fc, FcConfig, FcPattern, FcResultMatch};
 
-    use super::{Candidate, FaceRef};
+    use super::{Candidate, FaceRef, Unavailable};
 
     #[cfg(target_os = "macos")]
     const SONAME: &str = "libfontconfig.1.dylib";
@@ -224,12 +262,16 @@ mod fontconfig {
     /// The faces fontconfig lists for `family` in `config` (the user's
     /// when `None`). Listing compares names ignoring case and blanks and,
     /// unlike matching, never substitutes another family.
-    pub(super) fn candidates(config: Option<*mut FcConfig>, family: &str) -> Vec<Candidate> {
+    pub(super) fn candidates(
+        config: Option<*mut FcConfig>,
+        family: &str,
+    ) -> Result<Vec<Candidate>, Unavailable> {
         let Some(lib) = library() else {
-            return Vec::new();
+            return Err(Unavailable::NoMatcher(format!("{SONAME} is not loadable")));
         };
+        // No installed family has a NUL in its name.
         let Ok(name) = CString::new(family) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let mut found = Vec::new();
         // SAFETY: every pointer passed is live for its call; the pattern,
@@ -238,13 +280,13 @@ mod fontconfig {
         unsafe {
             let pattern = (lib.FcPatternCreate)();
             if pattern.is_null() {
-                return found;
+                return Err(failed());
             }
             (lib.FcPatternAddString)(pattern, FC_FAMILY.as_ptr(), name.as_ptr().cast());
             let objects = (lib.FcObjectSetCreate)();
             if objects.is_null() {
                 (lib.FcPatternDestroy)(pattern);
-                return found;
+                return Err(failed());
             }
             (lib.FcObjectSetAdd)(objects, FC_FILE.as_ptr());
             (lib.FcObjectSetAdd)(objects, FC_INDEX.as_ptr());
@@ -252,7 +294,7 @@ mod fontconfig {
             (lib.FcObjectSetDestroy)(objects);
             (lib.FcPatternDestroy)(pattern);
             if set.is_null() {
-                return found;
+                return Err(failed());
             }
             let fonts = match usize::try_from((*set).nfont) {
                 Ok(len) if len > 0 && !(*set).fonts.is_null() => {
@@ -269,7 +311,11 @@ mod fontconfig {
         }
         // fontconfig lists in no promised order; sort so ties are stable.
         found.sort_by(|a, b| a.path.cmp(&b.path));
-        found
+        Ok(found)
+    }
+
+    fn failed() -> Unavailable {
+        Unavailable::NoMatcher("fontconfig could not list fonts".into())
     }
 
     /// # Safety
@@ -341,7 +387,7 @@ mod tests {
         };
         assert_eq!(
             select(&candidates, "UDev Gothic NF"),
-            Some((dir.path().join("c-regular.ttf"), 0))
+            Ok((dir.path().join("c-regular.ttf"), 0))
         );
     }
 
@@ -364,9 +410,9 @@ mod tests {
         };
         assert_eq!(
             select(&[named(&name)], "UDEV Gothic NF"),
-            Some((path.clone(), 0))
+            Ok((path.clone(), 0))
         );
-        assert_eq!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF"), None);
+        assert!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF").is_err());
     }
 
     #[test]
@@ -384,7 +430,57 @@ mod tests {
                 face: FaceRef::Index(0),
             },
         ];
-        assert_eq!(select(&candidates, "Anything"), None);
+        assert!(select(&candidates, "Anything").is_err());
+    }
+
+    #[test]
+    fn no_candidate_means_the_family_is_not_installed() {
+        assert_eq!(select(&[], "Anything"), Err(Unavailable::NotInstalled));
+    }
+
+    #[test]
+    fn unusable_candidates_name_the_file_that_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = dir.path().join("notes.txt");
+        std::fs::write(&text, "not a font").unwrap();
+        let candidates = [Candidate {
+            path: text.clone(),
+            face: FaceRef::Index(0),
+        }];
+        assert_eq!(
+            select(&candidates, "Anything"),
+            Err(Unavailable::Unreadable(format!(
+                "{} is not a font file",
+                text.display()
+            )))
+        );
+        let missing = dir.path().join("missing.ttf");
+        let Err(Unavailable::Unreadable(reason)) = select(
+            &[Candidate {
+                path: missing.clone(),
+                face: FaceRef::Index(0),
+            }],
+            "Anything",
+        ) else {
+            panic!("a missing file is unreadable");
+        };
+        assert!(
+            reason.starts_with(&format!("cannot open {}: ", missing.display())),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn each_reason_reads_as_a_predicate_of_the_family() {
+        assert_eq!(Unavailable::NotInstalled.to_string(), "is not installed");
+        assert_eq!(
+            Unavailable::Unreadable("cannot open /f.ttf: denied".into()).to_string(),
+            "cannot be loaded (cannot open /f.ttf: denied)"
+        );
+        assert_eq!(
+            Unavailable::NoMatcher("libfontconfig.so.1 is not loadable".into()).to_string(),
+            "cannot be looked up (libfontconfig.so.1 is not loadable)"
+        );
     }
 
     #[test]
@@ -407,7 +503,7 @@ mod tests {
         unsafe {
             let config = (lib.FcConfigCreate)();
             assert!((lib.FcConfigAppFontAddDir)(config, path.as_ptr().cast()) != 0);
-            let candidates = fontconfig::candidates(Some(config), "udev gothic nf");
+            let candidates = fontconfig::candidates(Some(config), "udev gothic nf").unwrap();
             (lib.FcConfigDestroy)(config);
             let names: Vec<_> = candidates
                 .iter()
@@ -420,15 +516,15 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn coretext_matches_a_bundled_family_ignoring_case() {
-        let candidates = platform::candidates("hiragino kaku gothic pron");
+        let candidates = platform::candidates("hiragino kaku gothic pron").unwrap();
         assert!(!candidates.is_empty());
         assert!(
             candidates
                 .iter()
                 .all(|candidate| matches!(candidate.face, FaceRef::PostScript(_)))
         );
-        assert!(find("hiragino kaku gothic pron").is_some());
-        assert!(platform::candidates("No Such Family").is_empty());
+        assert!(find("hiragino kaku gothic pron").is_ok());
+        assert_eq!(platform::candidates("No Such Family"), Ok(vec![]));
     }
 
     #[cfg(target_os = "macos")]
@@ -437,10 +533,10 @@ mod tests {
         // Hiragino ships with macOS; its Japanese name is a localized one.
         let english = find("Hiragino Kaku Gothic ProN");
         let japanese = find("ヒラギノ角ゴ ProN");
-        assert!(english.is_some());
+        assert!(english.is_ok());
         assert_eq!(
-            japanese.map(|face| face.index),
-            english.map(|face| face.index)
+            japanese.map(|face| face.index).ok(),
+            english.map(|face| face.index).ok()
         );
     }
 

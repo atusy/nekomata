@@ -114,19 +114,22 @@ pub fn load() -> anyhow::Result<Settings> {
 fn resolve_font(
     font: &UiFont,
     default_size: impl FnOnce() -> f32,
-    find: impl FnOnce(&str) -> Option<crate::ui_font::Face>,
+    find: impl FnOnce(&str) -> Result<crate::ui_font::Face, crate::ui_font::Unavailable>,
     warnings: &mut Warnings,
 ) -> (f32, Option<crate::ui_font::Face>) {
     let size = font.size_px.unwrap_or_else(default_size);
-    let face = font.family.as_deref().and_then(|family| {
-        let face = find(family);
-        if face.is_none() {
-            warnings.push(format!(
-                "`appearance.base.font.family` = {family:?} is not installed; using the default UI font"
-            ));
-        }
-        face
-    });
+    let face = font
+        .family
+        .as_deref()
+        .and_then(|family| match find(family) {
+            Ok(face) => Some(face),
+            Err(reason) => {
+                warnings.push(format!(
+                    "`appearance.base.font.family` = {family:?} {reason}; using the default UI font"
+                ));
+                None
+            }
+        });
     (size, face)
 }
 
@@ -402,7 +405,7 @@ mod tests {
             || 13.0,
             |family| {
                 assert_eq!(family, "UDev Gothic NF");
-                Some(crate::ui_font::Face {
+                Ok(crate::ui_font::Face {
                     bytes: vec![],
                     index: 3,
                 })
@@ -420,12 +423,43 @@ mod tests {
             size_px: None,
         };
         let mut warnings = Warnings::new();
-        let (_, face) = resolve_font(&font, || 13.0, |_| None, &mut warnings);
+        let (_, face) = resolve_font(
+            &font,
+            || 13.0,
+            |_| Err(crate::ui_font::Unavailable::NotInstalled),
+            &mut warnings,
+        );
         assert!(face.is_none());
         assert_eq!(
             warnings,
             [
                 "`appearance.base.font.family` = \"No Such Family\" is not installed; using the default UI font"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unloadable_family_warns_with_the_real_reason() {
+        let font = UiFont {
+            family: Some("UDev Gothic NF".into()),
+            size_px: None,
+        };
+        let mut warnings = Warnings::new();
+        let (_, face) = resolve_font(
+            &font,
+            || 13.0,
+            |_| {
+                Err(crate::ui_font::Unavailable::Unreadable(
+                    "cannot open /fonts/u.ttf: Permission denied".into(),
+                ))
+            },
+            &mut warnings,
+        );
+        assert!(face.is_none());
+        assert_eq!(
+            warnings,
+            [
+                "`appearance.base.font.family` = \"UDev Gothic NF\" cannot be loaded (cannot open /fonts/u.ttf: Permission denied); using the default UI font"
             ]
         );
     }
