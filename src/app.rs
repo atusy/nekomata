@@ -1039,8 +1039,9 @@ impl App {
         if response.inner.0 {
             let pending = pane.pending_paste.take().unwrap();
             let state = pane.session.state.lock().unwrap();
+            // Sent under the lock: a reconnect bumps `reconnects` under it,
+            // so the paste cannot reach a connection it was not confirmed for.
             if pending.is_current(state.connected, state.reconnects) {
-                drop(state);
                 send_to_program(
                     &mut pane.selection,
                     &pane.session,
