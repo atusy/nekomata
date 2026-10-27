@@ -1217,8 +1217,15 @@ fn config_problems_banner(
             ui.strong("Configuration problems");
             dismissed = ui.button("Dismiss").clicked();
         });
+        // The configured UI size applies to the body style only; the
+        // monospace style would keep egui's default.
+        let size = egui::TextStyle::Body.resolve(ui.style()).size;
+        let cap = crate::theme::ui_extent(ui.style(), CONFIG_PROBLEMS_MAX_HEIGHT);
+        // A top panel offers only its current height, so the scroll area
+        // would settle at egui's 64 px minimum without its own.
         egui::ScrollArea::vertical()
-            .max_height(CONFIG_PROBLEMS_MAX_HEIGHT)
+            .max_height(cap)
+            .min_scrolled_height(cap)
             .show(ui, |ui| {
                 for problem in problems.iter() {
                     let color = match problem.severity {
@@ -1231,7 +1238,7 @@ fn config_problems_banner(
                     // under the offending column.
                     ui.label(
                         egui::RichText::new(problem.to_string())
-                            .monospace()
+                            .font(egui::FontId::monospace(size))
                             .color(color),
                     );
                 }
@@ -1242,7 +1249,8 @@ fn config_problems_banner(
     }
 }
 
-/// Room for a few problems, so a long list cannot push the terminals away.
+/// Room for a few problems at a 14 px body, so a long list cannot push the
+/// terminals away.
 const CONFIG_PROBLEMS_MAX_HEIGHT: f32 = 160.0;
 
 impl App {
@@ -3316,6 +3324,54 @@ mod tests {
         // The workspace error's red, which reads on the panel background.
         assert_eq!(color(&shown[0]), egui::Color32::LIGHT_RED);
         assert_ne!(color(&shown[1]), egui::Color32::LIGHT_RED);
+    }
+
+    #[test]
+    fn the_problems_banner_follows_the_configured_ui_size() {
+        use crate::config_report::Problem;
+        // (entry font size, height the list is clipped to) at a body size.
+        let measure = |body: f32| {
+            let ctx = egui::Context::default();
+            ctx.style_mut_of(ctx.theme(), |style| {
+                style
+                    .text_styles
+                    .insert(egui::TextStyle::Body, egui::FontId::proportional(body));
+            });
+            let mut problems: Vec<_> = (0..40)
+                .map(|n| Problem::warning("/c.toml", format!("unknown key `k{n}`")))
+                .collect();
+            let mut found = None;
+            let input = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 2000.0),
+                )),
+                ..Default::default()
+            };
+            // The panel grows toward its content over a few frames.
+            for _ in 0..10 {
+                let frame = crate::test_support::run(&ctx, input(), |ui| {
+                    config_problems_banner(ui, &mut problems)
+                });
+                found = frame.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().contains("k0") => Some((
+                        text.galley.job.sections[0].format.font_id.size,
+                        shape.clip_rect.height(),
+                    )),
+                    _ => None,
+                });
+            }
+            found.expect("the first entry is listed")
+        };
+        let (size, height) = measure(14.0);
+        let (large_size, large_height) = measure(28.0);
+        assert_eq!((size, large_size), (14.0, 28.0));
+        // A long list fills the cap rather than egui's 64 px scroll minimum.
+        assert!(height >= CONFIG_PROBLEMS_MAX_HEIGHT - 1.0, "{height}");
+        assert!(
+            large_height >= 2.0 * height - 1.0,
+            "{height} -> {large_height}"
+        );
     }
 
     #[test]
