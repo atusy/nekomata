@@ -250,16 +250,25 @@ fn is_shell_input(msg: &InputMsg) -> bool {
 impl InputQueue {
     fn push(&self, msg: &InputMsg) -> Result<()> {
         let shell_input = is_shell_input(msg);
-        let result = self.enqueue(msg, shell_input);
+        let frame = OutgoingFrame::input(msg);
+        let mut pending = self.pending.lock().unwrap();
+        let result = frame
+            .map_err(anyhow::Error::from)
+            .and_then(|frame| self.enqueue(&mut pending, frame, shell_input));
+        // Updated before releasing the queue, so a close or write failure
+        // of this frame cannot be overwritten by its own acceptance.
         if shell_input {
             *self.notice.lock().unwrap() = result.is_err().then_some(InputNotice::Lost);
         }
         result
     }
 
-    fn enqueue(&self, msg: &InputMsg, shell_input: bool) -> Result<()> {
-        let frame = OutgoingFrame::input(msg)?;
-        let mut pending = self.pending.lock().unwrap();
+    fn enqueue(
+        &self,
+        pending: &mut Pending,
+        frame: OutgoingFrame,
+        shell_input: bool,
+    ) -> Result<()> {
         if !self.accepting.load(Ordering::Acquire) {
             bail!("connection is not accepting input");
         }
