@@ -96,6 +96,9 @@ struct Registry {
     workspaces: BTreeMap<u64, Record>,
     next_id: u64,
     clock: u64,
+    /// Set under the lock by an accepted Stop, so no window attaches between
+    /// the owner check and the daemon exiting.
+    stopping: bool,
 }
 
 impl Registry {
@@ -367,11 +370,14 @@ async fn serve_connection(
                 )
                 .map_err(|error| error.to_string())
             };
-            write_json(&mut stream, &response).await?;
+            let written = write_json(&mut stream, &response).await;
+            // The registry already refuses attachments; exit even if the
+            // stopping client hung up before reading the reply.
             if stopping && response.is_ok() {
                 stop.notify_one();
-                return Ok(());
+                return written;
             }
+            written?;
         }
     }
     .await;
@@ -389,6 +395,7 @@ fn handle(
 ) -> Result<Payload> {
     match request {
         Request::Open { window: id } => {
+            ensure!(!registry.stopping, "nekomata daemon is stopping");
             ensure!(current.is_none(), "window already has a workspace");
             ensure!(id != 0, "invalid window ID");
             let workspace = registry.claim(owner, id, Selection::Latest)?;
@@ -405,6 +412,7 @@ fn handle(
             Ok(Payload::Done)
         }
         Request::Prepare(selection) => {
+            ensure!(!registry.stopping, "nekomata daemon is stopping");
             ensure!(pending.is_none(), "workspace switch already in progress");
             let id =
                 registry.claim(owner, window.context("window has no workspace")?, selection)?;
@@ -438,6 +446,7 @@ fn handle(
                 registry.workspaces.values().all(|s| s.owner.is_none()),
                 "cannot stop nekomata daemon while windows are attached"
             );
+            registry.stopping = true;
             Ok(Payload::Done)
         }
     }
@@ -674,6 +683,47 @@ mod tests {
         drop(second);
         let _ = first_task.await;
         let _ = second_task.await;
+    }
+
+    #[tokio::test]
+    async fn a_stopping_daemon_refuses_new_attachments() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut stopper, stopper_task) = connection(&registry, 1);
+        let (mut late, late_task) = connection(&registry, 2);
+        exchange(&mut stopper, Request::Stop).await.unwrap();
+        assert!(
+            exchange(&mut late, Request::Open { window: 22 })
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("stopping")
+        );
+        assert!(registry.lock().unwrap().workspaces.is_empty());
+        drop(late);
+        let _ = stopper_task.await;
+        let _ = late_task.await;
+    }
+
+    #[tokio::test]
+    async fn stop_completes_even_if_its_client_hangs_up_before_the_reply() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let stop = Arc::new(Notify::new());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let task = tokio::spawn(serve_connection(server, registry, stop.clone(), 1));
+        write_json(
+            &mut client,
+            &Envelope {
+                version: VERSION,
+                request: Request::Stop,
+            },
+        )
+        .await
+        .unwrap();
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(1), stop.notified())
+            .await
+            .unwrap();
+        let _ = task.await;
     }
 
     #[tokio::test]
