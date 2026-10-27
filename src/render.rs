@@ -59,6 +59,61 @@ pub fn terminal_rect(rect: Rect, rows: u16, cell_height: f32, ppp: f32) -> Rect 
     )
 }
 
+/// One frame's mapping between pane points and the cells felis drew.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaneGeometry {
+    /// Where cell (0, 0) starts; the grid extends right and down from here.
+    pub text_rect: Rect,
+    pub cell: Vec2,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+impl PaneGeometry {
+    /// The cell under `pos`, or `None` outside the drawn text area.
+    pub fn cell_at(&self, pos: Pos2) -> Option<felis_client_core::GridPos> {
+        if !self.text_rect.contains(pos) {
+            return None;
+        }
+        Some(felis_client_core::GridPos {
+            col: ((pos.x - self.text_rect.left()) / self.cell.x).floor() as u16,
+            row: ((pos.y - self.text_rect.top()) / self.cell.y).floor() as u16,
+        })
+    }
+
+    /// The nearest cell to `pos`, so a drag past an edge extends to it.
+    pub fn clamped_cell(&self, pos: Pos2) -> felis_client_core::GridPos {
+        felis_client_core::GridPos {
+            col: ((pos.x - self.text_rect.left()) / self.cell.x)
+                .floor()
+                .clamp(0.0, f32::from(self.cols.saturating_sub(1))) as u16,
+            row: ((pos.y - self.text_rect.top()) / self.cell.y)
+                .floor()
+                .clamp(0.0, f32::from(self.rows.saturating_sub(1))) as u16,
+        }
+    }
+
+    /// The physical-pixel offset of `pos` from the text origin.
+    pub fn pixel_offset(&self, pos: Pos2, ppp: f32) -> (f32, f32) {
+        (
+            (pos.x - self.text_rect.left()).max(0.0) * ppp,
+            (pos.y - self.text_rect.top()).max(0.0) * ppp,
+        )
+    }
+
+    /// The screen rectangle of `cell`, for the IME candidate window.
+    pub fn cell_rect(&self, cell: felis_client_core::GridPos) -> Rect {
+        Rect::from_min_size(
+            self.text_rect.min
+                + Vec2::new(
+                    f32::from(cell.col) * self.cell.x,
+                    f32::from(cell.row) * self.cell.y,
+                ),
+            self.cell,
+        )
+    }
+}
+
 pub struct Renderer {
     gpu: GpuRenderer,
     host: RenderState,

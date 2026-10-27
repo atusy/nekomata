@@ -1987,16 +1987,24 @@ fn draw_pane(
     let shadow = &state.screen;
     let screen = shadow.screen();
     let cursor = screen.cursor();
+    let geometry = crate::render::PaneGeometry {
+        text_rect,
+        cell: Vec2::new(cw, ch),
+        cols: screen.cols(),
+        rows: screen.rows(),
+    };
     // Enabling XIM before the native window receives focus can consume its
     // pending input/focus events. Only the active native window owns the IME.
     if terminal_input_enabled && *focused == id && ui.input(|input| input.focused) {
-        let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
                 purpose: egui::IMEPurpose::Terminal,
                 should_interrupt_composition: false,
                 rect: text_rect,
-                cursor_rect: Rect::from_min_size(pos, Vec2::new(cw, ch)),
+                cursor_rect: geometry.cell_rect(GridPos {
+                    row: cursor.row,
+                    col: cursor.col,
+                }),
             })
         });
     }
@@ -2050,16 +2058,10 @@ fn draw_pane(
     }
     let modifiers = ui.input(|input| input.modifiers);
     let target_at = |pos: Pos2| {
-        if !text_rect.contains(pos) {
-            return None;
-        }
-        let col = ((pos.x - text_rect.left()) / cw).floor() as u16;
-        let row = ((pos.y - text_rect.top()) / ch).floor() as u16;
-        screen
-            .cell(row, col)
-            .and_then(|cell| cell.link)
-            .and_then(|id| shadow.hyperlink(id))
-            .and_then(|link| felis_client_core::ActivationTarget::parse(link.uri.as_str()).ok())
+        geometry
+            .cell_at(pos)
+            .and_then(|cell| link_at(shadow, cell))
+            .and_then(|uri| felis_client_core::ActivationTarget::parse(uri).ok())
     };
     // A link owns its whole primary-button gesture, even after the modifier
     // changes or the pointer leaves the URL. A TUI press retains its release.
@@ -2094,16 +2096,10 @@ fn draw_pane(
     }
     if response.hovered()
         && let Some(pos) = ui.input(|input| input.pointer.hover_pos())
-        && text_rect.contains(pos)
+        && let Some(uri) = geometry.cell_at(pos).and_then(|cell| link_at(shadow, cell))
     {
-        let col = ((pos.x - text_rect.left()) / cw).floor() as u16;
-        let row = ((pos.y - text_rect.top()) / ch).floor() as u16;
-        if let Some(link) = screen
-            .cell(row, col)
-            .and_then(|cell| cell.link)
-            .and_then(|id| shadow.hyperlink(id))
         {
-            match felis_client_core::ActivationTarget::parse(link.uri.as_str()) {
+            match felis_client_core::ActivationTarget::parse(uri) {
                 Ok(target) => {
                     let hint = crate::links::hint(&target, cfg!(target_os = "macos"));
                     response.clone().on_hover_ui_at_pointer(|ui| {
@@ -2123,18 +2119,17 @@ fn draw_pane(
         }
     }
     let mouse_mode = shadow.mouse_protocol_active();
+    // Mouse reports are still bounded by the requested size, not the drawn one.
+    let requested_geometry = crate::render::PaneGeometry {
+        cols: pane.dims.1,
+        rows: pane.dims.0,
+        ..geometry
+    };
     if let Some(pos) = response.interact_pointer_pos()
         && !link_gesture
         && (!mouse_mode || ui.input(|i| i.modifiers.shift))
     {
-        let cell_at = |pos: Pos2| GridPos {
-            col: ((pos.x - text_rect.left()) / cw)
-                .floor()
-                .clamp(0.0, f32::from(screen.cols().saturating_sub(1))) as u16,
-            row: ((pos.y - text_rect.top()) / ch)
-                .floor()
-                .clamp(0.0, f32::from(screen.rows().saturating_sub(1))) as u16,
-        };
+        let cell_at = |pos: Pos2| geometry.clamped_cell(pos);
         if response.drag_started() {
             let origin = ui
                 .input(|input| input.pointer.press_origin())
@@ -2211,9 +2206,8 @@ fn draw_pane(
                 }
                 _ => continue,
             };
-            pane.session.send(mouse_input(
-                ui, text_rect, pos, cw, ch, pane.dims, button, action,
-            ));
+            pane.session
+                .send(mouse_input(ui, &requested_geometry, pos, button, action));
         }
     }
     if response.hovered() {
@@ -2234,11 +2228,8 @@ fn draw_pane(
                 for _ in 0..lines.unsigned_abs().min(100) {
                     pane.session.send(mouse_input(
                         ui,
-                        text_rect,
+                        &requested_geometry,
                         pos,
-                        cw,
-                        ch,
-                        pane.dims,
                         Some(button),
                         MouseAction::Press,
                     ));
@@ -2250,14 +2241,10 @@ fn draw_pane(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mouse_input(
     ui: &egui::Ui,
-    rect: Rect,
+    geometry: &crate::render::PaneGeometry,
     pos: Pos2,
-    cw: f32,
-    ch: f32,
-    dims: (u16, u16),
     button: Option<felis_protocol::messages::MouseButton>,
     action: felis_protocol::messages::MouseAction,
 ) -> InputMsg {
@@ -2267,22 +2254,16 @@ fn mouse_input(
     mods.set(InputMods::SHIFT, modifiers.shift);
     mods.set(InputMods::ALT, modifiers.alt);
     mods.set(InputMods::CTRL, modifiers.ctrl);
+    let cell = geometry.clamped_cell(pos);
+    let (px, py) = geometry.pixel_offset(pos, ui.ctx().pixels_per_point());
     InputMsg::Mouse(MouseEvent {
         button,
         action,
         mods,
-        x: ((pos.x - rect.left()) / cw)
-            .floor()
-            .clamp(0.0, f32::from(dims.1 - 1)) as u16
-            + 1,
-        y: ((pos.y - rect.top()) / ch)
-            .floor()
-            .clamp(0.0, f32::from(dims.0 - 1)) as u16
-            + 1,
-        px: (((pos.x - rect.left()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
-            .saturating_add(1),
-        py: (((pos.y - rect.top()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
-            .saturating_add(1),
+        x: cell.col + 1,
+        y: cell.row + 1,
+        px: (px as u16).saturating_add(1),
+        py: (py as u16).saturating_add(1),
     })
 }
 
@@ -2291,6 +2272,12 @@ fn mouse_input(
 /// font-size actions cover zooming.
 fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
+}
+
+/// The OSC 8 URI of the link drawn at `cell`.
+fn link_at(shadow: &felis_client_core::ShadowScreen, cell: GridPos) -> Option<&str> {
+    let id = shadow.screen().cell(cell.row, cell.col)?.link?;
+    shadow.hyperlink(id).map(|link| link.uri.as_str())
 }
 
 /// Native clipboard replies are valid for one frame and one connection only.
