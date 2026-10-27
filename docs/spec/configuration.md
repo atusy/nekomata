@@ -123,3 +123,8 @@ a problem in one does not hide the other's. Each problem is printed on
 standard error as `nekomata: <path>: <message>` for a warning and
 `nekomata: <path> is ignored: <message>` for an error, terminal-layer problems
 first. Control characters other than line breaks and tabs are escaped.
+
+The same entries, without the `nekomata: ` prefix, are listed in a
+"Configuration problems" banner at the top of the window, errors and warnings
+in distinct colors, until its Dismiss button is pressed. A dismissed banner
+returns only when the GUI restarts.

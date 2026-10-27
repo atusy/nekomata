@@ -86,8 +86,8 @@ bindings can still be configured in felis's `[keymap]` using felis's syntax.
 
 ## When something is wrong
 
-nekomata always starts, and reports every problem in both files on standard
-error.
+nekomata always starts, and lists every problem in both files in a banner at
+the top of the window (dismiss it once read) and on standard error.
 
 - A mistyped key or an unusable value is a warning: it is skipped, or, for an
   out-of-range size, clamped; the rest of the file still applies. A malformed

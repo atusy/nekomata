@@ -1201,10 +1201,47 @@ impl App {
     }
 }
 
+/// Startup's configuration problems, above everything else and until
+/// dismissed: stderr is invisible when the Finder or Dock launched the GUI.
+fn config_problems_banner(
+    root_ui: &mut egui::Ui,
+    problems: &mut Vec<crate::config_report::Problem>,
+) {
+    use crate::config_report::Severity;
+    if problems.is_empty() {
+        return;
+    }
+    let mut dismissed = false;
+    egui::Panel::top("config-problems").show(root_ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.strong("Configuration problems");
+            dismissed = ui.button("Dismiss").clicked();
+        });
+        egui::ScrollArea::vertical()
+            .max_height(CONFIG_PROBLEMS_MAX_HEIGHT)
+            .show(ui, |ui| {
+                for problem in problems.iter() {
+                    let color = match problem.severity {
+                        Severity::Error => ui.visuals().error_fg_color,
+                        Severity::Warning => ui.visuals().warn_fg_color,
+                    };
+                    ui.colored_label(color, problem.to_string());
+                }
+            });
+    });
+    if dismissed {
+        problems.clear();
+    }
+}
+
+/// Room for a few problems, so a long list cannot push the terminals away.
+const CONFIG_PROBLEMS_MAX_HEIGHT: f32 = 160.0;
+
 impl App {
     fn show(&mut self, root_ui: &mut egui::Ui) {
         let context = root_ui.ctx().clone();
         let ctx = &context;
+        config_problems_banner(root_ui, &mut self.config_problems);
         self.workspace_events(ctx);
         self.poll_workspace();
         if self.workspace.is_some() && self.workspace_id.is_none() {
@@ -3189,6 +3226,70 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn configuration_problems_stay_listed_until_dismissed() {
+        use crate::config_report::Problem;
+        let texts = |frame: &crate::test_support::CpuFrame| -> Vec<(String, egui::Pos2)> {
+            frame
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some((text.galley.text().to_owned(), text.pos)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let ctx = egui::Context::default();
+        let mut problems = vec![
+            Problem::error("/felis/config.toml", "TOML parse error"),
+            Problem::warning("/nekomata/config.toml", "unknown key `x`"),
+        ];
+        let shown: Vec<String> = problems.iter().map(ToString::to_string).collect();
+        // The scroll area learns its content's height in the first frame.
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, &mut problems)
+        });
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, &mut problems)
+        });
+        let found = texts(&frame);
+        for problem in &shown {
+            assert!(
+                found.iter().any(|(text, _)| text == problem),
+                "{problem} not in {found:?}"
+            );
+        }
+        let dismiss = found
+            .iter()
+            .find(|(text, _)| text == "Dismiss")
+            .map(|(_, pos)| *pos + egui::vec2(3.0, 3.0))
+            .expect("the banner offers to dismiss it");
+        drop(frame);
+        for pressed in [true, false] {
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(dismiss),
+                        egui::Event::PointerButton {
+                            pos: dismiss,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| config_problems_banner(ui, &mut problems),
+            );
+        }
+        assert!(problems.is_empty());
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, &mut problems)
+        });
+        assert!(texts(&frame).is_empty());
     }
 
     #[test]
