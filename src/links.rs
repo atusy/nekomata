@@ -6,6 +6,10 @@ use std::{
     time::Duration,
 };
 
+/// Bounds a launcher that never exits, so one stuck opener cannot keep the
+/// pane busy forever.
+const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Default)]
 pub struct LinkGesture(Option<ActivationTarget>);
 
@@ -105,7 +109,7 @@ fn command(target: &ActivationTarget) -> Result<tokio::process::Command, String>
 }
 
 async fn open(target: ActivationTarget) -> Result<(), String> {
-    match tokio::time::timeout(Duration::from_secs(10), command(&target)?.status()).await {
+    match tokio::time::timeout(OPENER_TIMEOUT, command(&target)?.status()).await {
         Ok(Ok(status)) if status.success() => Ok(()),
         Ok(Ok(status)) => Err(format!(
             "Could not open the link ({status}); check the default application for this URL type"
