@@ -710,6 +710,7 @@ fn apply_frame(shared: &Mutex<State>, apply: impl FnOnce(&mut State) -> Result<(
             let (rows, cols) = (state.screen.screen().rows(), state.screen.screen().cols());
             state.screen = ShadowScreen::new(rows, cols);
             state.images = felis_client_core::ImageShadow::new();
+            state.redraw.request();
             let reason = panic
                 .downcast_ref::<&str>()
                 .copied()
@@ -1386,11 +1387,12 @@ mod tests {
         assert!(!transport_loss(&error), "a broken frame is not retried");
         assert!(format!("{error:#}").contains("felis bug"));
         assert!(!shared.is_poisoned(), "the GUI keeps locking this pane");
-        let state = shared.lock().unwrap();
+        let mut state = shared.lock().unwrap();
         assert!(
             !state.screen.is_rehydrating(),
             "half-applied state is reset"
         );
+        assert!(state.redraw.flush(), "the cached frame is not reused");
         assert_eq!(
             (state.screen.screen().rows(), state.screen.screen().cols()),
             (24, 80)
