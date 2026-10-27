@@ -413,7 +413,8 @@ fn accept_error_is_transient(error: &std::io::Error) -> bool {
         ErrorKind::ConnectionAborted | ErrorKind::Interrupted | ErrorKind::OutOfMemory
     ) || matches!(
         error.raw_os_error(),
-        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+        // std maps these to ErrorKind::Uncategorized.
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS)
     )
 }
 
