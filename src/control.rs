@@ -159,9 +159,7 @@ impl Server {
             move |stream| {
                 let tx = tx.clone();
                 let ctx = ctx.clone();
-                tokio::spawn(async move {
-                    let _ = tokio::time::timeout(DEADLINE, serve(stream, tx, ctx)).await;
-                });
+                tokio::spawn(serve_within(DEADLINE, stream, tx, ctx));
             },
         ));
         Ok(Self {
@@ -231,6 +229,18 @@ pub fn reject_all(requests: &mut mpsc::Receiver<Message>, reason: &str) {
     while let Ok(message) = requests.try_recv() {
         let _ = message.reply.send(Err(reason.into()));
     }
+}
+
+/// Abandoning a request drops its reply, which the GUI notices only through
+/// `reply.is_closed()` on a later frame, so wake it to settle the request.
+async fn serve_within(
+    deadline: Duration,
+    stream: UnixStream,
+    tx: mpsc::Sender<Message>,
+    ctx: egui::Context,
+) {
+    let _ = tokio::time::timeout(deadline, serve(stream, tx, ctx.clone())).await;
+    ctx.request_repaint();
 }
 
 async fn serve(
@@ -763,6 +773,37 @@ mod tests {
             serde_json::to_value(&request).unwrap(),
             serde_json::json!({"Switch": {"session": 7}})
         );
+    }
+
+    #[tokio::test]
+    async fn an_expired_request_wakes_the_gui_to_notice_its_closed_reply() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        let ctx = egui::Context::default();
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        ctx.set_repaint_observer({
+            let requests = requests.clone();
+            Box::new(move |_| {
+                requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            })
+        });
+        let task = tokio::spawn(serve_within(
+            Duration::from_millis(50),
+            server,
+            tx,
+            ctx.clone(),
+        ));
+        client
+            .write_all(&serde_json::to_vec(&Request::List).unwrap())
+            .await
+            .unwrap();
+        client.shutdown().await.unwrap();
+        let message = rx.recv().await.unwrap();
+        task.await.unwrap();
+        assert!(message.reply.is_closed());
+        // One wake delivers the request; the other reports its expiry, which
+        // the GUI observes only through `reply.is_closed()` on a later frame.
+        assert_eq!(requests.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 
     #[tokio::test]
