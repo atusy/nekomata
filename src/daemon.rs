@@ -1076,6 +1076,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stopping_succeeds_whatever_the_daemon_returns_on_success() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let reply = tokio::spawn(async move {
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Ok": {"Future": 1}}))
+                .await
+                .unwrap();
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Err": "busy"}))
+                .await
+                .unwrap();
+        });
+        request_stop(&mut client).await.unwrap();
+        let error = request_stop(&mut client).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Rejection>().unwrap().0, "busy");
+        reply.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn stop_requests_reach_a_daemon_through_the_frozen_frame() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut client, task) = connection(&registry, 1);
