@@ -2630,7 +2630,7 @@ mod tests {
     }
 
     #[test]
-    fn a_grid_change_under_the_selection_drops_it_before_copy() {
+    fn an_advanced_selection_epoch_expires_the_pane_selection() { {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -2716,7 +2716,7 @@ mod tests {
     }
 
     #[test]
-    fn both_halves_of_a_wide_linked_character_open_its_link() {
+    fn link_lookup_resolves_the_spacer_of_a_wide_linked_character() {
         use felis_grid::{
             Cell, StyleTable,
             wire::{RowEncode, encode_row},
@@ -2730,7 +2730,8 @@ mod tests {
                 uri: "https://example.com/".into(),
             })
             .unwrap();
-        // felis-grid gives the spacer of a wide print the pen's link.
+        // felis-grid gives the spacer of a wide print the pen's link
+        // (editing.rs, `width == 2`); this pins that nekomata reads it there.
         let link = std::num::NonZeroU16::new(1);
         let cells = [
             Cell {
