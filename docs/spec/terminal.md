@@ -153,14 +153,15 @@ daemon delivers each write to at most one window attached to the session.
   same session for a bounded period. When retries run out, or on any other
   connection error, the pane shows the error.
 - A frame from felis that the pane cannot apply is a connection error of that
-  pane alone; the window and its other panes keep working. If applying it
-  panicked, the pane's screen is also cleared, since it may be half-updated.
+  pane alone; the window and its other panes keep working. Like after any
+  connection error, the pane keeps its last drawn screen under the error.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
 - Shell input — keys, pastes, and mouse button, drag or wheel reports — made
   while the pane is reconnecting, or queued or being written when the
   connection was lost, is discarded; so is a paste made before the first
-  connection. The pane then shows that some input was not delivered. The
+  connection. Keys typed before the first connection are queued and
+  delivered once it is made. The pane then shows that some input was not delivered. The
   notice stays until the next shell input is accepted for sending; while the
   pane is connecting, reconnecting or showing an error, that status is shown
   instead.
