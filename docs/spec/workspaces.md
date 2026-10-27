@@ -38,16 +38,18 @@ felis daemon.
 - A workspace is attached to at most one window at a time. The daemon
   arbitrates simultaneous requests, including concurrent GUI startup.
 - There is no operation to take a workspace from another window.
-- A window that disconnects releases its lease; the workspace remains.
+- A window that disconnects releases its lease; the workspace remains unless
+  it has no tabs.
 - A workspace without tabs is discarded once no window holds it, for example
   after its window closes its last pane or cancels a switch to a new
-  workspace. A discarded workspace's ID is not reused.
+  workspace. The same daemon never reuses a discarded workspace's ID.
 
 ## Startup
 
 At startup, a window attaches to the most recently used workspace that no
 window has attached. When none exists, it creates a workspace with one tab and
-one pane. The attached workspace's font size is replaced by the configured
+one pane. A window closed by closing its last pane leaves no workspace behind,
+so the next window attaches the most recent remaining one, if any. The attached workspace's font size is replaced by the configured
 size (see [configuration](configuration.md#font-size-precedence)).
 
 ## Saving
