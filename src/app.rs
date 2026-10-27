@@ -3124,6 +3124,10 @@ mod tests {
         });
         assert_eq!(app.tabs.len(), 1, "{:?}", app.workspace_error);
         let shell = app.panes.values().next().unwrap().session.clone();
+        // Nothing is in flight, so only the idle watch can notice the loss.
+        pump(&mut app, &|app| {
+            app.workspace.as_ref().and_then(WorkspaceClient::saved) == Some(app.snapshot())
+        });
         // The test binary cannot start a daemon itself; the real one can.
         let executable = std::env::current_exe()
             .unwrap()
