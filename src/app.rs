@@ -1151,7 +1151,7 @@ impl App {
                     crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
             }
             Action::Paste => {
-                self.overlay = None;
+                // The palette closes before acting; close search before requesting paste.
                 let pane = self.panes.get_mut(&self.window.active_tab().focused).unwrap();
                 if pane.search_open {
                     pane.close_search();
@@ -3077,18 +3077,18 @@ mod tests {
         app.window.font_size = 30.0;
         app.action(&ctx, Action::FontReset);
         assert_eq!(app.window.font_size, 21.0);
-        // Pasting from the palette must reach the terminal, whose paste any
-        // window that blocks terminal input would otherwise discard.
-        app.open_search();
         app.action(&ctx, Action::OpenWorkspaces);
         app.action(&ctx, Action::AttachSession);
         assert!(
             matches!(app.overlay, Some(Overlay::SessionPicker)),
             "opening an overlay replaces the open one"
         );
+        app.overlay = None;
+        // Pasting from the palette must reach the terminal, whose paste the
+        // search field would otherwise discard by blocking terminal input.
+        app.open_search();
         app.action(&ctx, Action::Paste);
         assert!(!app.searching());
-        assert!(app.overlay.is_none());
         assert!(app.paste_requested.take().is_some());
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
