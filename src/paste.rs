@@ -1,13 +1,13 @@
 //! Confirmation of pastes that could run commands as soon as they arrive.
 
 /// What to do with pasted text.
-pub enum Paste {
+pub(crate) enum Paste {
     Send(Vec<u8>),
     Confirm(PendingPaste),
 }
 
 impl Paste {
-    pub fn new(text: String, bracketed: bool, generation: u64) -> Self {
+    pub(crate) fn new(text: String, bracketed: bool, generation: u64) -> Self {
         let bytes = text.into_bytes();
         if felis_client_core::confirm::paste_needs_confirmation(bracketed, &bytes) {
             Self::Confirm(PendingPaste { bytes, generation })
@@ -18,17 +18,17 @@ impl Paste {
 }
 
 /// A confirmation is valid only for the connection that received the paste.
-pub struct PendingPaste {
+pub(crate) struct PendingPaste {
     bytes: Vec<u8>,
     generation: u64,
 }
 
 impl PendingPaste {
-    pub fn is_current(&self, connected: bool, generation: u64) -> bool {
+    pub(crate) fn is_current(&self, connected: bool, generation: u64) -> bool {
         connected && self.generation == generation
     }
 
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
 }
