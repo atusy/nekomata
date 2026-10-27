@@ -22,8 +22,8 @@ Pressing a modifier key on its own neither continues nor ends a pending
 sequence, so `alt+w` may be released and Alt pressed again for `alt+s`.
 
 Key repeat from a held key that a sequence consumed (one that started,
-continued, completed or cancelled it, such as a held `alt+w` or the `c` of
-`alt+w c`) is ignored. Holding a key bound to an action on its own repeats
+continued or completed it, or the Escape that cancelled it, such as a held
+`alt+w` or the `c` of `alt+w c`) is ignored. Holding a key bound to an action on its own repeats
 the action.
 
 A key that ends a pending application sequence without completing it skips
