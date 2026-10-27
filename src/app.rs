@@ -837,20 +837,21 @@ impl App {
                 }
             }
         }
-        let ready: Vec<_> = self
-            .pending_attach
-            .iter()
-            .filter_map(|(&id, pending)| {
-                attach_result(
-                    id,
-                    &pending.session.state.lock().unwrap(),
-                    self.panes.contains_key(&id),
-                    pending.reply.is_closed(),
-                )
-                .map(|result| (id, result))
-            })
-            .collect();
-        for (id, result) in ready {
+        let ids: Vec<_> = self.pending_attach.keys().copied().collect();
+        for id in ids {
+            let pending = &self.pending_attach[&id];
+            let session = pending.session.clone();
+            // Hold the session state through the swap so the session task
+            // cannot end it between resolving the attach and replacing the pane.
+            let state = session.state.lock().unwrap();
+            let Some(result) = attach_result(
+                id,
+                &state,
+                self.panes.contains_key(&id),
+                pending.reply.is_closed(),
+            ) else {
+                continue;
+            };
             let pending = self.pending_attach.remove(&id).unwrap();
             if result.is_ok() {
                 let pane = self.panes.get_mut(&id).unwrap();
@@ -864,6 +865,7 @@ impl App {
                 pane.mouse_capture = None;
                 pane.link_capture = Default::default();
             }
+            drop(state);
             let _ = pending.reply.send(result);
         }
     }
