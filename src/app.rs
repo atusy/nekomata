@@ -118,7 +118,7 @@ impl Pane {
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
         window: u32,
-        workspace: Option<u64>,
+        workspace: Option<(u64, Option<&str>)>,
         id: u64,
         spec: PaneSpec,
         cwd: Option<String>,
@@ -127,8 +127,11 @@ impl Pane {
             ("NEKOMATA_WINDOW_ID".into(), window.to_string()),
             ("NEKOMATA_PANE_ID".into(), id.to_string()),
         ];
-        if let Some(id) = workspace {
+        if let Some((id, instance)) = workspace {
             env.push((control::WORKSPACE_ENV.into(), id.to_string()));
+            if let Some(instance) = instance {
+                env.push((control::DAEMON_INSTANCE_ENV.into(), instance.into()));
+            }
         }
         Self::from_session(Arc::new(Session::start(
             runtime,
@@ -158,6 +161,8 @@ struct WorkspaceSwitch {
 pub struct App {
     workspace: Option<WorkspaceClient>,
     workspace_id: Option<u64>,
+    /// The daemon instance that issued `workspace_id`, when it reports one.
+    daemon_instance: Option<String>,
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch>,
@@ -220,6 +225,7 @@ impl App {
         let app = Self {
             workspace: Some(workspace),
             workspace_id: None,
+            daemon_instance: None,
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
@@ -269,6 +275,12 @@ impl App {
         }
     }
 
+    /// The workspace identity new local shells carry.
+    fn workspace(&self) -> Option<(u64, Option<&str>)> {
+        self.workspace_id
+            .map(|id| (id, self.daemon_instance.as_deref()))
+    }
+
     fn restore_workspace(&mut self, ctx: &egui::Context, snapshot: Snapshot) {
         self.panes.clear();
         self.pending_attach.clear();
@@ -285,7 +297,7 @@ impl App {
                     &self.runtime,
                     ctx,
                     self.control.window,
-                    self.workspace_id,
+                    self.workspace(),
                     id,
                     spec,
                     None,
@@ -305,19 +317,32 @@ impl App {
                 .and_then(|client| client.events.try_recv().ok());
             let Some(event) = event else { break };
             match (event.operation, event.result) {
-                (Operation::Open, Ok(Payload::Workspace { id, snapshot })) => {
+                (
+                    Operation::Open,
+                    Ok(Payload::Workspace {
+                        id,
+                        snapshot,
+                        instance,
+                    }),
+                ) => {
                     if let Err(error) = snapshot.validate() {
                         self.workspace_error = Some(error.to_string());
                         continue;
                     }
                     self.workspace_id = Some(id);
+                    self.daemon_instance = Some(instance).filter(|instance| !instance.is_empty());
                     self.last_snapshot = Some(snapshot.clone());
                     self.restore_workspace(ctx, snapshot);
                 }
                 (Operation::List, Ok(Payload::Workspaces(workspaces))) => {
                     self.workspace_roster = Some(workspaces);
                 }
-                (Operation::Prepare, Ok(Payload::Workspace { id, mut snapshot })) => {
+                (
+                    Operation::Prepare,
+                    Ok(Payload::Workspace {
+                        id, mut snapshot, ..
+                    }),
+                ) => {
                     if let Err(error) = snapshot.validate() {
                         self.cancel_workspace(error.to_string());
                         continue;
@@ -368,7 +393,7 @@ impl App {
                                     &self.runtime,
                                     ctx,
                                     self.control.window,
-                                    Some(id),
+                                    Some((id, self.daemon_instance.as_deref())),
                                     pane_id,
                                     spec.clone(),
                                     None,
@@ -653,7 +678,7 @@ impl App {
                 &self.runtime,
                 ctx,
                 self.control.window,
-                self.workspace_id,
+                self.workspace(),
                 id,
                 PaneSpec {
                     target,
@@ -2668,25 +2693,39 @@ mod tests {
         assert_eq!(replacement.panes.len(), 3);
 
         let id = workspace_id.unwrap();
-        let repaint = ctx.clone();
-        let routing_executable = executable.clone();
-        let command = replacement.runtime.spawn(async move {
-            let result = tokio::process::Command::new(routing_executable)
-                .args(["panes", "list"])
-                .env(control::WORKSPACE_ENV, id.to_string())
-                .env("NEKOMATA_WINDOW_ID", u32::MAX.to_string())
-                .output()
-                .await
-                .unwrap();
-            repaint.request_repaint();
-            result
-        });
-        pump(&mut replacement, &|_| command.is_finished());
-        let output = replacement.runtime.block_on(command).unwrap();
+        let instance = replacement.daemon_instance.clone().unwrap();
+        // A shell carries the IDs it started with; route as one would.
+        let route = |app: &mut App, instance: String| {
+            let repaint = ctx.clone();
+            let executable = executable.clone();
+            let command = app.runtime.spawn(async move {
+                let result = tokio::process::Command::new(executable)
+                    .args(["panes", "list"])
+                    .env(control::WORKSPACE_ENV, id.to_string())
+                    .env(control::DAEMON_INSTANCE_ENV, instance)
+                    .env("NEKOMATA_WINDOW_ID", u32::MAX.to_string())
+                    .output()
+                    .await
+                    .unwrap();
+                repaint.request_repaint();
+                result
+            });
+            pump(app, &|_| command.is_finished());
+            app.runtime.block_on(command).unwrap()
+        };
+        let output = route(&mut replacement, instance);
         assert!(
             output.status.success(),
             "restored shell CLI routing failed: {:?}",
             output
+        );
+        // A shell from an earlier daemon must not reach the window that now
+        // holds a workspace with the same ID.
+        let output = route(&mut replacement, "0123456789abcdef".into());
+        assert!(!output.status.success(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("restarted"),
+            "{output:?}"
         );
         let command = |app: &mut App, args: Vec<String>| {
             let executable = executable.clone();
@@ -2877,6 +2916,7 @@ mod tests {
         let mut app = App {
             workspace: None,
             workspace_id: None,
+            daemon_instance: None,
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,

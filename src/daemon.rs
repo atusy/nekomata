@@ -52,6 +52,9 @@ pub struct Summary {
     pub tabs: usize,
     pub panes: usize,
     pub last_used: u64,
+    /// Identifies the daemon that issued `id`; empty from older daemons.
+    #[serde(default)]
+    pub instance: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +63,9 @@ pub enum Payload {
     Workspace {
         id: u64,
         snapshot: Snapshot,
+        /// Identifies the daemon that issued `id`; empty from older daemons.
+        #[serde(default)]
+        instance: String,
     },
     #[serde(rename = "Sessions")]
     Workspaces(Vec<Summary>),
@@ -122,6 +128,8 @@ struct Registry {
     workspaces: BTreeMap<u64, Record>,
     next_id: u64,
     clock: u64,
+    /// Distinguishes this daemon from earlier ones, whose IDs restarted at 1.
+    instance: String,
     /// Set under the lock by an accepted Stop, so no window attaches between
     /// the owner check and the daemon exiting.
     stopping: bool,
@@ -172,6 +180,7 @@ impl Registry {
         Payload::Workspace {
             id,
             snapshot: self.workspaces[&id].snapshot.clone(),
+            instance: self.instance.clone(),
         }
     }
 
@@ -210,11 +219,27 @@ impl Registry {
                 tabs: record.snapshot.tabs.len(),
                 panes: record.snapshot.panes.len(),
                 last_used: record.last_used,
+                instance: self.instance.clone(),
             })
             .collect();
         workspaces.sort_by_key(|s| std::cmp::Reverse((s.last_used, s.id)));
         workspaces
     }
+}
+
+/// RandomState is seeded from the OS; mixing in the PID and start time keeps
+/// two daemons apart even if that seed repeats.
+fn instance_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u32(std::process::id());
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    );
+    format!("{:016x}", hasher.finish())
 }
 
 pub fn socket() -> Result<PathBuf> {
@@ -381,7 +406,10 @@ fn accept_error_is_transient(error: &std::io::Error) -> bool {
 
 async fn serve(path: &Path) -> Result<()> {
     let listener = UnixListener::bind(path)?;
-    let registry = Arc::new(Mutex::new(Registry::default()));
+    let registry = Arc::new(Mutex::new(Registry {
+        instance: instance_token(),
+        ..Default::default()
+    }));
     let stop = Arc::new(Notify::new());
     let mut owner = 0;
     loop {
@@ -551,6 +579,7 @@ mod tests {
         let workspace = Payload::Workspace {
             id: 3,
             snapshot: Snapshot::default(),
+            instance: String::new(),
         };
         let json = serde_json::to_value(&workspace).unwrap();
         assert_eq!(json["Session"]["id"], 3);
@@ -594,6 +623,55 @@ mod tests {
         for errno in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
             assert!(!accept_error_is_transient(&Error::from_raw_os_error(errno)));
         }
+    }
+
+    #[test]
+    fn each_daemon_gets_a_distinct_instance_token() {
+        let (first, second) = (instance_token(), instance_token());
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn workspaces_name_the_daemon_instance_that_issued_their_ids() {
+        let registry = Arc::new(Mutex::new(Registry {
+            instance: "feed".into(),
+            ..Default::default()
+        }));
+        let (mut client, task) = connection(&registry, 1);
+        let Payload::Workspace { instance, .. } =
+            exchange(&mut client, Request::Open { window: 11 })
+                .await
+                .unwrap()
+        else {
+            panic!("expected workspace")
+        };
+        assert_eq!(instance, "feed");
+        let Payload::Workspaces(workspaces) = exchange(&mut client, Request::List).await.unwrap()
+        else {
+            panic!("expected workspaces")
+        };
+        assert_eq!(workspaces[0].instance, "feed");
+        drop(client);
+        let _ = task.await;
+        // Daemons predating the token omit it.
+        let Payload::Workspace { instance, .. } = serde_json::from_value(
+            serde_json::to_value(Payload::Workspace {
+                id: 1,
+                snapshot: Snapshot::default(),
+                instance: String::new(),
+            })
+            .map(|mut value| {
+                value["Session"].as_object_mut().unwrap().remove("instance");
+                value
+            })
+            .unwrap(),
+        )
+        .unwrap() else {
+            panic!("expected workspace")
+        };
+        assert!(instance.is_empty());
     }
 
     #[test]
@@ -648,7 +726,7 @@ mod tests {
     }
 
     fn workspace(payload: Payload) -> (u64, Snapshot) {
-        let Payload::Workspace { id, snapshot } = payload else {
+        let Payload::Workspace { id, snapshot, .. } = payload else {
             panic!("expected workspace")
         };
         (id, snapshot)

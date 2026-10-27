@@ -304,13 +304,31 @@ pub(crate) const WORKSPACE_ENV: &str = "NEKOMATA_WORKSPACE_ID";
 /// Name exported by builds before the workspace rename; their shells still carry it.
 const LEGACY_WORKSPACE_ENV: &str = "NEKOMATA_SESSION_ID";
 
+/// Exported beside the workspace ID: a restarted daemon numbers workspaces
+/// from 1 again, so the ID alone could name an unrelated workspace.
+pub(crate) const DAEMON_INSTANCE_ENV: &str = "NEKOMATA_DAEMON_INSTANCE";
+
 fn workspace_from_env(get: impl Fn(&str) -> Option<String>) -> Option<u64> {
     [WORKSPACE_ENV, LEGACY_WORKSPACE_ENV]
         .into_iter()
         .find_map(|name| get(name)?.parse().ok())
 }
 
-fn window_of_workspace(workspaces: &[crate::daemon::Summary], id: u64) -> Result<u32> {
+fn window_of_workspace(
+    workspaces: &[crate::daemon::Summary],
+    id: u64,
+    instance: Option<&str>,
+) -> Result<u32> {
+    if let Some(instance) = instance
+        && workspaces
+            .iter()
+            .any(|workspace| workspace.instance != instance)
+    {
+        bail!(
+            "the shell's workspace belongs to a nekomata daemon that has since restarted; \
+             pass --window WINDOW_ID"
+        );
+    }
     workspaces
         .iter()
         .find(|workspace| workspace.id == id)
@@ -323,6 +341,9 @@ pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
         .is_none()
         .then(|| workspace_from_env(|name| std::env::var(name).ok()))
         .flatten();
+    let instance = std::env::var(DAEMON_INSTANCE_ENV)
+        .ok()
+        .filter(|instance| !instance.is_empty());
     let window = window.or_else(|| {
         std::env::var("NEKOMATA_WINDOW_ID")
             .ok()
@@ -338,7 +359,7 @@ pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
             else {
                 bail!("unexpected workspace list response");
             };
-            Some(window_of_workspace(&workspaces, id)?)
+            Some(window_of_workspace(&workspaces, id, instance.as_deref())?)
         } else {
             window
         };
@@ -676,6 +697,31 @@ mod tests {
                 Err("workspace is not ready".into())
             );
         }
+    }
+
+    #[test]
+    fn shells_of_an_earlier_daemon_do_not_reach_a_window_reusing_their_id() {
+        let workspaces = [crate::daemon::Summary {
+            id: 1,
+            window: Some(11),
+            tabs: 1,
+            panes: 1,
+            last_used: 1,
+            instance: "current".into(),
+        }];
+        assert_eq!(
+            window_of_workspace(&workspaces, 1, Some("current")).unwrap(),
+            11
+        );
+        assert!(
+            window_of_workspace(&workspaces, 1, Some("earlier"))
+                .unwrap_err()
+                .to_string()
+                .contains("restarted")
+        );
+        // Shells started before the token existed keep resolving by ID alone.
+        assert_eq!(window_of_workspace(&workspaces, 1, None).unwrap(), 11);
+        assert!(window_of_workspace(&workspaces, 2, Some("current")).is_err());
     }
 
     #[test]

@@ -19,9 +19,10 @@ is distinct from the felis session ID.
   nekomata.
 - A new local shell runs `$SHELL` (else `/bin/sh`); on macOS it runs as a login
   shell (`-l`).
-- New local shells receive `NEKOMATA_WORKSPACE_ID` (once the window's
-  workspace is known), `NEKOMATA_WINDOW_ID`, `NEKOMATA_PANE_ID` and
-  `NEKOMATA_SHELL_INTEGRATION=1`. nekomata never rewrites the environment of an
+- New local shells receive `NEKOMATA_WINDOW_ID`, `NEKOMATA_PANE_ID` and
+  `NEKOMATA_SHELL_INTEGRATION=1`. Once the window's workspace is known, they
+  also receive `NEKOMATA_WORKSPACE_ID` and `NEKOMATA_DAEMON_INSTANCE`, which
+  identifies the nekomata daemon that issued that ID. nekomata never rewrites the environment of an
   existing shell.
 - A new remote shell runs the remote daemon's default command. It receives
   none of the above: no `$SHELL`, working directory or environment is
@@ -72,8 +73,12 @@ A CLI command targets a window as follows:
 1. `--window`, when given.
 2. Otherwise, if `NEKOMATA_WORKSPACE_ID` holds a workspace ID (else, if the
    legacy `NEKOMATA_SESSION_ID` does), the window that workspace is attached
-   to. If that workspace has no window or the nekomata daemon is unreachable,
-   the command fails; it does not fall back further.
+   to. If that workspace has no window, the nekomata daemon is unreachable,
+   or `NEKOMATA_DAEMON_INSTANCE` is set and names a daemon other than the
+   running one, the command fails; it does not fall back further. A restarted
+   daemon numbers workspaces from 1 again, so the instance check keeps a shell
+   from reaching an unrelated window. A shell without
+   `NEKOMATA_DAEMON_INSTANCE` resolves by workspace ID alone.
 3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
 4. Otherwise the only running GUI window. With no window or several, the
    command fails; with several, it reports the
