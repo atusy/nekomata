@@ -8,8 +8,9 @@ with the behavior they control: workspaces and the nekomata daemon in
 
 - `--help` or `-h`, directly after `nekomata` or a subcommand, prints the
   usage to standard output and exits with status 0.
-- An unknown command or invalid options print the problem and the usage to
-  standard error and exit with status 2.
+- An unknown command or invalid options to nekomata's own commands print the
+  problem and the usage to standard error and exit with status 2. Options
+  after `felis sessions list` are passed to felis unchecked.
 - A command that fails, including a window that cannot start, prints the
   error to standard error and exits with status 1.
 - `nekomata felis sessions list` exits with felis's status, or 1 when felis
