@@ -120,6 +120,8 @@
           fontconfigPath = fontconfigLibraryPath pkgs;
         in
         {
+          # CI roots this shared dependency build before garbage-collecting its cache.
+          ci-deps = cargoArtifacts;
           default = craneLib.buildPackage (
             common
             // {
