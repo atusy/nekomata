@@ -7,6 +7,8 @@ pub const TAB_BAR_BG: Color32 = Color32::from_rgb(24, 28, 37);
 pub const TAB_ACTIVE_BG: Color32 = Color32::from_rgb(48, 55, 68);
 pub const TAB_HOVER_BG: Color32 = Color32::from_rgb(36, 43, 54);
 pub const TAB_INACTIVE_FG: Color32 = Color32::from_rgb(140, 149, 167);
+pub const ERROR_FG: Color32 = Color32::LIGHT_RED;
+pub const PANE_DIVIDER: Color32 = Color32::from_gray(45);
 
 pub const MENU_BORDER: Color32 = Color32::from_rgb(48, 55, 68);
 pub const MENU_ROW_HEIGHT: f32 = 30.0;

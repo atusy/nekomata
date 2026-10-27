@@ -967,7 +967,7 @@ impl App {
                         crate::theme::ui_extent(ui.style(), 30.0),
                     ],
                     egui::Label::new(if search.error.is_some() {
-                        egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
+                        egui::RichText::new("!").color(crate::theme::ERROR_FG)
                     } else if search.running {
                         egui::RichText::new("…")
                     } else {
@@ -1238,7 +1238,7 @@ impl App {
         if self.workspace.is_some() && self.workspace_id.is_none() {
             egui::CentralPanel::default().show(root_ui, |ui| {
                 if let Some(error) = &self.workspace_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(crate::theme::ERROR_FG, error);
                     if ui.button("Retry connecting to nekomata daemon").clicked() {
                         self.workspace = Some(WorkspaceClient::start(
                             &self.runtime,
@@ -1259,7 +1259,7 @@ impl App {
             let lost = self.daemon_lost();
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(crate::theme::ERROR_FG, error);
                     if lost && ui.button("Reconnect now").clicked() {
                         self.reconnect.retry_now();
                     }
@@ -1893,7 +1893,7 @@ fn draw_layout(
                 })
                 .inner;
             let painter = ui.painter();
-            painter.rect_filled(divider, 0, Color32::from_gray(45));
+            painter.rect_filled(divider, 0, crate::theme::PANE_DIVIDER);
             let focus_rect = first_focus.or(second_focus);
             if let Some(focus_rect) = focus_rect {
                 let touches = if horizontal {
@@ -1959,7 +1959,7 @@ fn draw_pane(
                     egui::Align2::LEFT_TOP,
                     format!("Terminal font: {error}"),
                     FontId::monospace(font_size),
-                    Color32::LIGHT_RED,
+                    crate::theme::ERROR_FG,
                 );
                 return;
             }
@@ -2054,7 +2054,7 @@ fn draw_pane(
             egui::Align2::LEFT_TOP,
             error,
             FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
-            Color32::LIGHT_RED,
+            crate::theme::ERROR_FG,
         );
     } else if !state.connected {
         painter.text(
@@ -2081,7 +2081,7 @@ fn draw_pane(
             egui::Align2::LEFT_CENTER,
             error,
             FontId::proportional(crate::theme::ui_size(ui.style(), 12.0)),
-            Color32::LIGHT_RED,
+            crate::theme::ERROR_FG,
         );
     }
     let modifiers = ui.input(|input| input.modifiers);

@@ -76,7 +76,7 @@ impl SessionPicker {
                         ui.label("Loading sessions…");
                     }
                     Some(Err(err)) => {
-                        ui.colored_label(egui::Color32::LIGHT_RED, err);
+                        ui.colored_label(crate::theme::ERROR_FG, err);
                     }
                     Some(Ok(sessions)) if sessions.is_empty() => {
                         ui.label("No felis sessions. Run nekomata to start one.");
