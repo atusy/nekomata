@@ -6,7 +6,9 @@ Closing the pane leaves the session running, so you can attach to it later.
 ## Reattaching a session
 
 `Session: Attach…` in the command palette lists the sessions of the local
-daemon and opens the one you pick in a new tab. To list them from a shell:
+daemon and opens the one you pick in a new tab. You can also type a shortened
+session ID; until felis resolves it, the tab is saved without a session (see
+[saving](../spec/workspaces.md#saving)). To list them from a shell:
 
 ```sh
 nekomata felis sessions list
