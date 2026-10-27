@@ -22,9 +22,9 @@ felis daemon.
   would start the daemon then report that path instead of starting it.
 - Running out of file descriptors or memory while accepting a client does not
   stop the daemon; it retries shortly after.
-- Workspaces are held in memory only. Stopping or crashing the daemon, or
-  restarting the OS, loses every layout except those of open windows, which
-  [reconnect](#losing-the-nekomata-daemon).
+- Workspaces are held in memory only. Restarting the OS loses every layout.
+  Stopping or crashing the daemon loses every layout except those of open
+  windows, which [reconnect](#losing-the-nekomata-daemon).
 - Client and daemon speak a versioned protocol. On an incompatible version the
   client reports an error and does not replace the running daemon. The daemon
   checks the version before decoding the request, so any request other than a
