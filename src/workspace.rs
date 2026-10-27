@@ -202,7 +202,18 @@ fn move_tab(tabs: &mut Vec<Tab>, active: usize, from: usize, to: usize) -> usize
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PaneSpec {
     pub target: crate::session::Target,
+    #[serde(default, deserialize_with = "resolved_session")]
     pub session: Option<crate::session::SessionId>,
+}
+
+/// Older windows saved an unresolved attach prefix here. Failing to decode
+/// it would end the daemon connection and release the window's workspace,
+/// so it loads as no session, as current windows save it.
+fn resolved_session<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<crate::session::SessionId>, D::Error> {
+    use serde::Deserialize;
+    Ok(Option::<String>::deserialize(deserializer)?.and_then(|id| id.parse().ok()))
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -363,6 +374,18 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(tab.focus_history, [1]);
+    }
+
+    #[test]
+    fn panes_saved_with_a_session_prefix_load_without_a_session() {
+        // Windows built before session IDs were typed saved the raw prefix
+        // of an attach felis had not resolved.
+        let pane: PaneSpec = serde_json::from_value(serde_json::json!({
+            "target": {"Local": "/tmp/felis.sock"},
+            "session": "abc",
+        }))
+        .unwrap();
+        assert_eq!(pane.session, None);
     }
 
     #[test]
