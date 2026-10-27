@@ -1902,16 +1902,15 @@ fn draw_pane(
             pane.search_paint_key = Some(key);
         }
     }
-    if let Err(error) = renderer.paint(
+    match renderer.paint(
         &painter,
         &mut state,
         text_rect,
         terminal_input_enabled && *focused == id && connected && ui.input(|input| input.focused),
         pane.selection,
     ) {
-        state.error = Some(format!("Terminal renderer: {error:#}"));
-    } else {
-        pane.session.frame_submitted(&mut state);
+        Ok(rendered) => pane.session.frame_submitted(&mut state, rendered),
+        Err(error) => state.error = Some(format!("Terminal renderer: {error:#}")),
     }
     let text_rect = renderer.content_rect(text_rect);
     let shadow = &state.screen;
