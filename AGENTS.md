@@ -43,13 +43,13 @@ cargo clippy --locked --all-targets -- -D warnings
 bash scripts/test-live.sh                   # Run isolated daemon integration tests
 ```
 
-Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` to run the package build and its Rust tests, rustfmt, clippy and fish integration checks. Format Nix with `nix fmt -- flake.nix`.
+Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` to run the package build and its Rust tests, rustfmt, clippy, felis revision and fish integration checks. Format Nix with `nix fmt -- flake.nix`.
 
 On macOS, `bash scripts/install-macos.sh` installs or updates `~/Applications/nekomata.app`; restart the GUI to load changes.
 
 ## Coding Style & Naming Conventions
 
-Follow rustfmt defaults: four-space indentation, `snake_case` functions/modules, and `PascalCase` types. Keep UI operations on the GUI thread and IPC work asynchronous. Share rendering constants through `src/theme.rs`. Keep Cargo and Nix felis revisions synchronized when updating upstream dependencies.
+Follow rustfmt defaults: four-space indentation, `snake_case` functions/modules, and `PascalCase` types. Keep UI operations on the GUI thread and IPC work asynchronous. Share rendering constants through `src/theme.rs`. Keep Cargo and Nix felis revisions synchronized when updating upstream dependencies; `bash scripts/check-felis-revision.sh` (also a flake check) verifies every pin.
 
 ## Testing Guidelines
 

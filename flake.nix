@@ -174,6 +174,7 @@
                 rustfmt
                 resvg
                 python3
+                jq
                 clippy
                 fish
                 rust-analyzer
@@ -240,6 +241,20 @@
             }
           );
           fmt = craneLib.cargoFmt { inherit (common) src; };
+          felis-revision =
+            pkgs.runCommand "nekomata-felis-revision"
+              {
+                nativeBuildInputs = [
+                  pkgs.bash
+                  pkgs.jq
+                  pkgs.python3
+                ];
+              }
+              ''
+                bash ${./.}/scripts/test-felis-revision.sh
+                bash ${./.}/scripts/check-felis-revision.sh
+                touch $out
+              '';
           fish-integration =
             pkgs.runCommand "nekomata-fish-integration"
               {
