@@ -76,7 +76,8 @@ A CLI command targets a window as follows:
    the command fails; it does not fall back further.
 3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
 4. Otherwise the only running GUI window. With no window or several, the
-   command fails; with several, it reports the window discovery directory.
+   command fails; with several, it reports the
+   [runtime directory](#runtime-directory).
 
 Because resolution goes through the workspace ID, a shell keeps reaching its
 window after the GUI restarts. A shell carries the IDs it was started with,
