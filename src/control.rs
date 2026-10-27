@@ -47,6 +47,7 @@ pub struct Server {
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_MESSAGE: u64 = 65536;
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 pub(crate) fn directory() -> Result<PathBuf> {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -156,8 +157,16 @@ async fn accept_each<S, F>(mut accept: impl FnMut() -> F, mut handle: impl FnMut
 where
     F: Future<Output = std::io::Result<S>>,
 {
-    while let Ok(stream) = accept().await {
-        handle(stream);
+    loop {
+        match accept().await {
+            Ok(stream) => handle(stream),
+            // Errors such as EMFILE pass once connections close; retrying
+            // without a pause would spin while the condition lasts.
+            Err(err) => {
+                eprintln!("nekomata: accept control connection: {err}");
+                tokio::time::sleep(ACCEPT_BACKOFF).await;
+            }
+        }
     }
 }
 
@@ -503,6 +512,29 @@ mod tests {
             std::io::ErrorKind::AddrInUse
         );
         std::os::unix::net::UnixStream::connect(&path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn transient_accept_errors_do_not_stop_the_control_socket() {
+        let mut results = std::collections::VecDeque::from([
+            Err(std::io::Error::from_raw_os_error(libc::EMFILE)),
+            Ok(1),
+        ]);
+        let (tx, mut handled) = mpsc::unbounded_channel();
+        let task = tokio::spawn(accept_each(
+            move || {
+                let next = results.pop_front();
+                async move {
+                    match next {
+                        Some(result) => result,
+                        None => std::future::pending().await,
+                    }
+                }
+            },
+            move |stream| tx.send(stream).unwrap(),
+        ));
+        assert_eq!(handled.recv().await, Some(1));
+        task.abort();
     }
 
     #[test]
