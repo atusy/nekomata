@@ -76,8 +76,12 @@ enum Message {
 pub struct Client {
     tx: mpsc::Sender<Message>,
     pub events: mpsc::UnboundedReceiver<Event>,
+    saved: Saved,
     task: tokio::task::JoinHandle<()>,
 }
+
+/// The layout the daemon last acknowledged for this connection's workspace.
+type Saved = std::sync::Arc<std::sync::Mutex<Option<Snapshot>>>;
 
 /// When a window that lost the daemon tries to reach it again: after 1 s,
 /// doubling up to 30 s while attempts keep failing.
@@ -117,15 +121,15 @@ impl Backoff {
 pub struct Resume {
     /// The workspace the window held before the connection was lost.
     pub previous: u64,
-    /// The last snapshot the window sent for it.
+    /// The last snapshot the daemon acknowledged for it.
     pub sent: Option<Snapshot>,
     /// The window's layout now, which the resumed workspace takes.
     pub current: Snapshot,
 }
 
 /// Whether the workspace a fresh `Open` claimed may take the window's
-/// layout: one without tabs is new, and one still holding exactly what this
-/// window last sent under its ID is the window's own. Any other is somebody
+/// layout: one without tabs is new, and one still holding exactly what the
+/// daemon last acknowledged from this window under its ID is the window's own. Any other is somebody
 /// else's retained layout, which must not be overwritten.
 fn reclaimable(resume: &Resume, id: u64, retained: &Snapshot) -> bool {
     retained.tabs.is_empty() || (id == resume.previous && resume.sent.as_ref() == Some(retained))
@@ -231,19 +235,34 @@ impl Client {
     ) -> Self {
         let (tx, commands) = mpsc::channel(16);
         let (events_tx, events) = mpsc::unbounded_channel();
+        let saved = Saved::default();
+        let acknowledged = saved.clone();
         let task = runtime.spawn(async move {
             let (stream, operation, result) = open.await;
+            if let Ok(Payload::Workspace { snapshot, .. }) = &result {
+                *acknowledged.lock().unwrap() = Some(snapshot.clone());
+            }
             let sent = events_tx.send(Event { operation, result }).is_ok();
             ctx.request_repaint();
             if let (Some(stream), true) = (stream, sent) {
-                serve(stream, commands, events_tx, ctx).await;
+                serve(stream, commands, events_tx, acknowledged, ctx).await;
             }
         });
-        Self { tx, events, task }
+        Self {
+            tx,
+            events,
+            saved,
+            task,
+        }
     }
 
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
+    }
+
+    /// The layout the daemon last acknowledged, unlike one merely queued.
+    pub fn saved(&self) -> Option<Snapshot> {
+        self.saved.lock().unwrap().clone()
     }
 
     pub fn send(&self, command: Command) -> Result<()> {
@@ -298,6 +317,7 @@ async fn serve(
     mut stream: UnixStream,
     mut commands: mpsc::Receiver<Message>,
     events: mpsc::UnboundedSender<Event>,
+    saved: Saved,
     ctx: egui::Context,
 ) {
     loop {
@@ -322,17 +342,33 @@ async fn serve(
             }
         };
         let (operation, result) = match message {
-            Message::Command(command) => (
-                command.operation(),
-                daemon::exchange(&mut stream, command.request()).await,
-            ),
+            Message::Command(command) => {
+                let stored = match &command {
+                    Command::Save(snapshot)
+                    | Command::Finish {
+                        snapshot: Some(snapshot),
+                    } => Some(snapshot.clone()),
+                    Command::List | Command::Finish { snapshot: None } => None,
+                };
+                let operation = command.operation();
+                let result = daemon::exchange(&mut stream, command.request()).await;
+                if result.is_ok()
+                    && let Some(snapshot) = stored
+                {
+                    *saved.lock().unwrap() = Some(snapshot);
+                }
+                (operation, result)
+            }
             Message::Prepare {
                 snapshot,
                 selection,
-            } => (
-                Operation::Prepare,
-                daemon::prepare(&mut stream, snapshot, selection).await,
-            ),
+            } => {
+                let result = daemon::prepare(&mut stream, snapshot.clone(), selection).await;
+                if result.is_ok() {
+                    *saved.lock().unwrap() = Some(snapshot);
+                }
+                (Operation::Prepare, result)
+            }
             Message::Close {
                 snapshot,
                 deadline,
@@ -481,6 +517,30 @@ mod tests {
             .unwrap();
         assert_eq!(event.operation, Operation::Disconnected);
         assert!(client.events.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn only_acknowledged_layouts_count_as_saved() {
+        let (mut client, mut daemon) = opened().await;
+        assert_eq!(client.saved(), Some(Snapshot::default()), "Open's layout");
+        let first = layout();
+        let mut second = layout();
+        second.font_size += 1.0;
+        client.send(Command::Save(first.clone())).unwrap();
+        assert!(receive(&mut daemon).await.is_some());
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        client.send(Command::Save(second.clone())).unwrap();
+        assert!(receive(&mut daemon).await.is_some());
+        respond(&mut daemon, Err("invalid".into())).await;
+        client.send(Command::Save(second)).unwrap();
+        assert!(receive(&mut daemon).await.is_some());
+        drop(daemon);
+        while let Some(event) = client.events.recv().await {
+            if event.operation == Operation::Disconnected {
+                break;
+            }
+        }
+        assert_eq!(client.saved(), Some(first));
     }
 
     #[tokio::test]

@@ -652,7 +652,7 @@ impl App {
             self.control.window,
             crate::workspace_client::Resume {
                 previous,
-                sent: self.last_snapshot.clone(),
+                sent: self.workspace.as_ref().and_then(WorkspaceClient::saved),
                 current: self.snapshot(),
             },
         ));

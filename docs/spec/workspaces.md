@@ -115,7 +115,7 @@ On reconnecting, the window attaches a workspace and saves its current layout
 there:
 
 - When the workspace the daemon offers is new, or still holds exactly the
-  layout this window last sent under the same ID, the window takes it.
+  layout the daemon last acknowledged from this window under the same ID, the window takes it.
 - Otherwise the window leaves that workspace untouched and takes a new one.
 
 The workspace ID may therefore change. Shells started before the change keep
