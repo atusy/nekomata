@@ -12,7 +12,8 @@ trap 'rm -rf "$test_directory"' EXIT
 fail_sources=()
 mv() {
   local source
-  for source in "${fail_sources[@]}"; do
+  # bash before 4.4 treats an empty array as unset under `set -u`.
+  for source in ${fail_sources[@]+"${fail_sources[@]}"}; do
     if [[ "$1" == "$source" ]]; then
       echo "mv: simulated failure: $1" >&2
       return 1
