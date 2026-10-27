@@ -6,6 +6,7 @@ use eframe::{
     egui_wgpu::{RenderState, wgpu},
 };
 use felis_client_core::ImageShadow;
+use felis_protocol::messages::RequestedDims;
 use felis_render_core::{ImageData, ImageSource, SelectionRange};
 use felis_render_wgpu::{Renderer as GpuRenderer, RendererConfig};
 use felis_shaping::FontStack;
@@ -57,6 +58,26 @@ pub fn terminal_rect(rect: Rect, rows: u16, cell_height: f32, ppp: f32) -> Rect 
         centered.min.round_to_pixels(ppp),
         centered.size().round_to_pixels(ppp),
     )
+}
+
+/// The terminal size that fits whole `cell_px` cells into `rect`, or `None`
+/// when not even one fits: a 1x1 request would resize a shared session for
+/// every other client attached to it.
+pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<RequestedDims> {
+    let fit = |extent: f32, cell: u32, max: f32| {
+        // A NaN extent (or ppp) fails the comparison as well.
+        let count = (extent * ppp / cell as f32).floor();
+        (cell > 0 && count >= 1.0).then(|| count.min(max) as u32)
+    };
+    let [cell_w, cell_h] = cell_px;
+    let cols = fit(rect.width(), cell_w, 1000.0)?;
+    let rows = fit(rect.height(), cell_h, 500.0)?;
+    Some(RequestedDims {
+        rows,
+        cols,
+        pixel_w: cols * cell_w,
+        pixel_h: rows * cell_h,
+    })
 }
 
 /// One frame's mapping between pane points and the cells felis drew.
@@ -187,6 +208,11 @@ impl Renderer {
             self.ppp = ppp;
             self.rendered = false;
         }
+    }
+
+    pub fn cell_px(&self) -> [u32; 2] {
+        let metrics = self.gpu.cell_metrics();
+        [metrics.width, metrics.height]
     }
 
     pub fn cell_size(&self) -> Vec2 {
@@ -440,6 +466,32 @@ mod tests {
             empty.clamped_cell(Pos2::new(500.0, 500.0)),
             GridPos { row: 0, col: 0 }
         );
+    }
+
+    #[test]
+    fn requested_pixels_cover_whole_cells_only() {
+        // 4.7 x 2.25 cells of 10 x 20 points at 2 physical pixels per point.
+        let pane = Rect::from_min_size(Pos2::new(3.0, 5.0), Vec2::new(47.0, 45.0));
+        assert_eq!(
+            requested_dims(pane, [20, 40], 2.0),
+            Some(RequestedDims {
+                rows: 2,
+                cols: 4,
+                pixel_w: 80,
+                pixel_h: 80,
+            })
+        );
+    }
+
+    #[test]
+    fn a_pane_smaller_than_one_cell_requests_no_size() {
+        let cell = [20, 40];
+        let pane = |w, h| Rect::from_min_size(Pos2::ZERO, Vec2::new(w, h));
+        assert_eq!(requested_dims(pane(9.9, 45.0), cell, 2.0), None);
+        assert_eq!(requested_dims(pane(47.0, 19.9), cell, 2.0), None);
+        assert_eq!(requested_dims(pane(47.0, 45.0), [0, 40], 2.0), None);
+        assert_eq!(requested_dims(pane(47.0, 45.0), [20, 0], 2.0), None);
+        assert!(requested_dims(pane(10.0, 20.0), cell, 2.0).is_some());
     }
 
     #[test]

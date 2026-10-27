@@ -21,7 +21,8 @@ use crate::{
 
 struct Pane {
     session: Arc<Session>,
-    dims: (u16, u16),
+    /// The size last sent to felis; `None` until one is, or after reconnecting.
+    requested: Option<RequestedDims>,
     selection: Option<Selection>,
     /// The session's `selection_epoch` that `selection` was made against.
     selection_epoch: u64,
@@ -61,7 +62,7 @@ impl Pane {
     fn from_session(session: Arc<Session>) -> Self {
         Self {
             session,
-            dims: (0, 0),
+            requested: None,
             selection: None,
             selection_epoch: 0,
             reported_focus: None,
@@ -870,7 +871,7 @@ impl App {
                 pane.session = pending.session;
                 pane.links = Default::default();
                 pane.pending_paste = None;
-                pane.dims = (0, 0);
+                pane.requested = None;
                 pane.selection = None;
                 pane.reported_focus = None;
                 pane.scroll_remainder = 0.0;
@@ -1920,7 +1921,7 @@ fn draw_pane(
         pane.connection_generation = generation;
         pane.links = Default::default();
         pane.pending_paste = None;
-        pane.dims = (0, 0);
+        pane.requested = None;
         pane.reported_focus = None;
         pane.selection = None;
         pane.mouse_capture = None;
@@ -1954,21 +1955,22 @@ fn draw_pane(
     let renderer = pane.renderer.as_mut().unwrap();
     renderer.set_font(font_size, ppp);
     let Vec2 { x: cw, y: ch } = renderer.cell_size();
-    let cols = (rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
-    let rows = (rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
+    let requested = crate::render::requested_dims(rect, renderer.cell_px(), ppp);
     // Split the unused fractional row between the top and bottom margins.
+    let rows = requested.map_or(1, |dims| dims.rows as u16);
     let text_rect = crate::render::terminal_rect(rect, rows, ch, ppp);
-    if pane.dims != (rows, cols) {
-        pane.dims = (rows, cols);
-        pane.selection = None;
-        pane.session.send(InputMsg::Resize {
-            dims: RequestedDims {
-                rows: rows.into(),
-                cols: cols.into(),
-                pixel_w: (text_rect.width().max(0.0) * ppp).round() as u32,
-                pixel_h: (text_rect.height().max(0.0) * ppp).round() as u32,
-            },
-        });
+    // Pixel sizes change with DPI and font steps even when the grid does not.
+    if let Some(dims) = requested
+        && pane.requested != Some(dims)
+    {
+        if pane
+            .requested
+            .is_none_or(|old| (old.rows, old.cols) != (dims.rows, dims.cols))
+        {
+            pane.selection = None;
+        }
+        pane.requested = Some(dims);
+        pane.session.send(InputMsg::Resize { dims });
     }
     let mut state = pane.session.state.lock().unwrap();
     let connected = state.connected;
