@@ -1,7 +1,7 @@
 //! Per-window control socket. Only the GUI thread mutates panes.
 use std::{
     ffi::OsString,
-    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -196,7 +196,12 @@ fn listen(path: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
     match UnixListener::bind(path) {
         Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
             match UnixStream::connect(path) {
-                Err(refused) if refused.kind() == std::io::ErrorKind::ConnectionRefused => {
+                // Linux also refuses connections to a regular file.
+                Err(refused)
+                    if refused.kind() == std::io::ErrorKind::ConnectionRefused
+                        && std::fs::symlink_metadata(path)
+                            .is_ok_and(|metadata| metadata.file_type().is_socket()) =>
+                {
                     std::fs::remove_file(path)?;
                     UnixListener::bind(path)
                 }
@@ -563,6 +568,15 @@ mod tests {
         let listener = listen(&path).unwrap();
         std::os::unix::net::UnixStream::connect(&path).unwrap();
         drop(listener);
+    }
+
+    #[test]
+    fn only_sockets_are_reclaimed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("7.sock");
+        std::fs::write(&path, "keep").unwrap();
+        listen(&path).unwrap_err();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep");
     }
 
     #[test]
