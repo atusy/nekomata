@@ -48,15 +48,24 @@ struct Pane {
     pending_paste: Option<crate::paste::PendingPaste>,
 }
 
+/// Drops a selection made before the screen switched or the view moved.
+/// Callers hold `state` until they have used or replaced the selection, so
+/// the session thread cannot advance the epoch in between.
+fn expire_selection(
+    selection: &mut Option<Selection>,
+    seen_epoch: &mut u64,
+    state: &crate::session::State,
+) {
+    if *seen_epoch != state.selection_epoch {
+        *seen_epoch = state.selection_epoch;
+        *selection = None;
+    }
+}
+
 impl Pane {
-    /// Drops a selection whose cells a grid change has since replaced, so a
-    /// copy never extracts text from a screen the user did not select on.
     fn expire_selection(&mut self) {
-        let epoch = self.session.state.lock().unwrap().selection_epoch;
-        if self.selection_epoch != epoch {
-            self.selection_epoch = epoch;
-            self.selection = None;
-        }
+        let state = self.session.state.lock().unwrap();
+        expire_selection(&mut self.selection, &mut self.selection_epoch, &state);
     }
 
     fn from_session(session: Arc<Session>) -> Self {
@@ -1157,9 +1166,9 @@ impl App {
             }
             Action::Copy => {
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
-                pane.expire_selection();
+                let state = pane.session.state.lock().unwrap();
+                expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
                 if let Some(selection) = pane.selection {
-                    let state = pane.session.state.lock().unwrap();
                     ctx.copy_text(selection.extract_text(state.screen.screen()));
                 }
             }
@@ -1927,7 +1936,6 @@ fn draw_pane(
         pane.mouse_capture = None;
         pane.link_capture = Default::default();
     }
-    pane.expire_selection();
     let rect = ui.max_rect().shrink(2.0);
     let response = ui.interact(rect, ui.scope_id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
@@ -1973,6 +1981,8 @@ fn draw_pane(
         pane.session.send(InputMsg::Resize { dims });
     }
     let mut state = pane.session.state.lock().unwrap();
+    // Held from here through painting and selection gestures below.
+    expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
     let connected = state.connected;
     let painter = painter.with_clip_rect(text_rect);
     {
