@@ -179,11 +179,20 @@ impl Registry {
         if let Some(id) = current {
             self.touch(id);
         }
-        for record in self.workspaces.values_mut() {
-            if record.owner.is_some_and(|(id, _)| id == owner) {
-                record.owner = None;
-            }
+        let leased: Vec<_> = self
+            .workspaces
+            .iter()
+            .filter(|(_, record)| record.owner.is_some_and(|(id, _)| id == owner))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in leased {
+            self.unlease(id);
         }
+    }
+
+    /// Ends the lease on a workspace.
+    fn unlease(&mut self, id: u64) {
+        self.workspaces.get_mut(&id).unwrap().owner = None;
     }
 
     fn list(&self) -> Vec<Summary> {
@@ -472,13 +481,13 @@ fn handle(
             if let Some(snapshot) = snapshot {
                 snapshot.validate()?;
                 let source = current.context("window has no workspace")?;
-                registry.workspaces.get_mut(&source).unwrap().owner = None;
                 registry.touch(source);
+                registry.unlease(source);
                 registry.workspaces.get_mut(&id).unwrap().snapshot = snapshot;
                 registry.touch(id);
                 *current = Some(id);
             } else {
-                registry.workspaces.get_mut(&id).unwrap().owner = None;
+                registry.unlease(id);
             }
             *pending = None;
             Ok(Payload::Done)
