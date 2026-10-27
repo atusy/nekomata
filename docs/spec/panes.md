@@ -102,11 +102,12 @@ Windows and the nekomata daemon publish their sockets (`<window>.sock`,
    `$XDG_RUNTIME_DIR` (cron, some SSH logins) still meet a desktop session.
 5. `/tmp/nekomata-<uid>`.
 
-Candidates 2 to 4 are skipped unless their base is an existing directory
-owned by the current user with no group or other permissions, and when a
-socket path inside them would exceed the Unix socket path limit. The directory is created with mode 0700; if it
-exists but is not a directory owned by the current user with no group or
-other permissions, windows and CLI commands fail and name the directory.
+Candidates 2 to 4 are skipped when their base is not an existing directory
+owned by the current user with no group or other permissions, or when a
+socket path inside them would exceed the Unix socket path limit. The
+directory is created with mode 0700; if it exists but is not a directory
+owned by the current user with no group or other permissions, windows and CLI
+commands fail and name the directory.
 
 A window socket is named after the GUI's process ID and removed when the
 window closes. A window that finds its name taken by a socket nothing listens
