@@ -323,10 +323,10 @@ async fn open(target: ActivationTarget) -> Result<(), String> {
 async fn attempt(target: ActivationTarget) -> Result<(), String> {
     let platform = Platform::current().ok_or("Opening links is not supported on this platform")?;
     // Filesystem calls can block indefinitely on a stale network mount;
-    // keep them off the async workers so the deadline above still fires.
-    let launch = tokio::task::spawn_blocking(move || resolve(&target))
+    // keep them off the runtime so the deadline above still fires.
+    let launch = off_runtime(move || resolve(&target))
         .await
-        .map_err(|error| format!("Could not resolve the link: {error}"))??;
+        .ok_or("Could not resolve the link")??;
     let mut outcome = Ok(());
     for step in plan(platform, &launch) {
         outcome = run(&step, &launch).await;
@@ -335,6 +335,17 @@ async fn attempt(target: ActivationTarget) -> Result<(), String> {
         }
     }
     outcome
+}
+
+/// Runs `work` on a detached thread. Not `spawn_blocking`: dropping the
+/// runtime waits for blocking tasks, so a stalled lookup would keep the
+/// app from exiting long after its deadline gave up on it.
+async fn off_runtime<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver.await.ok()
 }
 
 async fn run(step: &[OsString], launch: &Launch) -> Result<(), String> {
@@ -591,6 +602,30 @@ mod tests {
         opener.tick(&runtime, &egui::Context::default());
         assert_eq!(opener.error, None);
         assert!(opener.queued.is_none());
+    }
+
+    #[test]
+    fn a_stalled_resolution_does_not_hold_up_runtime_shutdown() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        let (_never, stalled) = std::sync::mpsc::channel::<()>();
+        let outcome = runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(10),
+                off_runtime(move || stalled.recv()),
+            )
+            .await
+        });
+        assert!(outcome.is_err());
+        let (done, dropped) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(runtime);
+            done.send(()).unwrap();
+        });
+        assert!(dropped.recv_timeout(Duration::from_secs(5)).is_ok());
     }
 
     #[test]
