@@ -16,6 +16,9 @@ directly; `Font: Change size…` opens the existing size controls. These command
 change terminal text size using the [font size rules](terminal.md#font-size),
 not the UI font.
 
+The palette exposes one-line and half-page scrolls in either direction as
+separate commands, as well as scroll-to-top and scroll-to-bottom operations.
+
 ## Finding a command
 
 Each word of the query must appear, ignoring case, in the command's label or

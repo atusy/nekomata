@@ -72,6 +72,10 @@ dropped with a warning. Labels may change without changing the kind.
 | `scrollback:find` | Scrollback: Find… |
 | `scrollback:jump_next_prompt` | Scrollback: Jump to next prompt |
 | `scrollback:jump_previous_prompt` | Scrollback: Jump to previous prompt |
+| `scrollback:scroll_line_up` | Scrollback: Scroll one line up |
+| `scrollback:scroll_line_down` | Scrollback: Scroll one line down |
+| `scrollback:scroll_half_page_up` | Scrollback: Scroll half a page up |
+| `scrollback:scroll_half_page_down` | Scrollback: Scroll half a page down |
 | `scrollback:scroll_to_top` | Scrollback: Scroll to top |
 | `scrollback:scroll_to_bottom` | Scrollback: Scroll to bottom |
 | `clipboard:copy_selection` | Clipboard: Copy selection |

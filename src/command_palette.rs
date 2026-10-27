@@ -307,6 +307,29 @@ mod tests {
     }
 
     #[test]
+    fn line_and_half_page_scrolls_are_direct_palette_commands() {
+        use felis_client_core::{Action::Scroll, ScrollStep};
+        for (query, step) in [
+            ("scroll one line up", ScrollStep::LineUp),
+            ("scroll one line down", ScrollStep::LineDown),
+            ("scroll half page up", ScrollStep::HalfPageUp),
+            ("scroll half page down", ScrollStep::HalfPageDown),
+        ] {
+            let ctx = egui::Context::default();
+            let mut palette = CommandPalette {
+                query: query.into(),
+                selected: 0,
+            };
+            frame(&ctx, &mut palette, &[]);
+            assert_eq!(
+                frame(&ctx, &mut palette, &[egui::Key::Enter]).0,
+                Some(Action::Terminal(Scroll(step))),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
     fn shortcut_help_is_not_a_palette_command() {
         assert!(matching("keyboard shortcuts").is_empty());
     }

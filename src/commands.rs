@@ -180,6 +180,30 @@ pub(crate) fn commands() -> &'static [Command] {
         )
         .detail("Needs a shell that marks prompts with OSC 133"),
         Command::new(
+            "scrollback:scroll_line_up",
+            Scrollback,
+            "Scroll one line up",
+            Action::Terminal(Scroll(ScrollStep::LineUp)),
+        ),
+        Command::new(
+            "scrollback:scroll_line_down",
+            Scrollback,
+            "Scroll one line down",
+            Action::Terminal(Scroll(ScrollStep::LineDown)),
+        ),
+        Command::new(
+            "scrollback:scroll_half_page_up",
+            Scrollback,
+            "Scroll half a page up",
+            Action::Terminal(Scroll(ScrollStep::HalfPageUp)),
+        ),
+        Command::new(
+            "scrollback:scroll_half_page_down",
+            Scrollback,
+            "Scroll half a page down",
+            Action::Terminal(Scroll(ScrollStep::HalfPageDown)),
+        ),
+        Command::new(
             "scrollback:scroll_to_top",
             Scrollback,
             "Scroll to top",
