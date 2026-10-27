@@ -94,6 +94,17 @@ impl Pane {
         }
     }
 
+    fn spec(&self) -> PaneSpec {
+        let state = self.session.state.lock().unwrap();
+        PaneSpec {
+            target: self.session.target.clone(),
+            session: state
+                .session_id
+                .map(|id| format!("{id:032x}"))
+                .or_else(|| self.session.attachment.clone()),
+        }
+    }
+
     fn close_search(&mut self) {
         self.search_open = false;
         self.session.search.cancel_search();
@@ -276,19 +287,7 @@ impl App {
             panes: self
                 .panes
                 .iter()
-                .map(|(&id, pane)| {
-                    let state = pane.session.state.lock().unwrap();
-                    (
-                        id,
-                        PaneSpec {
-                            target: pane.session.target.clone(),
-                            session: state
-                                .session_id
-                                .map(|id| format!("{id:032x}"))
-                                .or_else(|| pane.session.attachment.clone()),
-                        },
-                    )
-                })
+                .map(|(&id, pane)| (id, pane.spec()))
                 .collect(),
             active: self.active,
             next_id: self.next_id,
