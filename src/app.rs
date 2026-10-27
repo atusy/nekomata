@@ -2119,12 +2119,6 @@ fn draw_pane(
         }
     }
     let mouse_mode = shadow.mouse_protocol_active();
-    // Mouse reports are still bounded by the requested size, not the drawn one.
-    let requested_geometry = crate::render::PaneGeometry {
-        cols: pane.dims.1,
-        rows: pane.dims.0,
-        ..geometry
-    };
     if let Some(pos) = response.interact_pointer_pos()
         && !link_gesture
         && (!mouse_mode || ui.input(|i| i.modifiers.shift))
@@ -2207,7 +2201,7 @@ fn draw_pane(
                 _ => continue,
             };
             pane.session
-                .send(mouse_input(ui, &requested_geometry, pos, button, action));
+                .send(mouse_input(ui, &geometry, pos, button, action));
         }
     }
     if response.hovered() {
@@ -2228,7 +2222,7 @@ fn draw_pane(
                 for _ in 0..lines.unsigned_abs().min(100) {
                     pane.session.send(mouse_input(
                         ui,
-                        &requested_geometry,
+                        &geometry,
                         pos,
                         Some(button),
                         MouseAction::Press,

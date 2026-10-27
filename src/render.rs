@@ -420,6 +420,29 @@ mod tests {
     }
 
     #[test]
+    fn points_outside_the_grid_clamp_to_its_nearest_drawn_cell() {
+        use felis_client_core::GridPos;
+        let geometry = geometry();
+        assert_eq!(
+            geometry.clamped_cell(Pos2::new(500.0, 500.0)),
+            GridPos { row: 1, col: 3 }
+        );
+        assert_eq!(
+            geometry.clamped_cell(Pos2::new(0.0, 0.0)),
+            GridPos { row: 0, col: 0 }
+        );
+        let empty = PaneGeometry {
+            cols: 0,
+            rows: 0,
+            ..geometry
+        };
+        assert_eq!(
+            empty.clamped_cell(Pos2::new(500.0, 500.0)),
+            GridPos { row: 0, col: 0 }
+        );
+    }
+
+    #[test]
     fn terminal_smaller_than_one_row_keeps_the_available_height() {
         let pane = Rect::from_min_size(Pos2::ZERO, Vec2::new(8.0, 7.0));
         assert_eq!(terminal_rect(pane, 1, 19.0, 1.0), pane);
