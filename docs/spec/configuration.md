@@ -90,9 +90,9 @@ dialogs. It never affects terminal text.
 
 - `family`: matched case-insensitively against installed families through the
   OS font matcher (CoreText on macOS, fontconfig on Linux). When it is empty,
-  not installed, or cannot be used — its font file cannot be read, or
-  fontconfig cannot be loaded — nekomata warns, naming the reason, and uses the
-  default UI font.
+  not installed, or cannot be used — for example, its font file cannot be
+  read or is not a font, or fontconfig cannot be loaded or queried — nekomata
+  warns, naming the reason, and uses the default UI font.
 - The default UI font is `/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc` on
   macOS and `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc` (the
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
