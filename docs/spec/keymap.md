@@ -18,6 +18,9 @@ list, the session picker or a paste confirmation is open, or while a
 workspace switch is in progress. A pending sequence survives these conditions;
 losing window focus cancels it only while key dispatch is active.
 
+Pressing a modifier key on its own neither continues nor ends a pending
+sequence, so `alt+w` may be released and Alt pressed again for `alt+s`.
+
 Key repeat from a held key that a sequence consumed (one that started,
 continued, completed or cancelled it, such as a held `alt+w` or the `c` of
 `alt+w c`) is ignored. Holding a key bound to an action on its own repeats

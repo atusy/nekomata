@@ -376,6 +376,21 @@ impl Shortcuts {
             else {
                 return true;
             };
+            // egui reports modifier keys on their own; pressing one is part
+            // of the next chord, not a keystroke that ends a sequence.
+            if matches!(
+                key,
+                Key::ShiftLeft
+                    | Key::ShiftRight
+                    | Key::ControlLeft
+                    | Key::ControlRight
+                    | Key::AltLeft
+                    | Key::AltRight
+                    | Key::SuperLeft
+                    | Key::SuperRight
+            ) {
+                return true;
+            }
             suppress_text = false;
             let chord = terminal_chord(*key, *mods);
             // A held key that a sequence consumed, whether it started,
@@ -731,6 +746,23 @@ mod tests {
         ]);
         assert_eq!(actions, vec![Action::Split(Axis::Vertical)]);
         assert!(remaining.is_empty(), "{remaining:?}");
+    }
+
+    #[test]
+    fn pressing_a_modifier_key_keeps_a_sequence_pending() {
+        for modifiers in [Modifiers::NONE, Modifiers::ALT] {
+            let (actions, remaining) = consume_events(vec![
+                press(Key::W, Modifiers::ALT),
+                press(Key::AltLeft, modifiers),
+                press(Key::S, Modifiers::ALT),
+            ]);
+            assert_eq!(
+                actions,
+                vec![Action::Split(Axis::Vertical)],
+                "{modifiers:?}"
+            );
+            assert_eq!(remaining, vec![press(Key::AltLeft, modifiers)]);
+        }
     }
 
     #[test]
