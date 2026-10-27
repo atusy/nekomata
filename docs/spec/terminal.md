@@ -21,6 +21,9 @@ Not supported: key release events and OSC 52 clipboard reads.
   for the program, as a control byte where one exists, or as an escape
   sequence when the program enables modifyOtherKeys or the Kitty keyboard
   protocol. Keys that name no character, such as Copy, are not sent.
+- Ctrl+-, Ctrl+= and Ctrl+0 (Cmd on macOS) do not scale the window's
+  interface; unless a keymap binds them, they reach the program like any
+  other key.
 - On macOS, Option types the character the keyboard layout composes, sent
   without Alt: Option+L on a German layout types `@`, not Alt+@. Option acts
   as Alt only where it composes no character, such as Option+Space, Option

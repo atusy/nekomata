@@ -188,6 +188,7 @@ impl App {
             keymap,
         } = crate::app_config::load()?;
 
+        leave_zoom_keys_to_the_terminal(&cc.egui_ctx);
         cc.egui_ctx.set_theme(egui::Theme::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*cc.egui_ctx.style_of(egui::Theme::Dark)).clone();
@@ -2189,6 +2190,13 @@ fn mouse_input(
     })
 }
 
+/// egui zooms the whole window on Ctrl (Cmd on macOS) with -, = or 0 after
+/// the frame has already forwarded those keys to the program; nekomata's own
+/// font-size actions cover zooming.
+fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
+    ctx.options_mut(|options| options.zoom_with_keyboard = false);
+}
+
 /// Native clipboard replies are valid for one frame and one connection only.
 fn requested_paste_is_current(
     (frame, generation, origin): (u64, u64, &Arc<Session>),
@@ -2351,6 +2359,29 @@ mod tests {
         pane.search_query.clear();
         pane.navigate_search(true);
         assert!(!pane.session.search.search.lock().unwrap().active);
+    }
+
+    #[test]
+    fn control_minus_and_plus_do_not_zoom_the_window() {
+        let ctx = egui::Context::default();
+        leave_zoom_keys_to_the_terminal(&ctx);
+        for key in [egui::Key::Minus, egui::Key::Minus, egui::Key::Equals] {
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::COMMAND,
+                    }],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+        }
+        assert_eq!(ctx.zoom_factor(), 1.0);
     }
 
     #[test]
