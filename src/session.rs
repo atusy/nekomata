@@ -446,9 +446,9 @@ impl Session {
     /// drains it.
     #[cfg(test)]
     pub fn drain_queued_matches(&self, expected: &[InputMsg]) -> bool {
-        let mut frames = self.tx.frames.lock().unwrap();
+        let mut pending = self.tx.pending.lock().unwrap();
         // Compare wire frames: queueing later frames rewrites coalescing state.
-        let queued: Vec<_> = std::iter::from_fn(|| frames.pop())
+        let queued: Vec<_> = std::iter::from_fn(|| pending.frames.pop())
             .map(|frame| frame.frame().clone())
             .collect();
         let expected: Vec<_> = expected
