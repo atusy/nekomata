@@ -19,10 +19,11 @@ is distinct from the felis session ID.
   nekomata.
 - A new local shell runs `$SHELL` (else `/bin/sh`); on macOS it runs as a login
   shell (`-l`).
-- New local shells receive `NEKOMATA_WORKSPACE_ID` (once the window's
-  workspace is known), `NEKOMATA_WINDOW_ID`, `NEKOMATA_PANE_ID` and
-  `NEKOMATA_SHELL_INTEGRATION=1`. nekomata never rewrites the environment of an
-  existing shell.
+- New local shells receive `NEKOMATA_WINDOW_ID`, `NEKOMATA_PANE_ID` and
+  `NEKOMATA_SHELL_INTEGRATION=1`. Once the window's workspace is known, they
+  also receive `NEKOMATA_WORKSPACE_ID` and, when the daemon reports one,
+  `NEKOMATA_DAEMON_INSTANCE`, which identifies the nekomata daemon that issued
+  that ID. nekomata never rewrites the environment of an existing shell.
 - A new remote shell runs the remote daemon's default command. It receives
   none of the above: no `$SHELL`, working directory or environment is
   forwarded.
@@ -72,17 +73,22 @@ A CLI command targets a window as follows:
 1. `--window`, when given.
 2. Otherwise, if `NEKOMATA_WORKSPACE_ID` holds a workspace ID (else, if the
    legacy `NEKOMATA_SESSION_ID` does), the window that workspace is attached
-   to. If that workspace has no window or the nekomata daemon is unreachable,
-   the command fails; it does not fall back further.
+   to. The command fails, without falling back further, if that workspace no
+   longer exists or has no window, if the nekomata daemon is unreachable, or
+   if `NEKOMATA_DAEMON_INSTANCE` is non-empty and names a daemon other than
+   the running one. A restarted daemon numbers workspaces from 1 again, so the
+   instance check keeps a shell from reaching an unrelated window. A shell
+   without `NEKOMATA_DAEMON_INSTANCE` resolves by workspace ID alone.
 3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
 4. Otherwise the only running GUI window. With no window or several, the
    command fails; with several, it reports the
    [runtime directory](#runtime-directory).
 
 Because resolution goes through the workspace ID, a shell keeps reaching its
-window after the GUI restarts. A shell carries the IDs it was started with,
-so a shell moved to another workspace by hand still targets its original
-workspace's window; pass `--window` there.
+window after the GUI restarts, but not after the nekomata daemon restarts. A
+shell carries the IDs it was started with, so a shell moved to another
+workspace by hand still targets its original workspace's window; pass
+`--window` there.
 
 A window that has not yet attached a workspace, because it is still
 connecting to the nekomata daemon or failed to, answers every command at once

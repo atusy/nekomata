@@ -12,11 +12,24 @@ felis daemon.
   use. It keeps running after the last window closes.
 - `nekomata daemon stop` stops it, and refuses while any window has a
   workspace attached. It never starts a daemon. Retained layouts are lost;
-  felis shells keep running.
+  felis shells keep running. It stops a daemon of any protocol version,
+  including one that rejects every other request from this client. Once the
+  daemon accepts a stop, it refuses windows that try to attach or switch a
+  workspace, and it exits even if the stopping CLI is interrupted before the
+  reply.
+- The daemon removes a stale socket left at its socket path, but refuses to
+  start when anything other than a socket is there; the GUI and commands that
+  would start the daemon then report that path instead of starting it.
+- Running out of file descriptors or memory while accepting a client does not
+  stop the daemon; it retries shortly after.
 - Workspaces are held in memory only. Stopping or crashing the daemon, or
   restarting the OS, loses every layout.
 - Client and daemon speak a versioned protocol. On an incompatible version the
-  client reports an error and does not replace the running daemon.
+  client reports an error and does not replace the running daemon. The daemon
+  checks the version before decoding the request, so any request other than a
+  stop that carries another version, or none, is answered with that error even
+  when the daemon does not recognize the request. Daemons from before this
+  rule close the connection instead.
 - A UI-only update needs no daemon restart: a restarted GUI reuses a
   compatible running daemon.
 
@@ -25,13 +38,18 @@ felis daemon.
 - A workspace is attached to at most one window at a time. The daemon
   arbitrates simultaneous requests, including concurrent GUI startup.
 - There is no operation to take a workspace from another window.
-- A window that disconnects releases its lease; the workspace remains.
+- A window that disconnects releases its lease; the workspace remains unless
+  it has no tabs.
+- A workspace without tabs is discarded once no window holds it, for example
+  after its window closes its last pane or cancels a switch to a new
+  workspace. The same daemon never reuses a discarded workspace's ID.
 
 ## Startup
 
 At startup, a window attaches to the most recently used workspace that no
 window has attached. When none exists, it creates a workspace with one tab and
-one pane. The attached workspace's font size is replaced by the configured
+one pane. A window closed by closing its last pane leaves no workspace behind,
+so the next window attaches the most recent remaining one, if any. The attached workspace's font size is replaced by the configured
 size (see [configuration](configuration.md#font-size-precedence)).
 
 ## Saving

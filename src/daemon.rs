@@ -2,7 +2,10 @@
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
-    os::unix::{fs::OpenOptionsExt, process::CommandExt},
+    os::unix::{
+        fs::{FileTypeExt, OpenOptionsExt},
+        process::CommandExt,
+    },
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -22,6 +25,7 @@ use crate::workspace::Snapshot;
 const VERSION: u32 = 1;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Selection {
@@ -48,6 +52,9 @@ pub struct Summary {
     pub tabs: usize,
     pub panes: usize,
     pub last_used: u64,
+    /// Identifies the daemon that issued `id`; empty from older daemons.
+    #[serde(default)]
+    pub instance: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +63,9 @@ pub enum Payload {
     Workspace {
         id: u64,
         snapshot: Snapshot,
+        /// Identifies the daemon that issued `id`; empty from older daemons.
+        #[serde(default)]
+        instance: String,
     },
     #[serde(rename = "Sessions")]
     Workspaces(Vec<Summary>),
@@ -81,6 +91,38 @@ struct Envelope {
     request: Request,
 }
 
+/// An envelope of any protocol version. The version is checked before the
+/// request is decoded, so a newer request shape still gets a readable reply.
+/// Any JSON type, so that a client changing even the version's type gets the
+/// rejection instead of a closed connection.
+#[derive(Deserialize)]
+struct Frame {
+    #[serde(default)]
+    version: serde_json::Value,
+    #[serde(default)]
+    request: serde_json::Value,
+}
+
+impl Frame {
+    fn decode(self) -> Result<Request, String> {
+        if self.request == "Stop" {
+            return Ok(Request::Stop);
+        }
+        if self.version == VERSION {
+            serde_json::from_value(self.request)
+                .map_err(|error| format!("malformed nekomata daemon request: {error}"))
+        } else {
+            Err(format!(
+                "incompatible nekomata protocol: client {}, daemon {VERSION}",
+                match self.version {
+                    serde_json::Value::Null => "unknown".into(),
+                    version => version.to_string(),
+                }
+            ))
+        }
+    }
+}
+
 struct Record {
     snapshot: Snapshot,
     owner: Option<(u64, u32)>,
@@ -92,6 +134,11 @@ struct Registry {
     workspaces: BTreeMap<u64, Record>,
     next_id: u64,
     clock: u64,
+    /// Distinguishes this daemon from earlier ones, whose IDs restarted at 1.
+    instance: String,
+    /// Set under the lock by an accepted Stop, so no window opens between the
+    /// owner check and the daemon exiting.
+    stopping: bool,
 }
 
 impl Registry {
@@ -139,6 +186,7 @@ impl Registry {
         Payload::Workspace {
             id,
             snapshot: self.workspaces[&id].snapshot.clone(),
+            instance: self.instance.clone(),
         }
     }
 
@@ -146,10 +194,24 @@ impl Registry {
         if let Some(id) = current {
             self.touch(id);
         }
-        for record in self.workspaces.values_mut() {
-            if record.owner.is_some_and(|(id, _)| id == owner) {
-                record.owner = None;
-            }
+        let leased: Vec<_> = self
+            .workspaces
+            .iter()
+            .filter(|(_, record)| record.owner.is_some_and(|(id, _)| id == owner))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in leased {
+            self.unlease(id);
+        }
+    }
+
+    /// Ends the lease on a workspace. One without tabs has nothing to restore,
+    /// so it is discarded rather than listed forever.
+    fn unlease(&mut self, id: u64) {
+        let record = self.workspaces.get_mut(&id).unwrap();
+        record.owner = None;
+        if record.snapshot.tabs.is_empty() {
+            self.workspaces.remove(&id);
         }
     }
 
@@ -163,11 +225,27 @@ impl Registry {
                 tabs: record.snapshot.tabs.len(),
                 panes: record.snapshot.panes.len(),
                 last_used: record.last_used,
+                instance: self.instance.clone(),
             })
             .collect();
         workspaces.sort_by_key(|s| std::cmp::Reverse((s.last_used, s.id)));
         workspaces
     }
+}
+
+/// RandomState is seeded from the OS; mixing in the PID and start time keeps
+/// two daemons apart even if that seed repeats.
+fn instance_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u32(std::process::id());
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos(),
+    );
+    format!("{:016x}", hasher.finish())
 }
 
 pub fn socket() -> Result<PathBuf> {
@@ -207,6 +285,33 @@ pub async fn exchange(stream: &mut UnixStream, request: Request) -> Result<Paylo
     .context("nekomata daemon request timed out")?
 }
 
+/// The one request whose wire form never changes, so that any client can
+/// retire a daemon of another protocol version. Version 1 daemons accept Stop
+/// only at their own version; later daemons accept it at any version.
+#[derive(Serialize)]
+struct StopFrame {
+    version: u32,
+    request: &'static str,
+}
+
+fn stop_frame() -> StopFrame {
+    StopFrame {
+        version: 1,
+        request: "Stop",
+    }
+}
+
+async fn request_stop(stream: &mut UnixStream) -> Result<()> {
+    tokio::time::timeout(DEADLINE, async {
+        write_json(stream, &stop_frame()).await?;
+        // Only the Ok/Err tag is frozen; the success payload may differ.
+        let response: Result<serde_json::Value, String> = read_json(stream).await?;
+        response.map(drop).map_err(|error| Rejection(error).into())
+    })
+    .await
+    .context("nekomata daemon request timed out")?
+}
+
 pub async fn prepare(
     stream: &mut UnixStream,
     snapshot: Snapshot,
@@ -221,6 +326,8 @@ pub async fn connect() -> Result<UnixStream> {
     if let Ok(stream) = UnixStream::connect(&path).await {
         return Ok(stream);
     }
+    // The spawned daemon would refuse this path with its stderr discarded.
+    socket_at(&path)?;
     let mut child = std::process::Command::new(std::env::current_exe()?)
         .args(["daemon", "run"])
         .stdin(Stdio::null())
@@ -267,9 +374,7 @@ pub fn run() -> Result<()> {
     if lock.try_lock().is_err() {
         return Ok(());
     }
-    if path.exists() {
-        std::fs::remove_file(&path).context("remove stale nekomata daemon socket")?;
-    }
+    remove_stale_socket(&path)?;
     let runtime = tokio::runtime::Runtime::new()?;
     let _guard = SocketGuard {
         path: path.clone(),
@@ -278,15 +383,61 @@ pub fn run() -> Result<()> {
     runtime.block_on(serve(&path))
 }
 
+/// Only a socket is ours to remove; a symlink or regular file in its place is
+/// left for the user to inspect. Returns whether a socket is there.
+fn socket_at(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_socket() => Ok(true),
+        Ok(_) => bail!(
+            "{} exists and is not a socket; remove it to start the nekomata daemon",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).context("inspect nekomata daemon socket"),
+    }
+}
+
+fn remove_stale_socket(path: &Path) -> Result<()> {
+    if socket_at(path)? {
+        std::fs::remove_file(path).context("remove stale nekomata daemon socket")?;
+    }
+    Ok(())
+}
+
+/// Running out of descriptors or memory, or a client resetting before accept,
+/// passes; giving up there would discard every retained workspace.
+fn accept_error_is_transient(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        error.kind(),
+        ErrorKind::ConnectionAborted | ErrorKind::Interrupted | ErrorKind::OutOfMemory
+    ) || matches!(
+        error.raw_os_error(),
+        // std maps these to ErrorKind::Uncategorized.
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS)
+    )
+}
+
 async fn serve(path: &Path) -> Result<()> {
     let listener = UnixListener::bind(path)?;
-    let registry = Arc::new(Mutex::new(Registry::default()));
+    let registry = Arc::new(Mutex::new(Registry {
+        instance: instance_token(),
+        ..Default::default()
+    }));
     let stop = Arc::new(Notify::new());
     let mut owner = 0;
     loop {
         tokio::select! {
             result = listener.accept() => {
-                let (stream, _) = result?;
+                let stream = match result {
+                    Ok((stream, _)) => stream,
+                    Err(error) if accept_error_is_transient(&error) => {
+                        eprintln!("nekomata daemon: accept failed, retrying: {error}");
+                        tokio::time::sleep(ACCEPT_BACKOFF).await;
+                        continue;
+                    }
+                    Err(error) => return Err(error).context("accept nekomata daemon client"),
+                };
                 owner += 1;
                 let registry = registry.clone();
                 let stop = stop.clone();
@@ -310,29 +461,27 @@ async fn serve_connection(
     let mut window = None;
     let result = async {
         loop {
-            let envelope: Envelope = read_json(&mut stream).await?;
-            let stopping = matches!(envelope.request, Request::Stop);
-            let response = if envelope.version != VERSION {
-                Err(format!(
-                    "incompatible nekomata protocol: client {}, daemon {VERSION}",
-                    envelope.version
-                ))
-            } else {
+            let request = read_json::<Frame>(&mut stream).await?.decode();
+            let stopping = matches!(request, Ok(Request::Stop));
+            let response = request.and_then(|request| {
                 handle(
                     &mut registry.lock().unwrap(),
                     owner,
                     &mut window,
                     &mut current,
                     &mut pending,
-                    envelope.request,
+                    request,
                 )
                 .map_err(|error| error.to_string())
-            };
-            write_json(&mut stream, &response).await?;
+            });
+            let written = write_json(&mut stream, &response).await;
+            // The registry already refuses attachments; exit even if the
+            // stopping client hung up before reading the reply.
             if stopping && response.is_ok() {
                 stop.notify_one();
-                return Ok(());
+                return written;
             }
+            written?;
         }
     }
     .await;
@@ -350,6 +499,7 @@ fn handle(
 ) -> Result<Payload> {
     match request {
         Request::Open { window: id } => {
+            ensure!(!registry.stopping, "nekomata daemon is stopping");
             ensure!(current.is_none(), "window already has a workspace");
             ensure!(id != 0, "invalid window ID");
             let workspace = registry.claim(owner, id, Selection::Latest)?;
@@ -366,6 +516,8 @@ fn handle(
             Ok(Payload::Done)
         }
         Request::Prepare(selection) => {
+            // No stopping check: a window with a workspace holds a lease, so
+            // Stop is refused while one can prepare a switch.
             ensure!(pending.is_none(), "workspace switch already in progress");
             let id =
                 registry.claim(owner, window.context("window has no workspace")?, selection)?;
@@ -377,13 +529,13 @@ fn handle(
             if let Some(snapshot) = snapshot {
                 snapshot.validate()?;
                 let source = current.context("window has no workspace")?;
-                registry.workspaces.get_mut(&source).unwrap().owner = None;
                 registry.touch(source);
+                registry.unlease(source);
                 registry.workspaces.get_mut(&id).unwrap().snapshot = snapshot;
                 registry.touch(id);
                 *current = Some(id);
             } else {
-                registry.workspaces.get_mut(&id).unwrap().owner = None;
+                registry.unlease(id);
             }
             *pending = None;
             Ok(Payload::Done)
@@ -399,6 +551,7 @@ fn handle(
                 registry.workspaces.values().all(|s| s.owner.is_none()),
                 "cannot stop nekomata daemon while windows are attached"
             );
+            registry.stopping = true;
             Ok(Payload::Done)
         }
     }
@@ -406,18 +559,11 @@ fn handle(
 
 pub fn command(stop: bool) -> Result<String> {
     tokio::runtime::Runtime::new()?.block_on(async {
-        let mut stream = if stop {
-            UnixStream::connect(socket()?).await?
-        } else {
-            connect().await?
-        };
-        match exchange(
-            &mut stream,
-            if stop { Request::Stop } else { Request::List },
-        )
-        .await?
-        {
-            Payload::Done => Ok("Stopped nekomata daemon".into()),
+        if stop {
+            request_stop(&mut UnixStream::connect(socket()?).await?).await?;
+            return Ok("Stopped nekomata daemon".into());
+        }
+        match exchange(&mut connect().await?, Request::List).await? {
             Payload::Workspaces(workspaces) => {
                 let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
                 for workspace in workspaces {
@@ -448,6 +594,7 @@ mod tests {
         let workspace = Payload::Workspace {
             id: 3,
             snapshot: Snapshot::default(),
+            instance: String::new(),
         };
         let json = serde_json::to_value(&workspace).unwrap();
         assert_eq!(json["Session"]["id"], 3);
@@ -458,12 +605,117 @@ mod tests {
     }
 
     #[test]
+    fn stale_daemon_sockets_are_removed_but_other_files_are_kept() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("daemon.sock");
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        remove_stale_socket(&socket).unwrap();
+        assert!(std::fs::symlink_metadata(&socket).is_err());
+        remove_stale_socket(&socket).unwrap();
+
+        let file = directory.path().join("precious");
+        std::fs::write(&file, "keep").unwrap();
+        std::os::unix::fs::symlink(&file, &socket).unwrap();
+        assert!(remove_stale_socket(&socket).is_err());
+        assert!(std::fs::symlink_metadata(&socket).unwrap().is_symlink());
+        std::fs::remove_file(&socket).unwrap();
+
+        std::fs::write(&socket, "keep").unwrap();
+        assert!(remove_stale_socket(&socket).is_err());
+        assert_eq!(std::fs::read_to_string(&socket).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep");
+    }
+
+    #[test]
+    fn only_a_socket_or_nothing_may_occupy_the_daemon_socket_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("daemon.sock");
+        assert!(!socket_at(&path).unwrap());
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(socket_at(&path).unwrap());
+        drop(listener);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "keep").unwrap();
+        assert!(
+            socket_at(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("is not a socket")
+        );
+    }
+
+    #[test]
+    fn accept_survives_resource_exhaustion_but_not_a_broken_listener() {
+        use std::io::{Error, ErrorKind};
+        for errno in [libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM] {
+            assert!(accept_error_is_transient(&Error::from_raw_os_error(errno)));
+        }
+        for kind in [ErrorKind::ConnectionAborted, ErrorKind::Interrupted] {
+            assert!(accept_error_is_transient(&Error::from(kind)));
+        }
+        for errno in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
+            assert!(!accept_error_is_transient(&Error::from_raw_os_error(errno)));
+        }
+    }
+
+    #[test]
+    fn each_daemon_gets_a_distinct_instance_token() {
+        let (first, second) = (instance_token(), instance_token());
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn workspaces_name_the_daemon_instance_that_issued_their_ids() {
+        let registry = Arc::new(Mutex::new(Registry {
+            instance: "feed".into(),
+            ..Default::default()
+        }));
+        let (mut client, task) = connection(&registry, 1);
+        let Payload::Workspace { instance, .. } =
+            exchange(&mut client, Request::Open { window: 11 })
+                .await
+                .unwrap()
+        else {
+            panic!("expected workspace")
+        };
+        assert_eq!(instance, "feed");
+        let Payload::Workspaces(workspaces) = exchange(&mut client, Request::List).await.unwrap()
+        else {
+            panic!("expected workspaces")
+        };
+        assert_eq!(workspaces[0].instance, "feed");
+        drop(client);
+        let _ = task.await;
+        // Daemons predating the token omit it.
+        let Payload::Workspace { instance, .. } = serde_json::from_value(
+            serde_json::to_value(Payload::Workspace {
+                id: 1,
+                snapshot: Snapshot::default(),
+                instance: String::new(),
+            })
+            .map(|mut value| {
+                value["Session"].as_object_mut().unwrap().remove("instance");
+                value
+            })
+            .unwrap(),
+        )
+        .unwrap() else {
+            panic!("expected workspace")
+        };
+        assert!(instance.is_empty());
+    }
+
+    #[test]
     fn startup_resumes_the_latest_unattached_workspace() {
         let mut registry = Registry::default();
         let older = registry.claim(1, 101, Selection::New).unwrap();
+        registry.workspaces.get_mut(&older).unwrap().snapshot = one_pane(15.0);
         registry.touch(older);
         registry.release(1, Some(older));
         let newer = registry.claim(2, 102, Selection::New).unwrap();
+        registry.workspaces.get_mut(&newer).unwrap().snapshot = one_pane(15.0);
         registry.touch(newer);
         registry.release(2, Some(newer));
         assert_eq!(registry.claim(3, 103, Selection::Latest).unwrap(), newer);
@@ -484,8 +736,30 @@ mod tests {
         (client, task)
     }
 
+    fn one_pane(font_size: f32) -> Snapshot {
+        Snapshot {
+            tabs: vec![crate::workspace::Tab {
+                name: "shell".into(),
+                layout: crate::layout::Layout::Pane(1),
+                focused: 1,
+                focus_history: vec![1],
+            }],
+            panes: [(
+                1,
+                crate::workspace::PaneSpec {
+                    target: crate::session::Target::Local("/felis.sock".into()),
+                    session: None,
+                },
+            )]
+            .into(),
+            next_id: 2,
+            font_size,
+            ..Default::default()
+        }
+    }
+
     fn workspace(payload: Payload) -> (u64, Snapshot) {
-        let Payload::Workspace { id, snapshot } = payload else {
+        let Payload::Workspace { id, snapshot, .. } = payload else {
             panic!("expected workspace")
         };
         (id, snapshot)
@@ -495,12 +769,12 @@ mod tests {
     async fn disconnected_window_restores_its_saved_layout_and_releases_reservations() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut first, task) = connection(&registry, 1);
-        let (id, mut snapshot) = workspace(
+        let (id, _) = workspace(
             exchange(&mut first, Request::Open { window: 11 })
                 .await
                 .unwrap(),
         );
-        snapshot.font_size = 21.0;
+        let snapshot = one_pane(21.0);
         exchange(&mut first, Request::Save(snapshot.clone()))
             .await
             .unwrap();
@@ -511,11 +785,7 @@ mod tests {
         );
         drop(first);
         assert!(task.await.unwrap().is_err());
-        assert!(
-            registry.lock().unwrap().workspaces[&reserved]
-                .owner
-                .is_none()
-        );
+        assert!(!registry.lock().unwrap().workspaces.contains_key(&reserved));
         let (mut replacement, task) = connection(&registry, 2);
         let restored = workspace(
             exchange(&mut replacement, Request::Open { window: 22 })
@@ -536,11 +806,22 @@ mod tests {
                 .await
                 .unwrap(),
         );
+        let (mut other, other_task) = connection(&registry, 2);
         let (target, _) = workspace(
-            exchange(&mut client, Request::Prepare(Selection::New))
+            exchange(&mut other, Request::Open { window: 22 })
                 .await
                 .unwrap(),
         );
+        exchange(&mut other, Request::Save(one_pane(17.0)))
+            .await
+            .unwrap();
+        exchange(&mut other, Request::Detach).await.unwrap();
+        exchange(&mut client, Request::Save(one_pane(15.0)))
+            .await
+            .unwrap();
+        exchange(&mut client, Request::Prepare(Selection::Id(target)))
+            .await
+            .unwrap();
         assert!(registry.lock().unwrap().workspaces[&source].owner.is_some());
         exchange(&mut client, Request::Finish { snapshot: None })
             .await
@@ -550,10 +831,7 @@ mod tests {
         exchange(&mut client, Request::Prepare(Selection::Id(target)))
             .await
             .unwrap();
-        let snapshot = Snapshot {
-            font_size: 19.0,
-            ..Default::default()
-        };
+        let snapshot = one_pane(19.0);
         exchange(
             &mut client,
             Request::Finish {
@@ -568,7 +846,44 @@ mod tests {
             snapshot
         );
         drop(client);
+        drop(other);
         let _ = task.await;
+        let _ = other_task.await;
+    }
+
+    #[tokio::test]
+    async fn workspaces_without_tabs_are_discarded_once_no_window_holds_them() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let workspaces = || registry.lock().unwrap().workspaces.len();
+        let (mut client, task) = connection(&registry, 1);
+        exchange(&mut client, Request::Open { window: 11 })
+            .await
+            .unwrap();
+        exchange(&mut client, Request::Save(one_pane(15.0)))
+            .await
+            .unwrap();
+        // A cancelled switch to a new workspace leaves nothing behind.
+        exchange(&mut client, Request::Prepare(Selection::New))
+            .await
+            .unwrap();
+        assert_eq!(workspaces(), 2);
+        exchange(&mut client, Request::Finish { snapshot: None })
+            .await
+            .unwrap();
+        assert_eq!(workspaces(), 1);
+        // Closing the last pane saves a layout without tabs.
+        exchange(&mut client, Request::Save(Snapshot::default()))
+            .await
+            .unwrap();
+        exchange(&mut client, Request::Detach).await.unwrap();
+        assert_eq!(workspaces(), 0);
+        // A window that disconnects before saving leaves nothing behind.
+        exchange(&mut client, Request::Open { window: 11 })
+            .await
+            .unwrap();
+        drop(client);
+        let _ = task.await;
+        assert_eq!(workspaces(), 0);
     }
 
     #[tokio::test]
@@ -602,6 +917,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stopping_daemon_refuses_new_attachments() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut stopper, stopper_task) = connection(&registry, 1);
+        let (mut late, late_task) = connection(&registry, 2);
+        exchange(&mut stopper, Request::Stop).await.unwrap();
+        assert!(
+            exchange(&mut late, Request::Open { window: 22 })
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("stopping")
+        );
+        assert!(registry.lock().unwrap().workspaces.is_empty());
+        drop(late);
+        let _ = stopper_task.await;
+        let _ = late_task.await;
+    }
+
+    #[tokio::test]
+    async fn stop_completes_even_if_its_client_hangs_up_before_the_reply() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let stop = Arc::new(Notify::new());
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let task = tokio::spawn(serve_connection(server, registry, stop.clone(), 1));
+        write_json(
+            &mut client,
+            &Envelope {
+                version: VERSION,
+                request: Request::Stop,
+            },
+        )
+        .await
+        .unwrap();
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(1), stop.notified())
+            .await
+            .unwrap();
+        let _ = task.await;
+    }
+
+    #[tokio::test]
     async fn incompatible_clients_do_not_claim_a_workspace() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut client, task) = connection(&registry, 1);
@@ -622,6 +978,129 @@ mod tests {
         );
         assert!(registry.lock().unwrap().workspaces.is_empty());
         drop(client);
+        let _ = task.await;
+    }
+
+    async fn raw_exchange(client: &mut UnixStream, frame: serde_json::Value) -> Response {
+        write_json(client, &frame).await.unwrap();
+        read_json(client).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn requests_of_another_version_get_a_readable_rejection_whatever_their_shape() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let response = raw_exchange(
+            &mut client,
+            serde_json::json!({"version": VERSION + 1, "request": {"Brand": {"new": 1}}}),
+        )
+        .await;
+        assert!(
+            response
+                .unwrap_err()
+                .contains("incompatible nekomata protocol")
+        );
+        for frame in [
+            serde_json::json!({"request": "List"}),
+            serde_json::json!({"version": "2", "request": "List"}),
+            serde_json::json!({"version": 2.5, "request": "List"}),
+            serde_json::json!({"version": -1, "request": "List"}),
+        ] {
+            let response = raw_exchange(&mut client, frame).await;
+            assert!(response.unwrap_err().contains("incompatible"));
+        }
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn malformed_requests_are_rejected_without_dropping_the_connection() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let response = raw_exchange(
+            &mut client,
+            serde_json::json!({"version": VERSION, "request": {"Open": {}}}),
+        )
+        .await;
+        assert!(response.unwrap_err().contains("malformed"));
+        assert!(matches!(
+            exchange(&mut client, Request::List).await.unwrap(),
+            Payload::Workspaces(_)
+        ));
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn rejections_are_readable_whatever_the_success_payload_looks_like() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let reply = tokio::spawn(async move {
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Err": "refused"}))
+                .await
+                .unwrap();
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Ok": {"Future": 1}}))
+                .await
+                .unwrap();
+        });
+        let error = exchange(&mut client, Request::List).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Rejection>().unwrap().0, "refused");
+        let error = exchange(&mut client, Request::List).await.unwrap_err();
+        assert!(error.downcast_ref::<Rejection>().is_none());
+        reply.await.unwrap();
+    }
+
+    #[test]
+    fn the_stop_frame_is_frozen_so_any_daemon_version_accepts_it() {
+        assert_eq!(
+            serde_json::to_string(&stop_frame()).unwrap(),
+            r#"{"version":1,"request":"Stop"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Ok(Payload::Done)).unwrap(),
+            r#"{"Ok":"Done"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn daemons_accept_a_stop_from_any_protocol_version() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let response = raw_exchange(
+            &mut client,
+            serde_json::json!({"version": VERSION + 1, "request": "Stop"}),
+        )
+        .await;
+        assert!(response.is_ok());
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn stopping_succeeds_whatever_the_daemon_returns_on_success() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let reply = tokio::spawn(async move {
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Ok": {"Future": 1}}))
+                .await
+                .unwrap();
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Err": "busy"}))
+                .await
+                .unwrap();
+        });
+        request_stop(&mut client).await.unwrap();
+        let error = request_stop(&mut client).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Rejection>().unwrap().0, "busy");
+        reply.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_requests_reach_a_daemon_through_the_frozen_frame() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        request_stop(&mut client).await.unwrap();
+        assert!(registry.lock().unwrap().stopping);
         let _ = task.await;
     }
 
@@ -668,6 +1147,9 @@ mod tests {
                 .await
                 .unwrap(),
         );
+        exchange(&mut client, Request::Save(one_pane(15.0)))
+            .await
+            .unwrap();
         exchange(&mut client, Request::Detach).await.unwrap();
         let (mut replacement, replacement_task) = connection(&registry, 2);
         let (restored, _) = workspace(

@@ -4,16 +4,15 @@
 
 After an update, a nekomata daemon from an older version may still be
 running. nekomata refuses to replace it, because that would discard your
-workspaces. The new `nekomata daemon stop` cannot stop it either, because the
-old daemon rejects every request from the new version. Close every window,
-then end the old daemon process:
+workspaces. Close every window of the old version, then stop the old daemon:
 
 ```sh
-pkill -f 'nekomata-bin daemon run'
+nekomata daemon stop
 ```
 
-Your workspace layouts are lost, but your shells keep running in felis;
-[attach to them again](sessions.md) after restarting.
+This works even though the old daemon rejects every other request from the
+new version. Your workspace layouts are lost, but your shells keep running in
+felis; restart nekomata and [attach to them again](sessions.md).
 
 ## CLI commands report no running window after an update
 
@@ -23,6 +22,12 @@ before the directory moved there cannot be reached by newer CLI commands, and
 a newer window starts a second nekomata daemon beside the old one. Close every
 window, end the old daemon as [above](#nekomata-reports-an-incompatible-daemon),
 then start nekomata again.
+
+## nekomata reports that `daemon.sock` is not a socket
+
+Something other than the nekomata daemon's socket sits where the daemon
+listens, so nekomata will not start the daemon over it. Inspect the reported
+file, move it away if it is not yours to keep, and start nekomata again.
 
 ## An update to felis does not take effect
 
