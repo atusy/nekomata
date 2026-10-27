@@ -25,6 +25,7 @@ use crate::workspace::Snapshot;
 const VERSION: u32 = 1;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Selection {
@@ -295,6 +296,19 @@ fn remove_stale_socket(path: &Path) -> Result<()> {
     }
 }
 
+/// Running out of descriptors or memory, or a client resetting before accept,
+/// passes; giving up there would discard every retained workspace.
+fn accept_error_is_transient(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        error.kind(),
+        ErrorKind::ConnectionAborted | ErrorKind::Interrupted | ErrorKind::OutOfMemory
+    ) || matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)
+    )
+}
+
 async fn serve(path: &Path) -> Result<()> {
     let listener = UnixListener::bind(path)?;
     let registry = Arc::new(Mutex::new(Registry::default()));
@@ -303,7 +317,15 @@ async fn serve(path: &Path) -> Result<()> {
     loop {
         tokio::select! {
             result = listener.accept() => {
-                let (stream, _) = result?;
+                let stream = match result {
+                    Ok((stream, _)) => stream,
+                    Err(error) if accept_error_is_transient(&error) => {
+                        eprintln!("nekomata daemon: accept failed, retrying: {error}");
+                        tokio::time::sleep(ACCEPT_BACKOFF).await;
+                        continue;
+                    }
+                    Err(error) => return Err(error).context("accept nekomata daemon client"),
+                };
                 owner += 1;
                 let registry = registry.clone();
                 let stop = stop.clone();
@@ -494,6 +516,20 @@ mod tests {
         assert!(remove_stale_socket(&socket).is_err());
         assert_eq!(std::fs::read_to_string(&socket).unwrap(), "keep");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep");
+    }
+
+    #[test]
+    fn accept_survives_resource_exhaustion_but_not_a_broken_listener() {
+        use std::io::{Error, ErrorKind};
+        for errno in [libc::EMFILE, libc::ENFILE, libc::ENOBUFS, libc::ENOMEM] {
+            assert!(accept_error_is_transient(&Error::from_raw_os_error(errno)));
+        }
+        for kind in [ErrorKind::ConnectionAborted, ErrorKind::Interrupted] {
+            assert!(accept_error_is_transient(&Error::from(kind)));
+        }
+        for errno in [libc::EBADF, libc::EINVAL, libc::ENOTSOCK] {
+            assert!(!accept_error_is_transient(&Error::from_raw_os_error(errno)));
+        }
     }
 
     #[test]
