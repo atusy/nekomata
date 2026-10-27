@@ -1913,9 +1913,9 @@ fn draw_pane(
 ) {
     let (generation, background) = {
         let state = pane.session.state.lock().unwrap();
-        let [r, g, b, _] =
-            felis_render_core::palette::linear_rgba_to_srgb8(state.colors.theme().bg);
-        (state.reconnects, Color32::from_rgb(r, g, b))
+        let background =
+            crate::render::margin_color(&state.colors.theme(), state.screen.reverse_video());
+        (state.reconnects, background)
     };
     if generation != pane.connection_generation {
         pane.connection_generation = generation;

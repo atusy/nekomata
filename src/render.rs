@@ -80,6 +80,15 @@ pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<Request
     })
 }
 
+/// The pane area around the terminal grid. Under DECSCNM it takes the
+/// foreground, as felis's own letterbox does, or the margins would frame the
+/// reversed screen in a visible border.
+pub fn margin_color(theme: &felis_render_core::palette::Theme, reverse_video: bool) -> Color32 {
+    let linear = if reverse_video { theme.fg } else { theme.bg };
+    let [r, g, b, _] = felis_render_core::palette::linear_rgba_to_srgb8(linear);
+    Color32::from_rgb(r, g, b)
+}
+
 /// One frame's mapping between pane points and the cells felis drew.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaneGeometry {
@@ -492,6 +501,18 @@ mod tests {
         assert_eq!(requested_dims(pane(47.0, 45.0), [0, 40], 2.0), None);
         assert_eq!(requested_dims(pane(47.0, 45.0), [20, 0], 2.0), None);
         assert!(requested_dims(pane(10.0, 20.0), cell, 2.0).is_some());
+    }
+
+    #[test]
+    fn reverse_video_margins_take_the_foreground() {
+        let theme = felis_render_core::palette::Theme::default();
+        let srgb = |linear| {
+            let [r, g, b, _] = felis_render_core::palette::linear_rgba_to_srgb8(linear);
+            Color32::from_rgb(r, g, b)
+        };
+        assert_ne!(theme.fg, theme.bg);
+        assert_eq!(margin_color(&theme, false), srgb(theme.bg));
+        assert_eq!(margin_color(&theme, true), srgb(theme.fg));
     }
 
     #[test]
