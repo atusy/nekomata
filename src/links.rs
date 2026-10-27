@@ -143,10 +143,15 @@ enum Launch {
 }
 
 impl Launch {
-    fn verb(&self) -> &'static str {
+    /// The failure message when a launcher exits unsuccessfully.
+    fn failure(&self, status: std::process::ExitStatus) -> String {
         match self {
-            Self::Open(_) => "open the link",
-            Self::Reveal { .. } => "show the linked file",
+            Self::Open(_) => format!(
+                "Could not open the link ({status}); check the default application for this URL type"
+            ),
+            Self::Reveal { .. } => {
+                format!("Could not show the linked file ({status}); check the default file manager")
+            }
         }
     }
 }
@@ -297,7 +302,10 @@ async fn open(target: ActivationTarget) -> Result<(), String> {
     tokio::time::timeout(OPENER_TIMEOUT, attempt(target))
         .await
         .unwrap_or_else(|_| {
-            Err("Opening the link timed out; check the default application for this type".into())
+            Err(
+                "Opening the link timed out; check the default application for this URL type"
+                    .into(),
+            )
         })
 }
 
@@ -310,7 +318,7 @@ async fn attempt(target: ActivationTarget) -> Result<(), String> {
         .map_err(|error| format!("Could not resolve the link: {error}"))??;
     let mut outcome = Ok(());
     for step in plan(platform, &launch) {
-        outcome = run(&step, launch.verb()).await;
+        outcome = run(&step, &launch).await;
         if outcome.is_ok() {
             break;
         }
@@ -318,13 +326,14 @@ async fn attempt(target: ActivationTarget) -> Result<(), String> {
     outcome
 }
 
-async fn run(step: &[OsString], verb: &str) -> Result<(), String> {
+async fn run(step: &[OsString], launch: &Launch) -> Result<(), String> {
     match command(step).status().await {
         Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!(
-            "Could not {verb} ({status}); check the default application for this type"
+        Ok(status) => Err(launch.failure(status)),
+        Err(error) => Err(format!(
+            "Could not start {}: {error}",
+            step[0].to_string_lossy()
         )),
-        Err(error) => Err(format!("Could not start the link opener: {error}")),
     }
 }
 
