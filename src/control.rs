@@ -310,6 +310,14 @@ fn workspace_from_env(get: impl Fn(&str) -> Option<String>) -> Option<u64> {
         .find_map(|name| get(name)?.parse().ok())
 }
 
+fn window_of_workspace(workspaces: &[crate::daemon::Summary], id: u64) -> Result<u32> {
+    workspaces
+        .iter()
+        .find(|workspace| workspace.id == id)
+        .and_then(|workspace| workspace.window)
+        .context("the shell's workspace is not attached to a window")
+}
+
 pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
     let workspace = window
         .is_none()
@@ -330,13 +338,7 @@ pub fn run_request(window: Option<u32>, request: Request) -> Result<String> {
             else {
                 bail!("unexpected workspace list response");
             };
-            Some(
-                workspaces
-                    .into_iter()
-                    .find(|workspace| workspace.id == id)
-                    .and_then(|workspace| workspace.window)
-                    .context("the shell's workspace is not attached to a window")?,
-            )
+            Some(window_of_workspace(&workspaces, id)?)
         } else {
             window
         };
