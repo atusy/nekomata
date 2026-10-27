@@ -59,6 +59,9 @@ Not supported: key release events and OSC 52 clipboard reads.
   `Regex` (default off).
 - Repeating a search with the same query and options moves to the next
   result; changing either searches again on the next move.
+- Enter in the search field moves to the next result and Shift+Enter to the
+  previous one, like the field's next and previous buttons.
+- A query holds at most 1,024 characters; further input is not accepted.
 - A search returns at most 1,000 results and 1 MiB of response data in total.
   A truncated result count is marked with `+`.
 - While the search field is open, keyboard input is not sent to the terminal
