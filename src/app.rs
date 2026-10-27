@@ -641,20 +641,7 @@ impl App {
     }
 
     fn close_pane(&mut self, ctx: &egui::Context, id: u64) {
-        let Some(index) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.layout.panes().contains(&id))
-        else {
-            return;
-        };
-        if !self.tabs[index].remove_pane(id) {
-            self.tabs.remove(index);
-            if index < self.active {
-                self.active -= 1;
-            }
-            self.active = self.active.min(self.tabs.len().saturating_sub(1));
-        }
+        crate::workspace::remove_pane(&mut self.tabs, &mut self.active, id);
         self.panes.remove(&id);
         if self.tabs.is_empty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
