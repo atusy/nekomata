@@ -170,3 +170,6 @@ presses, so neither keymap ever sees them and binding them has no effect.
 - Elsewhere, Ctrl+C and Ctrl+X are sent to the terminal program as the
   control bytes 0x03 and 0x18. Ctrl+V sends 0x16 only when the clipboard holds
   text; otherwise it does nothing.
+- While text in nekomata's own widgets is selected, such as an entry of the
+  [configuration problems](configuration.md#reporting-problems) banner, the
+  copy and cut events copy that text and reach no terminal.

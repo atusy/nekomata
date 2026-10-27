@@ -2304,7 +2304,9 @@ fn terminal_input(
     explicit_paste: bool,
 ) {
     use crate::input::TerminalInput;
-    let (events, mods) = ctx.input(|i| (i.events.clone(), i.modifiers));
+    let (mut events, mods) = ctx.input(|i| (i.events.clone(), i.modifiers));
+    let ui_selected = ui_text_selected(ctx);
+    events.retain(|event| !ui_owns_clipboard_event(event, ui_selected));
     for input in crate::input::translate(&events, mods, explicit_paste, cfg!(target_os = "macos")) {
         match input {
             TerminalInput::Control(bytes) => {
@@ -2350,6 +2352,21 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
         anchor: None,
     });
     session.send(msg);
+}
+
+/// Whether text in nekomata's own widgets, such as a configuration problem,
+/// is selected for copying.
+fn ui_text_selected(ctx: &egui::Context) -> bool {
+    ctx.plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .has_selection()
+}
+
+/// egui copies selected UI text itself; the terminal must not also take the
+/// event, which off macOS would send the shell an interrupt.
+fn ui_owns_clipboard_event(event: &egui::Event, ui_text_selected: bool) -> bool {
+    ui_text_selected && matches!(event, egui::Event::Copy | egui::Event::Cut)
+}
 }
 
 #[cfg(test)]
@@ -3476,4 +3493,45 @@ mod tests {
         assert_eq!(other.focused, 2);
         assert_eq!(other.focus_history, vec![1, 2]);
     }
+
+    #[test]
+    fn copying_selected_ui_text_stays_out_of_the_terminal() {
+        let ctx = egui::Context::default();
+        let label = |ui: &mut egui::Ui| ui.label("/c.toml is ignored: broken").rect;
+        let mut rect = egui::Rect::NOTHING;
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            rect = label(ui);
+        });
+        assert!(!ui_text_selected(&ctx));
+        let pointer = |events| egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (start, end) = (rect.left_center(), rect.right_center());
+        for events in [
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+            vec![egui::Event::PointerMoved(end)],
+            vec![button(end, false)],
+            vec![],
+        ] {
+            let _ = crate::test_support::run(&ctx, pointer(events), |ui| {
+                label(ui);
+            });
+        }
+        assert!(ui_text_selected(&ctx));
+        assert!(ui_owns_clipboard_event(&egui::Event::Copy, true));
+        assert!(ui_owns_clipboard_event(&egui::Event::Cut, true));
+        assert!(!ui_owns_clipboard_event(&egui::Event::Copy, false));
+        assert!(!ui_owns_clipboard_event(
+            &egui::Event::Paste("x".into()),
+            true
+        ));
+    }
+
 }
