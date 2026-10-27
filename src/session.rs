@@ -315,10 +315,19 @@ impl Drop for Session {
 }
 
 /// The text an OSC 52 write puts on the system clipboard, if any.
-fn system_clipboard_text(write: &felis_protocol::messages::ClipboardWrite) -> Option<String> {
-    if !write
-        .selection
-        .contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
+///
+/// Mirrors felis-client: program writes reach the system clipboard only with
+/// `clipboard.osc_52 = "system"`, and never when `use_os_clipboard = false`
+/// keeps felis off the system clipboard. Under the default `mirror` policy
+/// the daemon's mirror still answers the program's own OSC 52 queries.
+fn system_clipboard_text(
+    write: &felis_protocol::messages::ClipboardWrite,
+    config: &felis_client_core::config::ClipboardConfig,
+) -> Option<String> {
+    if !(config.use_os_clipboard && config.osc_52.writes_to_system())
+        || !write
+            .selection
+            .contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
     {
         return None;
     }
@@ -527,6 +536,7 @@ async fn pump(
     rx: &InputQueue,
     input_failed: &AtomicBool,
 ) -> Result<()> {
+    let clipboard = crate::terminal_config::get(ctx).clipboard.clone();
     loop {
         tokio::select! {
             command = rx.next() => {
@@ -551,7 +561,7 @@ async fn pump(
                                     state.images = felis_client_core::ImageShadow::new();
                                 }
                                 if let GridMsg::ClipboardSet { write } = &delivery.msg
-                                    && let Some(text) = system_clipboard_text(write) {
+                                    && let Some(text) = system_clipboard_text(write, &clipboard) {
                                     state.clipboard = Some(text);
                                 }
                                 ctx.request_repaint();
@@ -774,6 +784,60 @@ mod tests {
         };
         let saved = serde_json::to_string(&target).unwrap();
         assert_eq!(serde_json::from_str::<Target>(&saved).unwrap(), target);
+    }
+
+    fn clipboard_write(
+        selection: felis_protocol::messages::ClipboardSelection,
+        data: &[u8],
+    ) -> felis_protocol::messages::ClipboardWrite {
+        felis_protocol::messages::ClipboardWrite {
+            selection,
+            data: data.to_vec(),
+        }
+    }
+
+    fn clipboard_config(
+        osc_52: felis_client_core::config::Osc52Policy,
+        use_os_clipboard: bool,
+    ) -> felis_client_core::config::ClipboardConfig {
+        felis_client_core::config::ClipboardConfig {
+            use_os_clipboard,
+            osc_52,
+        }
+    }
+
+    #[test]
+    fn osc52_writes_stay_off_the_system_clipboard_by_default() {
+        use felis_protocol::messages::ClipboardSelection;
+        let write = clipboard_write(ClipboardSelection::CLIPBOARD, b"hi");
+        assert_eq!(system_clipboard_text(&write, &Default::default()), None);
+    }
+
+    #[test]
+    fn osc52_system_policy_writes_clipboard_targets_to_the_system_clipboard() {
+        use felis_client_core::config::Osc52Policy;
+        use felis_protocol::messages::ClipboardSelection;
+        let config = clipboard_config(Osc52Policy::System, true);
+        let both = clipboard_write(
+            ClipboardSelection::CLIPBOARD | ClipboardSelection::PRIMARY,
+            b"hi",
+        );
+        assert_eq!(system_clipboard_text(&both, &config).as_deref(), Some("hi"));
+        let primary = clipboard_write(ClipboardSelection::PRIMARY, b"hi");
+        assert_eq!(system_clipboard_text(&primary, &config), None);
+        let binary = clipboard_write(ClipboardSelection::CLIPBOARD, &[0xff]);
+        assert_eq!(system_clipboard_text(&binary, &config), None);
+    }
+
+    #[test]
+    fn osc52_system_policy_is_inert_without_the_os_clipboard() {
+        use felis_client_core::config::Osc52Policy;
+        use felis_protocol::messages::ClipboardSelection;
+        let write = clipboard_write(ClipboardSelection::CLIPBOARD, b"hi");
+        assert_eq!(
+            system_clipboard_text(&write, &clipboard_config(Osc52Policy::System, false)),
+            None
+        );
     }
 
     fn wait_for(
@@ -1231,9 +1295,7 @@ mod tests {
         });
     }
 
-    #[test]
-    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
-    fn live_osc52_reaches_the_frontend_clipboard() {
+    fn live_osc52_clipboard(osc_52: felis_client_core::config::Osc52Policy) -> Option<String> {
         let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
         assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1242,11 +1304,14 @@ mod tests {
             ops.spawn_session(SpawnArgs {
                 command: "bash".into(),
                 args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
-                    r#"read -r line; printf '\033]52;c;TkVLT01BVEFfQ0xJUEJPQVJECg==\007'; read -r line"#.into()],
+                    r#"read -r line; printf '\033]52;c;TkVLT01BVEFfQ0xJUEJPQVJECg==\007'; printf 'OSC52_%s\n' DONE; read -r line"#.into()],
                 env_base: felis_client_core::env_base::capture(), ..Default::default()
             }).await.unwrap().id
         });
         let ctx = egui::Context::default();
+        let mut config = felis_client_core::config::EffectiveConfig::default();
+        config.clipboard.osc_52 = osc_52;
+        crate::terminal_config::install(&ctx, config);
         let (tx, repaints) = sync_mpsc::channel();
         ctx.set_request_repaint_callback(move |_| {
             let _ = tx.send(());
@@ -1254,11 +1319,11 @@ mod tests {
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
-        wait_for(&session, &ctx, &repaints, |state| state.clipboard.is_some());
-        assert_eq!(
-            session.state.lock().unwrap().clipboard.take().as_deref(),
-            Some("NEKOMATA_CLIPBOARD\n")
-        );
+        // Grid messages arrive in order, so the marker follows the OSC 52 write.
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "OSC52_DONE")
+        });
+        let clipboard = session.state.lock().unwrap().clipboard.take();
         drop(session);
         runtime.block_on(async {
             let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
@@ -1266,6 +1331,25 @@ mod tests {
                 .unwrap();
             ops.destroy_session(format!("{id:032x}")).await.unwrap();
         });
+        clipboard
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_osc52_reaches_the_frontend_clipboard_under_the_system_policy() {
+        assert_eq!(
+            live_osc52_clipboard(felis_client_core::config::Osc52Policy::System).as_deref(),
+            Some("NEKOMATA_CLIPBOARD\n")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
+    fn live_osc52_stays_off_the_frontend_clipboard_by_default() {
+        assert_eq!(
+            live_osc52_clipboard(felis_client_core::config::Osc52Policy::default()),
+            None
+        );
     }
 
     #[test]

@@ -7,12 +7,23 @@ what nekomata adds when presenting a felis session in a pane.
 
 Text, 256 and RGB colors, CJK text, selection, copy and paste, scrollback,
 named keys, mouse input, committed IME text, Kitty images, dynamic palette
-changes and OSC 52 writes to the system clipboard are supported. Braille
+changes and OSC 52 clipboard writes are supported. Braille
 (U+2800–U+28FF) is drawn directly into cells, independently of the font.
 Text is shaped with the OpenType features configured in felis's `font`
 settings.
 
 Not supported: key release events and OSC 52 clipboard reads.
+
+## OSC 52 clipboard writes
+
+A program's OSC 52 write reaches the system clipboard only when felis's
+`clipboard.osc_52` is `"system"` (see
+[configuration](configuration.md#terminal-layer)). Under the default
+`"mirror"`, the write stays in the felis daemon's mirror and the system
+clipboard is untouched, so a program, including one reached over SSH, cannot
+overwrite it. Writes that target only the PRIMARY selection (`p`) never
+reach a system clipboard. nekomata does not check window focus; the felis
+daemon delivers each write to at most one window attached to the session.
 
 ## Selection
 

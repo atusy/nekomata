@@ -34,9 +34,16 @@ nekomata applies:
   actions are passed to the terminal program (see [keymap](keymap.md)).
   Chords the window turns into clipboard events cannot be bound (see
   [keymap](keymap.md#clipboard-events)).
+- `clipboard.osc_52`: where a program's OSC 52 write lands (see
+  [terminal](terminal.md#osc-52-clipboard-writes)). `"mirror"`, felis's
+  default, keeps it in the felis daemon's mirror; `"system"` also writes it to
+  the system clipboard. `clipboard.use_os_clipboard = false` makes
+  `"system"` behave like `"mirror"`, as in felis.
 
-nekomata does not apply `window`, `shader`, `mouse` or `clipboard`. Settings
-nekomata does not apply are accepted and have no effect.
+nekomata does not apply `window`, `shader` or `mouse`, and applies
+`clipboard.use_os_clipboard` only to OSC 52 writes: nekomata's own copy and
+paste always use the system clipboard. Settings nekomata does not apply are
+accepted and have no effect.
 `[client.nekomata]` accepts only felis's vocabulary; nekomata adds no keys to
 it.
 
