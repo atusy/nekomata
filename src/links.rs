@@ -232,8 +232,8 @@ fn file_uri(path: &Path) -> String {
 }
 
 /// Resolves the target on the filesystem. Canonicalizing first means the
-/// folder is the real parent: `/x/evil.sh/..` cannot make the folder the
-/// script itself, and a symlink cannot point the folder at a file.
+/// folder is the real parent: the lexical parent of `/x/evil.sh/..` is the
+/// script itself. A symlinked item is revealed as its target.
 fn resolve(target: &ActivationTarget) -> Result<Launch, String> {
     if target.scheme() != SchemeClass::File {
         return Ok(Launch::Open(target.as_str().into()));
