@@ -39,7 +39,8 @@ cannot be rebound; on Linux, plain Ctrl+C always goes to the program, and so
 does Ctrl+V while the clipboard holds text.
 
 Each font size step scales by 1.1; `Font: Change size…` in the command
-palette shows the current size with buttons to step or reset it. Prompt
+palette shows the current size with buttons to step or reset it (limits are
+in the [terminal specification](../spec/terminal.md#font-size)). Prompt
 navigation needs a shell that reports prompt boundaries with OSC 133.
 `Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
 `Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
