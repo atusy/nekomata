@@ -182,6 +182,7 @@ pub struct App {
     palette: bool,
     palette_state: crate::command_palette::CommandPalette,
     font_size_open: bool,
+    geometry: Option<Geometry>,
 }
 
 impl App {
@@ -245,6 +246,7 @@ impl App {
             palette: false,
             palette_state: Default::default(),
             font_size_open: false,
+            geometry: None,
         };
         Ok(app)
     }
@@ -1544,6 +1546,8 @@ impl App {
                 });
         }
         self.save_workspace();
+        let interval = eframe::App::auto_save_interval(self);
+        schedule_geometry_autosave(ctx, &mut self.geometry, interval);
     }
 }
 
@@ -1571,6 +1575,31 @@ impl eframe::App for App {
                 eprintln!("Could not save workspace: {error:#}");
             }
         }
+    }
+}
+
+/// The window geometry eframe persists.
+type Geometry = (Option<Rect>, Option<Rect>, Option<bool>, Option<bool>);
+
+/// eframe autosaves window geometry only inside a frame, once `interval` has
+/// passed since its last save. An idle window runs no frames, so after a move
+/// or resize schedule one that is sure to find the autosave due.
+fn schedule_geometry_autosave(
+    ctx: &egui::Context,
+    saved: &mut Option<Geometry>,
+    interval: std::time::Duration,
+) {
+    let geometry = ctx.input(|input| {
+        let viewport = input.viewport();
+        (
+            viewport.outer_rect,
+            viewport.inner_rect,
+            viewport.maximized,
+            viewport.fullscreen,
+        )
+    });
+    if saved.replace(geometry) != Some(geometry) {
+        ctx.request_repaint_after(interval + std::time::Duration::from_secs(1));
     }
 }
 
@@ -2296,6 +2325,30 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn a_geometry_change_wakes_the_window_once_the_autosave_is_due() {
+        let interval = Duration::from_secs(30);
+        let ctx = egui::Context::default();
+        let mut saved = None;
+        let mut frame = |x: f32| {
+            let mut input = egui::RawInput::default();
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .outer_rect = Some(Rect::from_min_size(Pos2::new(x, 0.0), Vec2::splat(400.0)));
+            let output = crate::test_support::run(&ctx, input, |ui| {
+                schedule_geometry_autosave(ui.ctx(), &mut saved, interval)
+            });
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
+        };
+        // egui itself repaints during its first passes.
+        assert!((0..10).any(|_| frame(0.0) == Duration::MAX));
+        let moved = frame(50.0);
+        assert!(moved > interval && moved < Duration::MAX, "{moved:?}");
+        assert_eq!(frame(50.0), Duration::MAX, "an unchanged window stays idle");
+    }
+
+    #[test]
     fn tab_drop_slot_is_the_gap_nearest_the_pointer() {
         let rects = [0.0, 100.0, 200.0]
             .map(|x| egui::Rect::from_min_size(egui::pos2(x, 0.0), Vec2::new(90.0, 30.0)));
@@ -2977,6 +3030,7 @@ mod tests {
             palette: false,
             palette_state: Default::default(),
             font_size_open: false,
+            geometry: None,
         };
         app.add_tab(&ctx, None);
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {

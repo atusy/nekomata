@@ -4,7 +4,8 @@
 
 - A window opens with the size and position most recently saved by any
   nekomata window; every window process shares one saved geometry. A window
-  saves its geometry periodically while open and when it closes. Where the
+  saves its geometry within about 30 seconds of a move or resize, even while
+  idle, and when it closes. Where the
   platform does not let applications place windows, only the size applies.
   Maximized and fullscreen states are restored as well.
 - With no saved geometry, a window opens at 1100×740 logical pixels.
