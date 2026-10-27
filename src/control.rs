@@ -126,7 +126,9 @@ impl Server {
         let window = std::process::id();
         let path = directory()?.join(format!("{window}.sock"));
         let _guard = runtime.enter();
-        let listener = UnixListener::bind(&path).context("bind nekomata control socket")?;
+        let listener = listen(&path).context("bind nekomata control socket")?;
+        listener.set_nonblocking(true)?;
+        let listener = UnixListener::from_std(listener)?;
         let (tx, requests) = mpsc::channel::<Message>(16);
         let task = runtime.spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -144,6 +146,10 @@ impl Server {
             path,
         })
     }
+}
+
+fn listen(path: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
+    std::os::unix::net::UnixListener::bind(path)
 }
 
 impl Drop for Server {
