@@ -7,6 +7,7 @@ mod commands;
 mod control;
 mod daemon;
 mod font_size;
+mod input;
 mod layout;
 mod links;
 #[cfg(test)]
