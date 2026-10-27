@@ -42,13 +42,18 @@ Each font size step scales by 1.1; `Font: Change size…` in the command
 palette shows the current size with buttons to step or reset it (limits are
 in the [terminal specification](../spec/terminal.md#font-size)). The palette
 also offers `Font: Increase size`, `Font: Decrease size` and `Font: Reset size`
-as direct commands, and each can be assigned a key in nekomata's config. Prompt
-navigation needs a shell that reports prompt boundaries with OSC 133.
+as direct commands, and each can be assigned a key in nekomata's config.
+
+![Font commands with example custom bindings](../images/public-font-commands.png)
+
+Prompt navigation needs a shell that reports prompt boundaries with OSC 133.
 One-line and half-page scrolls,
 `Scrollback: Scroll to top`, `Scrollback: Scroll to bottom`,
 `Scrollback: Jump to previous prompt` and `Scrollback: Jump to next prompt`
 are also in the command palette. Prompt jumps are disabled with a reason while
 the active session is disconnected or in the alternate screen.
+
+![Scrollback commands including line and half-page steps](../images/public-scrollback-commands.png)
 
 ## Tabs and panes
 
