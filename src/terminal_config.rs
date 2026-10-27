@@ -4,11 +4,42 @@ use felis_client_core::config::{EffectiveConfig, FontStyleConfig};
 use felis_protocol::messages::SessionToDaemonMsg;
 use felis_render_wgpu::RendererConfig;
 use felis_shaping::FaceSpec;
+use std::path::Path;
 use std::sync::Arc;
 
-pub fn load(ctx: &egui::Context) -> anyhow::Result<()> {
-    install(ctx, EffectiveConfig::try_load("nekomata")?);
-    Ok(())
+use crate::config_report::Problem;
+
+/// The document as nekomata applies it, with every diagnostic felis
+/// reports for it. As felis's own startup does, a document with an error
+/// is ignored for felis's defaults.
+pub fn load() -> (EffectiveConfig, Vec<Problem>) {
+    match felis_client_core::config::config_path() {
+        Some(path) => load_from(&path),
+        None => (EffectiveConfig::default(), vec![]),
+    }
+}
+
+/// Collects diagnostics instead of letting felis log them through
+/// `tracing`, which nothing here subscribes to.
+fn load_from(path: &Path) -> (EffectiveConfig, Vec<Problem>) {
+    let (config, diagnostics) = EffectiveConfig::diagnose(path, "nekomata");
+    let problems = diagnostics
+        .iter()
+        .map(|diagnostic| match diagnostic.severity {
+            felis_client_core::config::Severity::Error => {
+                Problem::error(path, diagnostic.to_string())
+            }
+            felis_client_core::config::Severity::Warning => {
+                Problem::warning(path, diagnostic.to_string())
+            }
+        })
+        .collect();
+    let config = if diagnostics.has_errors() {
+        EffectiveConfig::default()
+    } else {
+        config
+    };
+    (config, problems)
 }
 
 pub fn install(ctx: &egui::Context, config: EffectiveConfig) {
@@ -66,8 +97,69 @@ pub fn configure(config: &EffectiveConfig) -> SessionToDaemonMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_report::Severity;
     use felis_client_core::config::ConfigDocument;
     use felis_render_core::palette::linear_rgba_to_srgb8;
+
+    /// `EffectiveConfig` has no `PartialEq`; its serialized form stands in.
+    fn is_default(config: &EffectiveConfig) -> bool {
+        let serialized = |config| toml::Value::try_from(config).unwrap();
+        serialized(config) == serialized(&EffectiveConfig::default())
+    }
+
+    fn load_text(text: &str) -> (EffectiveConfig, Vec<Problem>, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, text).unwrap();
+        let (config, problems) = load_from(&path);
+        (config, problems, path)
+    }
+
+    #[test]
+    fn a_missing_document_is_felis_defaults_without_problems() {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, problems) = load_from(&dir.path().join("config.toml"));
+        assert!(is_default(&config));
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn a_broken_document_falls_back_to_defaults_and_reports_its_error() {
+        for text in ["[font", "[font]\nsize_px = 15\nfamily = 1"] {
+            let (config, problems, path) = load_text(text);
+            assert!(is_default(&config), "{text}");
+            assert!(
+                problems
+                    .iter()
+                    .any(|problem| problem.severity == Severity::Error && problem.source == path),
+                "{text}: {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_document_falls_back_to_defaults_and_reports_why() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory where the file should be cannot be read as one.
+        let (config, problems) = load_from(dir.path());
+        assert!(is_default(&config));
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].severity, Severity::Error);
+        assert!(problems[0].message.contains("cannot read"), "{problems:?}");
+    }
+
+    #[test]
+    fn warnings_are_reported_and_the_rest_of_the_document_applies() {
+        let (config, problems, path) = load_text("[font]\nsize_px = 15\nbogus = 1");
+        assert_eq!(font_size(&config), 15.0);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].severity, Severity::Warning);
+        assert_eq!(problems[0].source, path);
+        assert!(
+            problems[0].message.starts_with("font.bogus: "),
+            "{problems:?}"
+        );
+    }
 
     #[test]
     fn nekomata_overlay_drives_renderer_and_daemon_colors() {

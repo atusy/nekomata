@@ -61,12 +61,14 @@ when none is configured.
 ### Errors
 
 A missing file at the default path is not an error. felis-client-core
-classifies every other problem as an error or a warning. Errors — syntax
-errors, read failures and most type errors — stop startup. Warnings do not
-stop startup and are not shown: the offending item is skipped (unknown keys,
-a malformed individual `keymap` or `font.fallback` entry) or adjusted (an
-out-of-range font size is clamped). `felis config check --client nekomata`
-reports both kinds.
+classifies every other problem as an error or a warning. An error — a syntax
+error, a read failure or most type errors — makes nekomata ignore the whole
+document, so the terminal layer uses felis's defaults, as felis's own startup
+does. A warning skips the offending item (unknown keys, a malformed individual
+`keymap` or `font.fallback` entry) or adjusts it (an out-of-range font size is
+clamped); the rest of the document applies. Both kinds are
+[reported](#reporting-problems); `felis config check --client nekomata`
+reports the same diagnostics.
 
 ## Application layer
 
@@ -107,7 +109,17 @@ Specified in [keymap](keymap.md).
 
 ### Errors
 
-Unknown keys, unusable values and malformed `[keymap]` entries are reported as
-warnings on standard error and ignored; the rest of the document applies.
-TOML syntax errors, type errors and read failures other than a missing file
-stop startup with an error.
+Unknown keys, unusable values and malformed `[keymap]` entries are warnings:
+each is ignored and the rest of the document applies. TOML syntax errors, type
+errors and read failures other than a missing file are errors: the whole
+document is ignored and every application-layer default applies. Warnings
+found before an error are still reported. Both kinds are
+[reported](#reporting-problems).
+
+## Reporting problems
+
+Configuration problems never stop startup. Both documents are always read, so
+a problem in one does not hide the other's. Each problem is printed on
+standard error as `nekomata: <path>: <message>` for a warning and
+`nekomata: <path> is ignored: <message>` for an error, terminal-layer problems
+first. Control characters other than line breaks and tabs are escaped.

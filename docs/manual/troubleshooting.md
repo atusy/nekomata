@@ -72,8 +72,9 @@ Dock so that nekomata starts the daemon.
 - Some felis sections are not honored by nekomata yet: `window`, `shader`
   and `mouse`. Of `clipboard`, only OSC 52 writes follow it; a program's
   OSC 52 copy needs `osc_52 = "system"`.
-- Look for warnings on standard error. Only nekomata's own file reports
-  warnings there; to check felis's file as nekomata reads it, run:
+- Look for warnings and errors on standard error; nekomata reports problems
+  in both files there. A file with an error is ignored as a whole. To check
+  felis's file as nekomata reads it without starting the GUI, run:
 
   ```sh
   nix develop --command felis config check --client nekomata

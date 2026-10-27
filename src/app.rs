@@ -164,6 +164,8 @@ pub struct App {
     /// The daemon instance that issued `workspace_id`, when it reports one.
     daemon_instance: Option<String>,
     workspace_error: Option<String>,
+    /// Shown until dismissed; cleared as a whole.
+    config_problems: Vec<crate::config_report::Problem>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch>,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
@@ -186,12 +188,22 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
-        crate::terminal_config::load(&cc.egui_ctx)?;
-        let crate::app_config::Settings {
-            ui_size,
-            ui_face,
-            keymap,
-        } = crate::app_config::load()?;
+        // Configuration problems never stop startup: a window launched from
+        // the Finder or Dock has nowhere else to show them.
+        let (terminal, mut config_problems) = crate::terminal_config::load();
+        crate::terminal_config::install(&cc.egui_ctx, terminal);
+        let (
+            crate::app_config::Settings {
+                ui_size,
+                ui_face,
+                keymap,
+            },
+            app_problems,
+        ) = crate::app_config::load();
+        config_problems.extend(app_problems);
+        for problem in &config_problems {
+            eprintln!("nekomata: {problem}");
+        }
 
         leave_zoom_keys_to_the_terminal(&cc.egui_ctx);
         cc.egui_ctx.set_theme(egui::Theme::Dark);
@@ -212,7 +224,9 @@ impl App {
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
         cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
-        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, keymap)
+        let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, keymap)?;
+        app.config_problems = config_problems;
+        Ok(app)
     }
 
     fn connect(
@@ -227,6 +241,7 @@ impl App {
             workspace_id: None,
             daemon_instance: None,
             workspace_error: None,
+            config_problems: vec![],
             last_snapshot: None,
             pending_workspace: None,
             paste_requested: None,
@@ -2918,6 +2933,7 @@ mod tests {
             workspace_id: None,
             daemon_instance: None,
             workspace_error: None,
+            config_problems: vec![],
             last_snapshot: None,
             pending_workspace: None,
             paste_requested: None,

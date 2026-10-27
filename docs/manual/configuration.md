@@ -86,16 +86,19 @@ bindings can still be configured in felis's `[keymap]` using felis's syntax.
 
 ## When something is wrong
 
-- In nekomata's file, a mistyped key or an unusable value prints a warning on
-  standard error and is skipped, or, for an out-of-range size, clamped; the
-  rest of the file still applies.
-- In felis's file, such mistakes are silently ignored by nekomata; check the
-  file with `felis config check --client nekomata` (see
+nekomata always starts, and reports every problem in both files on standard
+error.
+
+- A mistyped key or an unusable value is a warning: it is skipped, or, for an
+  out-of-range size, clamped; the rest of the file still applies. A malformed
+  keymap entry is only dropped, and so is a malformed `font.fallback` entry in
+  felis's file.
+- A TOML syntax error, a wrongly typed setting or an unreadable file is an
+  error: nekomata ignores that whole file and uses its defaults until the file
+  is fixed and nekomata restarts.
+- To check felis's file as nekomata reads it without starting the GUI, run
+  `felis config check --client nekomata` (see
   [Troubleshooting](troubleshooting.md#a-setting-has-no-effect)).
-- A TOML syntax error in either file stops nekomata from starting, and so
-  does a wrongly typed setting in nekomata's file and most wrongly typed
-  settings in felis's file. A malformed keymap entry is only dropped, and so
-  is a malformed `font.fallback` entry in felis's file.
 
 Some bindings are rejected with a warning: keys the window never reports as
 key presses, such as Cmd+C, and sequences that can never complete because a

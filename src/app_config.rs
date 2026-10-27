@@ -1,7 +1,7 @@
 //! The application-layer document nekomata owns, beside felis's shared one.
 use std::path::{Path, PathBuf};
 
-use crate::config_report::printable;
+use crate::config_report::Problem;
 use crate::layout::{Axis, Direction};
 use crate::shortcuts::{Action, AppKeymap};
 use felis_client_core::Chord;
@@ -41,21 +41,15 @@ fn path() -> Option<PathBuf> {
 
 /// A missing file means defaults; an unreadable or malformed one fails.
 /// `warnings` keeps what was found before a failure, too.
-fn read(path: &Path, warnings: &mut Warnings) -> anyhow::Result<AppConfig> {
+fn read(path: &Path, warnings: &mut Warnings) -> Result<AppConfig, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Default::default());
         }
-        Err(error) => anyhow::bail!("cannot read {}: {error}", path.display()),
+        Err(error) => return Err(format!("cannot read: {error}")),
     };
-    parse(&text, warnings).map_err(|error| {
-        anyhow::anyhow!(
-            "config {} is invalid: {}",
-            path.display(),
-            printable(&error)
-        )
-    })
+    parse(&text, warnings)
 }
 
 /// The document resolved against the platform: what the GUI applies.
@@ -65,33 +59,45 @@ pub struct Settings {
     pub keymap: AppKeymap,
 }
 
-pub fn load() -> anyhow::Result<Settings> {
-    let path = path();
+/// The document as the GUI applies it, with every problem found. A
+/// document with an error is ignored for the defaults, as felis's is.
+pub fn load() -> (Settings, Vec<Problem>) {
+    load_from(path().as_deref(), crate::ui_font::find)
+}
+
+fn load_from(
+    path: Option<&Path>,
+    find: impl FnOnce(&str) -> Result<crate::ui_font::Face, crate::ui_font::Unavailable>,
+) -> (Settings, Vec<Problem>) {
+    let source = path.unwrap_or(Path::new("config.toml"));
     let mut warnings = Warnings::new();
-    let config = match &path {
-        Some(path) => read(path, &mut warnings),
-        None => Ok(AppConfig::default()),
+    let read = path.map_or_else(
+        || Ok(AppConfig::default()),
+        |path| read(path, &mut warnings),
+    );
+    // Warnings found before an error are kept, so one launch shows every
+    // problem found.
+    let (config, error) = match read {
+        Ok(config) => (config, None),
+        Err(error) => (AppConfig::default(), Some(error)),
     };
-    let settings = config.map(|config| {
-        let (ui_size, ui_face) = resolve_font(
-            &config.font,
-            crate::ui_font::default_size_px,
-            crate::ui_font::find,
-            &mut warnings,
-        );
-        Settings {
-            ui_size,
-            ui_face,
-            keymap: config.keymap,
-        }
-    });
-    // Report warnings even when the document fails, so one launch shows
-    // every problem found before the error.
-    let source = path.as_deref().unwrap_or(Path::new("config.toml"));
-    for warning in warnings {
-        eprintln!("nekomata: {}: {}", source.display(), printable(&warning));
-    }
-    settings
+    let (ui_size, ui_face) = resolve_font(
+        &config.font,
+        crate::ui_font::default_size_px,
+        find,
+        &mut warnings,
+    );
+    let problems = warnings
+        .into_iter()
+        .map(|warning| Problem::warning(source, warning))
+        .chain(error.map(|error| Problem::error(source, error)))
+        .collect();
+    let settings = Settings {
+        ui_size,
+        ui_face,
+        keymap: config.keymap,
+    };
+    (settings, problems)
 }
 
 /// The UI body size and the configured face, with `default_size` and
@@ -349,6 +355,7 @@ fn table<'a>(value: &'a toml::Value, path: &str) -> Result<&'a toml::Table, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_report::{Severity, printable};
 
     /// The document with the warnings it produced.
     fn parse(text: &str) -> Result<(AppConfig, Warnings), String> {
@@ -573,13 +580,62 @@ mod tests {
         assert!(error.contains("\n1 | [appearance\n"), "{error}");
     }
 
+    fn no_font(_: &str) -> Result<crate::ui_font::Face, crate::ui_font::Unavailable> {
+        Err(crate::ui_font::Unavailable::NotInstalled)
+    }
+
     #[test]
-    fn an_invalid_file_names_its_path() {
+    fn a_broken_file_falls_back_to_defaults_and_reports_every_problem() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[appearance").unwrap();
-        let error = read(&path, &mut Warnings::new()).unwrap_err().to_string();
-        assert!(error.contains(&path.display().to_string()), "{error}");
+        std::fs::write(
+            &path,
+            "[appearance]\nalpha = 1\n[appearance.base.font]\nsize_px = 30\nfamily = 1",
+        )
+        .unwrap();
+        let (settings, problems) = load_from(Some(&path), no_font);
+        assert_eq!(settings.ui_size, crate::ui_font::default_size_px());
+        assert!(settings.ui_face.is_none());
+        assert_eq!(
+            problems,
+            [
+                Problem::warning(&path, "unknown key `appearance.alpha`"),
+                Problem::error(&path, "`appearance.base.font.family` must be a string"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_file_falls_back_to_defaults_and_reports_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, problems) = load_from(Some(dir.path()), no_font);
+        assert_eq!(settings.ui_size, crate::ui_font::default_size_px());
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].severity, Severity::Error);
+        assert!(
+            problems[0].message.starts_with("cannot read: "),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_usable_file_applies_and_reports_its_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[appearance.base.font]\nsize_px = 17\nfamily = \"No Such\"",
+        )
+        .unwrap();
+        let (settings, problems) = load_from(Some(&path), no_font);
+        assert_eq!(settings.ui_size, 17.0);
+        assert_eq!(
+            problems,
+            [Problem::warning(
+                &path,
+                "`appearance.base.font.family` = \"No Such\" is not installed; using the default UI font"
+            )]
+        );
     }
 
     /// Feeds key taps (press, then release) through a keymap configured by
