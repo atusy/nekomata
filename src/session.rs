@@ -314,6 +314,17 @@ impl Drop for Session {
     }
 }
 
+/// The text an OSC 52 write puts on the system clipboard, if any.
+fn system_clipboard_text(write: &felis_protocol::messages::ClipboardWrite) -> Option<String> {
+    if !write
+        .selection
+        .contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
+    {
+        return None;
+    }
+    std::str::from_utf8(&write.data).ok().map(str::to_owned)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run(
     shared: Arc<Mutex<State>>,
@@ -540,9 +551,8 @@ async fn pump(
                                     state.images = felis_client_core::ImageShadow::new();
                                 }
                                 if let GridMsg::ClipboardSet { write } = &delivery.msg
-                                    && write.selection.contains(felis_protocol::messages::ClipboardSelection::CLIPBOARD)
-                                    && let Ok(text) = std::str::from_utf8(&write.data) {
-                                    state.clipboard = Some(text.to_owned());
+                                    && let Some(text) = system_clipboard_text(write) {
+                                    state.clipboard = Some(text);
                                 }
                                 ctx.request_repaint();
                             }
