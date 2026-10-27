@@ -112,11 +112,12 @@ running. It does not reconnect on its own after the daemon refuses it, for
 example for an incompatible protocol version.
 
 On reconnecting, the window attaches a workspace and saves its current layout
-there:
+there, never into another window's retained layout:
 
-- When the workspace the daemon offers is new, or still holds exactly the
-  layout the daemon last acknowledged from this window under the same ID, the window takes it.
-- Otherwise the window leaves that workspace untouched and takes a new one.
+1. Its own workspace, if the daemon still holds it under the previous ID with
+   exactly the layout the daemon last acknowledged from this window.
+2. Otherwise the workspace the daemon offers at startup, if it has no tabs.
+3. Otherwise a new workspace.
 
 The workspace ID may therefore change. Shells started before the change keep
 exporting the old ID in `NEKOMATA_WORKSPACE_ID`, so CLI commands run from

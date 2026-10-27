@@ -1,7 +1,7 @@
 //! Ordered, asynchronous layout synchronization and a connection-scoped lease.
 use std::{future::Future, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use eframe::egui;
 use tokio::{
     net::UnixStream,
@@ -127,42 +127,81 @@ pub struct Resume {
     pub current: Snapshot,
 }
 
-/// Whether the workspace a fresh `Open` claimed may take the window's
-/// layout: one without tabs is new, and one still holding exactly what the
-/// daemon last acknowledged from this window under its ID is the window's own. Any other is somebody
-/// else's retained layout, which must not be overwritten.
-fn reclaimable(resume: &Resume, id: u64, retained: &Snapshot) -> bool {
-    retained.tabs.is_empty() || (id == resume.previous && resume.sent.as_ref() == Some(retained))
-}
-
+/// Re-leases a workspace and gives it `resume.current`, never overwriting
+/// another window's retained layout. `Open` claims the most recently used
+/// unattached workspace, which need not be this window's own:
+///
+/// 1. The window's own workspace is the one still holding exactly what the
+///    daemon last acknowledged under the previous ID; it is reclaimed,
+///    whether `Open` offered it or not.
+/// 2. Otherwise a workspace without tabs, which is new, takes the layout.
+/// 3. Otherwise the layout moves into a new workspace.
 async fn resume(stream: &mut UnixStream, window: u32, resume: Resume) -> Result<Payload> {
-    let Payload::Workspace { id, snapshot } =
-        daemon::exchange(stream, Request::Open { window }).await?
-    else {
-        anyhow::bail!("unexpected nekomata daemon reply");
+    let own = |id: u64, retained: &Snapshot| {
+        id == resume.previous && resume.sent.as_ref() == Some(retained)
     };
-    let id = if reclaimable(&resume, id, &snapshot) {
+    let (id, retained) = workspace(daemon::exchange(stream, Request::Open { window }).await?)?;
+    let commit = Request::Finish {
+        snapshot: Some(resume.current.clone()),
+    };
+    let id = if own(id, &retained) {
         daemon::exchange(stream, Request::Save(resume.current.clone())).await?;
         id
+    } else if id != resume.previous
+        && let Some(previous) = reserve(stream, daemon::Selection::Id(resume.previous)).await?
+    {
+        if own(previous.0, &previous.1) {
+            daemon::exchange(stream, commit).await?;
+            previous.0
+        } else {
+            daemon::exchange(stream, Request::Finish { snapshot: None }).await?;
+            fresh(stream, id, &retained, &resume, commit).await?
+        }
     } else {
-        let Payload::Workspace { id, .. } =
-            daemon::exchange(stream, Request::Prepare(daemon::Selection::New)).await?
-        else {
-            anyhow::bail!("unexpected nekomata daemon reply");
-        };
-        daemon::exchange(
-            stream,
-            Request::Finish {
-                snapshot: Some(resume.current.clone()),
-            },
-        )
-        .await?;
-        id
+        fresh(stream, id, &retained, &resume, commit).await?
     };
     Ok(Payload::Workspace {
         id,
         snapshot: resume.current,
     })
+}
+
+/// Gives the layout to the opened workspace when it is new, else to a new one.
+async fn fresh(
+    stream: &mut UnixStream,
+    id: u64,
+    retained: &Snapshot,
+    resume: &Resume,
+    commit: Request,
+) -> Result<u64> {
+    if retained.tabs.is_empty() {
+        daemon::exchange(stream, Request::Save(resume.current.clone())).await?;
+        return Ok(id);
+    }
+    let (id, _) = reserve(stream, daemon::Selection::New)
+        .await?
+        .context("nekomata daemon refused a new workspace")?;
+    daemon::exchange(stream, commit).await?;
+    Ok(id)
+}
+
+/// Reserves `selection`, or `None` when the daemon refuses it.
+async fn reserve(
+    stream: &mut UnixStream,
+    selection: daemon::Selection,
+) -> Result<Option<(u64, Snapshot)>> {
+    match daemon::exchange(stream, Request::Prepare(selection)).await {
+        Ok(payload) => workspace(payload).map(Some),
+        Err(error) if error.downcast_ref::<daemon::Rejection>().is_some() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn workspace(payload: Payload) -> Result<(u64, Snapshot)> {
+    match payload {
+        Payload::Workspace { id, snapshot } => Ok((id, snapshot)),
+        _ => anyhow::bail!("unexpected nekomata daemon reply"),
+    }
 }
 
 impl Client {
@@ -674,6 +713,12 @@ mod tests {
             }),
         )
         .await;
+        // A restarted daemon no longer has the previous workspace.
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Prepare(daemon::Selection::Id(3)))
+        ));
+        respond(&mut daemon, Err("workspace not found".into())).await;
         let Some(Request::Save(saved)) = receive(&mut daemon).await else {
             panic!("expected the layout to be saved")
         };
@@ -753,6 +798,107 @@ mod tests {
         assert_eq!(saved, current);
         respond(&mut daemon, Ok(Payload::Done)).await;
         assert_eq!(resumed(&mut client).await, 4);
+    }
+
+    #[tokio::test]
+    async fn resuming_finds_the_windows_workspace_behind_a_more_recent_one() {
+        let sent = layout();
+        let mut current = sent.clone();
+        current.font_size += 1.0;
+        let (mut client, mut daemon) = resuming(Resume {
+            previous: 3,
+            sent: Some(sent.clone()),
+            current: current.clone(),
+        });
+        receive(&mut daemon).await.unwrap();
+        let mut other = layout();
+        other.font_size += 2.0;
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 5,
+                snapshot: other,
+            }),
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Prepare(daemon::Selection::Id(3)))
+        ));
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 3,
+                snapshot: sent,
+            }),
+        )
+        .await;
+        let Some(Request::Finish {
+            snapshot: Some(saved),
+        }) = receive(&mut daemon).await
+        else {
+            panic!("expected the layout to commit into the previous workspace")
+        };
+        assert_eq!(saved, current);
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert_eq!(resumed(&mut client).await, 3);
+    }
+
+    #[tokio::test]
+    async fn resuming_never_takes_an_identical_layout_under_another_id() {
+        let current = layout();
+        let (mut client, mut daemon) = resuming(Resume {
+            previous: 3,
+            sent: Some(current.clone()),
+            current: current.clone(),
+        });
+        receive(&mut daemon).await.unwrap();
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 4,
+                snapshot: current.clone(),
+            }),
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Prepare(daemon::Selection::Id(3)))
+        ));
+        // A restarted daemon's workspace 3 holds another window's layout.
+        let mut other = layout();
+        other.font_size += 2.0;
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 3,
+                snapshot: other,
+            }),
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Finish { snapshot: None })
+        ));
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Prepare(daemon::Selection::New))
+        ));
+        respond(
+            &mut daemon,
+            Ok(Payload::Workspace {
+                id: 6,
+                snapshot: Snapshot::default(),
+            }),
+        )
+        .await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Finish { snapshot: Some(_) })
+        ));
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert_eq!(resumed(&mut client).await, 6);
     }
 
     #[tokio::test]
