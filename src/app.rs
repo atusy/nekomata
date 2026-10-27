@@ -101,7 +101,15 @@ impl Pane {
             session: state
                 .session_id
                 .map(|id| format!("{id:032x}"))
-                .or_else(|| self.session.attachment.clone()),
+                // An attach by prefix names no session until felis resolves
+                // it; recording the prefix would make the daemon reject every
+                // snapshot while it is pending or after it fails.
+                .or_else(|| {
+                    self.session
+                        .attachment
+                        .clone()
+                        .filter(|id| id.len() == 32 && u128::from_str_radix(id, 16).is_ok())
+                }),
         }
     }
 
@@ -2668,6 +2676,43 @@ mod tests {
         pane.selection = selection;
         pane.expire_selection();
         assert_eq!(pane.selection, selection);
+    }
+
+    #[test]
+    fn panes_attaching_by_an_unresolved_prefix_keep_workspace_snapshots_valid() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: the attach stays unresolved.
+        let pane = |attach: &str| {
+            Pane::from_session(Arc::new(Session::start(
+                &runtime,
+                egui::Context::default(),
+                Target::Local("/unused-attach-test.sock".into()),
+                Some(attach.into()),
+                None,
+                vec![],
+            )))
+        };
+        let snapshot = |pane: &Pane| Snapshot {
+            tabs: vec![Tab {
+                name: "Terminal 1".into(),
+                layout: Layout::Pane(1),
+                focused: 1,
+                focus_history: vec![1],
+            }],
+            panes: [(1, pane.spec())].into(),
+            next_id: 2,
+            ..Default::default()
+        };
+        let prefix = pane("abc");
+        assert_eq!(prefix.spec().session, None);
+        snapshot(&prefix).validate().unwrap();
+        let full = format!("{:032x}", 7);
+        let exact = pane(&full);
+        assert_eq!(exact.spec().session, Some(full));
+        snapshot(&exact).validate().unwrap();
     }
 
     #[test]
