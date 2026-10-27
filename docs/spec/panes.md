@@ -100,6 +100,11 @@ the Unix socket path limit. The directory is created with mode 0700; if it
 exists but is not a directory owned by the current user with no group or
 other permissions, windows and CLI commands fail and name the directory.
 
+A window socket is named after the GUI's process ID and removed when the
+window closes. A window that finds its name taken by a socket nothing listens
+on, left by a crashed process, replaces it; it does not replace a socket that
+accepts connections.
+
 ## SSH
 
 - SSH commands run on the machine running the GUI. Hosts may be

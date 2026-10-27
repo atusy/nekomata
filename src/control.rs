@@ -148,8 +148,22 @@ impl Server {
     }
 }
 
+/// Window sockets are named by PID and removed only on a clean exit, so a
+/// crashed window's socket can occupy the name of a later process.
 fn listen(path: &Path) -> std::io::Result<std::os::unix::net::UnixListener> {
-    std::os::unix::net::UnixListener::bind(path)
+    use std::os::unix::net::{UnixListener, UnixStream};
+    match UnixListener::bind(path) {
+        Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+            match UnixStream::connect(path) {
+                Err(refused) if refused.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    std::fs::remove_file(path)?;
+                    UnixListener::bind(path)
+                }
+                _ => Err(err),
+            }
+        }
+        result => result,
+    }
 }
 
 impl Drop for Server {
@@ -452,6 +466,30 @@ mod tests {
         let metadata = std::fs::metadata(&path).unwrap();
         assert!(metadata.is_dir());
         assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+    }
+
+    #[test]
+    fn a_crashed_window_socket_does_not_block_its_pid() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("7.sock");
+        // A crash skips Drop, leaving the bound path behind with no listener.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        assert!(path.exists());
+        let listener = listen(&path).unwrap();
+        std::os::unix::net::UnixStream::connect(&path).unwrap();
+        drop(listener);
+    }
+
+    #[test]
+    fn a_live_window_socket_is_not_taken_over() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("7.sock");
+        let _live = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert_eq!(
+            listen(&path).unwrap_err().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+        std::os::unix::net::UnixStream::connect(&path).unwrap();
     }
 
     #[test]
