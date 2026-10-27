@@ -222,7 +222,7 @@ impl Registry {
             .map(|(&id, record)| Summary {
                 id,
                 window: record.owner.map(|(_, window)| window),
-                tabs: record.snapshot.tabs.len(),
+                tabs: record.snapshot.window.tabs.len(),
                 panes: record.snapshot.panes.len(),
                 last_used: record.last_used,
                 instance: self.instance.clone(),
@@ -738,12 +738,17 @@ mod tests {
 
     fn one_pane(font_size: f32) -> Snapshot {
         Snapshot {
+            window: crate::workspace::WindowLayout {
             tabs: vec![crate::workspace::Tab {
                 name: "shell".into(),
                 layout: crate::layout::Layout::Pane(1),
                 focused: 1,
                 focus_history: vec![1],
             }],
+            next_id: 2,
+            font_size,
+            ..Default::default()
+            },
             panes: [(
                 1,
                 crate::workspace::PaneSpec {
@@ -752,8 +757,6 @@ mod tests {
                 },
             )]
             .into(),
-            next_id: 2,
-            font_size,
             ..Default::default()
         }
     }
@@ -1114,7 +1117,10 @@ mod tests {
                 .unwrap(),
         );
         let invalid = Snapshot {
-            active: 9,
+            window: crate::workspace::WindowLayout {
+                active: 9,
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(exchange(&mut client, Request::Save(invalid)).await.is_err());
@@ -1171,7 +1177,10 @@ mod tests {
             .await
             .unwrap();
         let invalid = Snapshot {
-            active: 7,
+            window: crate::workspace::WindowLayout {
+                active: 7,
+                ..Default::default()
+            },
             ..Default::default()
         };
         assert!(prepare(&mut client, invalid, Selection::New).await.is_err());

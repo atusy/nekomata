@@ -14,7 +14,7 @@ use crate::{
     session::{Session, Target},
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
-    workspace::{PaneSpec, Snapshot, Tab, move_tab},
+    workspace::{PaneSpec, Snapshot, WindowLayout},
     workspace_client::{Client as WorkspaceClient, Command as WorkspaceCommand, Operation},
     workspace_switch::{self, PaneStatus, Poll, Step, Switch as WorkspaceSwitch},
 };
@@ -209,10 +209,7 @@ pub struct App {
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
     panes: BTreeMap<u64, Pane>,
-    tabs: Vec<Tab>,
-    active: usize,
-    next_id: u64,
-    font_size: f32,
+    window: WindowLayout,
     picker: SessionPicker,
     shortcuts: Shortcuts,
     palette: bool,
@@ -274,10 +271,10 @@ impl App {
             control,
             pending_attach: BTreeMap::new(),
             panes: BTreeMap::new(),
-            tabs: vec![],
-            active: 0,
-            next_id: 1,
-            font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
+            window: WindowLayout {
+                font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
+                ..Default::default()
+            },
             picker: SessionPicker::default(),
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
@@ -290,15 +287,12 @@ impl App {
 
     fn snapshot(&self) -> Snapshot {
         Snapshot {
-            tabs: self.tabs.clone(),
+            window: self.window.clone(),
             panes: self
                 .panes
                 .iter()
                 .map(|(&id, pane)| (id, pane.spec()))
                 .collect(),
-            active: self.active,
-            next_id: self.next_id,
-            font_size: self.font_size,
         }
     }
 
@@ -311,12 +305,12 @@ impl App {
     fn restore_workspace(&mut self, ctx: &egui::Context, snapshot: Snapshot) {
         self.panes.clear();
         self.pending_attach.clear();
-        self.tabs = snapshot.tabs;
-        self.active = snapshot.active;
-        self.next_id = snapshot.next_id;
         // Startup restores layout and shells, but terminal config owns the
         // initial font size. A saved absolute zoom must not hide config edits.
-        self.font_size = crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
+        self.window = WindowLayout {
+            font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
+            ..snapshot.window
+        };
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
@@ -332,7 +326,7 @@ impl App {
                 ),
             );
         }
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             self.add_tab(ctx, None);
         }
     }
@@ -382,7 +376,7 @@ impl App {
                         self.cancel_workspace(error.to_string());
                         continue;
                     }
-                    if snapshot.tabs.is_empty() {
+                    if snapshot.window.tabs.is_empty() {
                         match Target::default_local() {
                             Ok(target) => workspace_switch::add_first_tab(
                                 &mut snapshot,
@@ -461,10 +455,7 @@ impl App {
                                     self.panes.insert(pane_id, pane);
                                 }
                             }
-                            self.tabs = snapshot.tabs;
-                            self.active = snapshot.active;
-                            self.next_id = snapshot.next_id;
-                            self.font_size = snapshot.font_size;
+                            self.window = snapshot.window;
                             self.last_snapshot = None;
                             self.workspace_error = None;
                             if let Some(reply) = reply {
@@ -727,8 +718,7 @@ impl App {
         cwd: Option<String>,
         target: Target,
     ) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.window.allocate_pane();
         self.panes.insert(
             id,
             Pane::connect(
@@ -752,19 +742,15 @@ impl App {
             None,
             Target::default_local().expect("resolve local daemon socket"),
         );
-        self.tabs.push(Tab {
-            name: format!("Terminal {id}"),
-            layout: Layout::Pane(id),
-            focused: id,
-            focus_history: vec![id],
-        });
-        self.active = self.tabs.len() - 1;
+        self.window.open_tab(id);
     }
 
     fn close_pane(&mut self, ctx: &egui::Context, id: u64) {
-        crate::workspace::remove_pane(&mut self.tabs, &mut self.active, id);
+        if !self.window.close_pane(id) {
+            return;
+        }
         self.panes.remove(&id);
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -776,7 +762,7 @@ impl App {
                     self.begin_workspace(workspace, Some(message.reply))
                 }
                 Request::List => {
-                    let active = self.tabs.get(self.active).map(|tab| tab.focused);
+                    let active = self.window.focused();
                     let mut output = format!(
                         "WINDOW {}\nPANE\tACTIVE\tDAEMON\tSESSION\n",
                         self.control.window
@@ -801,7 +787,7 @@ impl App {
                     ssh,
                     session,
                 } => {
-                    let id = pane.or_else(|| self.tabs.get(self.active).map(|tab| tab.focused));
+                    let id = pane.or_else(|| self.window.focused());
                     let Some((id, pane)) =
                         id.and_then(|id| self.panes.get(&id).map(|pane| (id, pane)))
                     else {
@@ -883,28 +869,24 @@ impl App {
     }
 
     fn searching(&self) -> bool {
-        self.tabs
-            .get(self.active)
-            .and_then(|tab| self.panes.get(&tab.focused))
+        self.window
+            .focused()
+            .and_then(|id| self.panes.get(&id))
             .is_some_and(|pane| pane.search_open)
     }
 
     fn open_search(&mut self) {
-        if let Some(pane) = self
-            .tabs
-            .get(self.active)
-            .and_then(|tab| self.panes.get_mut(&tab.focused))
-        {
+        if let Some(pane) = self.window.focused().and_then(|id| self.panes.get_mut(&id)) {
             pane.search_open = true;
             pane.search_focus = true;
         }
     }
 
     fn search_bar(&mut self, ui: &mut egui::Ui) {
-        let Some(tab) = self.tabs.get(self.active) else {
+        let Some(focused) = self.window.focused() else {
             return;
         };
-        let pane = self.panes.get_mut(&tab.focused).unwrap();
+        let pane = self.panes.get_mut(&focused).unwrap();
         if !pane.search_open {
             return;
         }
@@ -919,7 +901,7 @@ impl App {
             let entry = ui.add_sized(
                 [entry_width, crate::theme::ui_extent(ui.style(), 30.0)],
                 egui::TextEdit::singleline(&mut pane.search_query)
-                    .id_salt(("scrollback-query", tab.focused))
+                    .id_salt(("scrollback-query", focused))
                     .hint_text("Search scrollback")
                     .align(egui::Align2::LEFT_CENTER)
                     .desired_width(entry_width)
@@ -1002,7 +984,10 @@ impl App {
                 },
             ),
             TerminalAction::Scroll(step) => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 let state = pane.session.state.lock().unwrap();
                 if state.lifecycle.is_live()
                     && let Some(request) = state.scroll_action(step)
@@ -1015,7 +1000,10 @@ impl App {
                 self.open_search()
             }
             TerminalAction::ScrollToPrompt(direction) => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 let state = pane.session.state.lock().unwrap();
                 if state.lifecycle.is_live() && !state.screen.alt_screen() {
                     pane.selection = None;
@@ -1126,13 +1114,13 @@ impl App {
             Action::AttachSession => self.picker.open(&self.runtime, ctx),
             Action::ChangeFontSize => self.font_size_open = true,
             Action::FontScale(scale) => {
-                self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
-                    self.font_size * scale,
+                self.window.font_size = felis_client_core::config::FontConfig::clamped_font_size(
+                    self.window.font_size * scale,
                     0.0,
                 )
             }
             Action::FontReset => {
-                self.font_size =
+                self.window.font_size =
                     crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
             }
             Action::Paste => {
@@ -1141,7 +1129,10 @@ impl App {
                 // input and would make the delivered clipboard event stale.
                 self.picker.visible = false;
                 self.workspaces_open = false;
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 if pane.search_open {
                     pane.close_search();
                 }
@@ -1158,7 +1149,7 @@ impl App {
                 }
             }
             Action::Copy => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self.panes.get_mut(&self.window.active_tab().focused).unwrap();
                 let state = pane.session.state.lock().unwrap();
                 expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
                 if let Some(selection) = pane.selection {
@@ -1166,14 +1157,14 @@ impl App {
                 }
             }
             Action::Focus(direction) => {
-                let tab = &mut self.tabs[self.active];
+                let tab = self.window.active_tab_mut();
                 if let Some(id) = tab.layout.neighbor(tab.focused, direction) {
                     tab.focus(id);
                 }
             }
             Action::NewTab => self.add_tab(ctx, None),
             Action::Split(axis) => {
-                let source = self.tabs[self.active].focused;
+                let source = self.window.active_tab().focused;
                 let cwd = self.panes[&source]
                     .session
                     .state
@@ -1185,7 +1176,7 @@ impl App {
                     .filter(|path| !path.is_empty());
                 let target = self.panes[&source].session.target.clone();
                 let id = self.add_pane(ctx, None, cwd, target);
-                let tab = &mut self.tabs[self.active];
+                let tab = self.window.active_tab_mut();
                 let split = tab.layout.split(source, id, axis);
                 // Validation keeps a tab's focused pane in its layout, so this
                 // is a broken invariant. Release builds drop the pane to keep
@@ -1197,28 +1188,24 @@ impl App {
                     self.panes.remove(&id);
                 }
             }
-            Action::ClosePane => self.close_pane(ctx, self.tabs[self.active].focused),
+            Action::ClosePane => self.close_pane(ctx, self.window.active_tab().focused),
             Action::CloseTab => {
-                let tab = self.tabs.remove(self.active);
+                let tab = self.window.close_active_tab();
                 for id in tab.layout.panes() {
                     self.panes.remove(&id);
                 }
-                if self.tabs.is_empty() {
+                if self.window.tabs.is_empty() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                } else {
-                    self.active = self.active.min(self.tabs.len() - 1);
                 }
             }
             Action::NextPane => {
-                let tab = &mut self.tabs[self.active];
+                let tab = self.window.active_tab_mut();
                 let ids = tab.layout.panes();
                 let pos = ids.iter().position(|id| *id == tab.focused).unwrap_or(0);
                 tab.focus(ids[(pos + 1) % ids.len()]);
             }
-            Action::NextTab => self.active = (self.active + 1) % self.tabs.len(),
-            Action::PreviousTab => {
-                self.active = (self.active + self.tabs.len() - 1) % self.tabs.len()
-            }
+            Action::NextTab => self.window.cycle_tab(true),
+            Action::PreviousTab => self.window.cycle_tab(false),
         }
     }
 }
@@ -1278,7 +1265,7 @@ impl App {
         for id in closed {
             self.close_pane(ctx, id);
         }
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             egui::CentralPanel::default().show(root_ui, |_| {});
             if let Some(id) = self.picker.show(&self.runtime, ctx) {
                 self.add_tab(ctx, Some(id));
@@ -1310,7 +1297,7 @@ impl App {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
             for action in actions {
                 self.action(ctx, action);
-                if self.tabs.is_empty() {
+                if self.window.tabs.is_empty() {
                     return;
                 }
             }
@@ -1377,9 +1364,9 @@ impl App {
                                 ] {
                                     state.corner_radius = egui::CornerRadius::same(5);
                                 }
-                                let mut rects = Vec::with_capacity(self.tabs.len());
+                                let mut rects = Vec::with_capacity(self.window.tabs.len());
                                 let mut dragged = None;
-                                for (i, tab) in self.tabs.iter().enumerate() {
+                                for (i, tab) in self.window.tabs.iter().enumerate() {
                                     let title = self.panes[&tab.focused]
                                         .session
                                         .state
@@ -1389,10 +1376,10 @@ impl App {
                                         .title()
                                         .unwrap_or(&tab.name)
                                         .to_owned();
-                                    let selected = self.active == i;
+                                    let selected = self.window.active == i;
                                     let response = crate::theme::tab_button(ui, &title, selected);
                                     if response.clicked() {
-                                        self.active = i;
+                                        self.window.active = i;
                                     }
                                     if response.dragged() || response.drag_stopped() {
                                         dragged = Some((i, response.drag_stopped()));
@@ -1404,8 +1391,7 @@ impl App {
                                 {
                                     let to = tab_drop_slot(&rects, pointer.x);
                                     if released {
-                                        self.active =
-                                            move_tab(&mut self.tabs, self.active, from, to);
+                                        self.window.move_tab(from, to);
                                     } else {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                                         // Dropping beside the dragged tab changes nothing.
@@ -1448,7 +1434,7 @@ impl App {
         if let Some(action) = action {
             self.action(ctx, action);
         }
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             return;
         }
         let modal = paste_pending
@@ -1469,21 +1455,22 @@ impl App {
                     terminal_focus_id(),
                     Sense::focusable_noninteractive(),
                 );
-                let tab = &mut self.tabs[self.active];
+                let font_size = self.window.font_size;
+                let tab = self.window.active_tab_mut();
                 let previous = tab.focused;
                 draw_layout(
                     ui,
                     &mut tab.layout,
                     &mut self.panes,
                     &mut tab.focused,
-                    self.font_size,
+                    font_size,
                     !modal,
                 );
                 if tab.focused != previous {
                     tab.focus(tab.focused);
                 }
             });
-        let focused = self.tabs[self.active].focused;
+        let focused = self.window.active_tab().focused;
         let os_focused = ctx.input(|i| i.focused);
         for (&id, pane) in &mut self.panes {
             let desired = id == focused && os_focused && !modal;
@@ -1547,7 +1534,7 @@ impl App {
         }
         if self.palette {
             let prompt_unavailable = {
-                let state = self.panes[&self.tabs[self.active].focused]
+                let state = self.panes[&self.window.active_tab().focused]
                     .session
                     .state
                     .lock()
@@ -1571,7 +1558,7 @@ impl App {
             }
         }
         if self.font_size_open {
-            let (chosen, dismissed) = crate::font_size::show(ctx, self.font_size);
+            let (chosen, dismissed) = crate::font_size::show(ctx, self.window.font_size);
             self.font_size_open = !dismissed;
             if let Some(action) = chosen {
                 self.action(ctx, action);
@@ -2699,16 +2686,14 @@ mod tests {
                 vec![],
             )))
         };
-        let snapshot = |pane: &Pane| Snapshot {
-            tabs: vec![Tab {
-                name: "Terminal 1".into(),
-                layout: Layout::Pane(1),
-                focused: 1,
-                focus_history: vec![1],
-            }],
-            panes: [(1, pane.spec())].into(),
-            next_id: 2,
-            ..Default::default()
+        let snapshot = |pane: &Pane| {
+            let mut window = WindowLayout::default();
+            let id = window.allocate_pane();
+            window.open_tab(id);
+            Snapshot {
+                window,
+                panes: [(1, pane.spec())].into(),
+            }
         };
         let prefix = pane("abc");
         assert_eq!(prefix.spec().session, None);
@@ -3033,10 +3018,10 @@ mod tests {
         )
         .unwrap();
         pump(&mut app, &connected);
-        assert_eq!(app.font_size, 21.0);
-        app.font_size = 30.0;
+        assert_eq!(app.window.font_size, 21.0);
+        app.window.font_size = 30.0;
         app.action(&ctx, Action::FontReset);
-        assert_eq!(app.font_size, 21.0);
+        assert_eq!(app.window.font_size, 21.0);
         // Pasting from the palette must reach the terminal, whose paste any
         // window that blocks terminal input would otherwise discard.
         app.open_search();
@@ -3049,12 +3034,12 @@ mod tests {
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
         pump(&mut app, &connected);
-        app.active = 0;
-        app.tabs[0].focus(2);
-        if let Layout::Split { ratio, .. } = &mut app.tabs[0].layout {
+        app.window.active = 0;
+        app.window.tabs[0].focus(2);
+        if let Layout::Split { ratio, .. } = &mut app.window.tabs[0].layout {
             *ratio = 0.3;
         }
-        app.font_size = 18.0;
+        app.window.font_size = 18.0;
         let mut before = app.snapshot();
         let workspace_id = app.workspace_id;
         app.save_workspace(&ctx);
@@ -3073,11 +3058,11 @@ mod tests {
         )
         .unwrap();
         pump(&mut replacement, &connected);
-        assert_eq!(replacement.font_size, 30.0);
-        before.font_size = 30.0;
+        assert_eq!(replacement.window.font_size, 30.0);
+        before.window.font_size = 30.0;
         assert_eq!(replacement.workspace_id, workspace_id);
         assert_eq!(replacement.snapshot(), before);
-        assert_eq!(replacement.tabs.len(), 2);
+        assert_eq!(replacement.window.tabs.len(), 2);
         assert_eq!(replacement.panes.len(), 3);
 
         let id = workspace_id.unwrap();
@@ -3136,7 +3121,7 @@ mod tests {
         let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(
-            replacement.font_size, 30.0,
+            replacement.window.font_size, 30.0,
             "new workspaces use terminal config"
         );
         let other = replacement.workspace_id.unwrap();
@@ -3524,10 +3509,10 @@ mod tests {
             control,
             pending_attach: BTreeMap::new(),
             panes: BTreeMap::new(),
-            tabs: vec![],
-            active: 0,
-            next_id: 1,
-            font_size: 15.0,
+            window: WindowLayout {
+                font_size: 15.0,
+                ..Default::default()
+            },
             picker: SessionPicker::default(),
             shortcuts: Shortcuts::default(),
             palette: false,

@@ -61,9 +61,104 @@ pub enum PaneRemoval {
     Missing,
 }
 
+/// The tabs one window shows, independent of the sessions behind its panes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WindowLayout {
+    pub tabs: Vec<Tab>,
+    pub active: usize,
+    pub next_id: u64,
+    pub font_size: f32,
+}
+
+impl Default for WindowLayout {
+    fn default() -> Self {
+        Self {
+            tabs: vec![],
+            active: 0,
+            next_id: 1,
+            font_size: felis_render_wgpu::DEFAULT_FONT_SIZE_LOGICAL_PX,
+        }
+    }
+}
+
+impl WindowLayout {
+    /// Panics without tabs; a window closes with its last tab.
+    pub fn active_tab(&self) -> &Tab {
+        &self.tabs[self.active]
+    }
+
+    /// Panics without tabs; a window closes with its last tab.
+    pub fn active_tab_mut(&mut self) -> &mut Tab {
+        &mut self.tabs[self.active]
+    }
+
+    pub fn focused(&self) -> Option<u64> {
+        self.tabs.get(self.active).map(|tab| tab.focused)
+    }
+
+    pub fn allocate_pane(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// Appends a tab holding only `pane` and activates it.
+    pub fn open_tab(&mut self, pane: u64) {
+        self.tabs.push(Tab {
+            name: format!("Terminal {pane}"),
+            layout: Layout::Pane(pane),
+            focused: pane,
+            focus_history: vec![pane],
+        });
+        self.active = self.tabs.len() - 1;
+    }
+
+    /// Removes `pane` and, when it was the last one, its tab. Returns false
+    /// when no tab holds it.
+    pub fn close_pane(&mut self, pane: u64) -> bool {
+        let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.layout.panes().contains(&pane))
+        else {
+            return false;
+        };
+        if self.tabs[index].remove_pane(pane) == PaneRemoval::LastPane {
+            self.tabs.remove(index);
+            if index < self.active {
+                self.active -= 1;
+            }
+            self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        }
+        true
+    }
+
+    /// Panics without tabs; a window closes with its last tab.
+    pub fn close_active_tab(&mut self) -> Tab {
+        let tab = self.tabs.remove(self.active);
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        tab
+    }
+
+    pub fn cycle_tab(&mut self, forward: bool) {
+        let len = self.tabs.len();
+        self.active = if forward {
+            (self.active + 1) % len
+        } else {
+            (self.active + len - 1) % len
+        };
+    }
+
+    /// Moves `tabs[from]` into the gap before `tabs[to]`, keeping the same
+    /// tab active.
+    pub fn move_tab(&mut self, from: usize, to: usize) {
+        self.active = move_tab(&mut self.tabs, self.active, from, to);
+    }
+}
+
 /// Moves `tabs[from]` into the gap before `tabs[to]` (`to == tabs.len()` means
 /// the end) and returns the index of the tab that was at `active`.
-pub fn move_tab(tabs: &mut Vec<Tab>, active: usize, from: usize, to: usize) -> usize {
+fn move_tab(tabs: &mut Vec<Tab>, active: usize, from: usize, to: usize) -> usize {
     let dest = if to > from { to - 1 } else { to };
     let tab = tabs.remove(from);
     tabs.insert(dest, tab);
@@ -84,39 +179,29 @@ pub struct PaneSpec {
     pub session: Option<crate::session::SessionId>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
-    pub tabs: Vec<Tab>,
+    #[serde(flatten)]
+    pub window: WindowLayout,
     pub panes: std::collections::BTreeMap<u64, PaneSpec>,
-    pub active: usize,
-    pub next_id: u64,
-    pub font_size: f32,
-}
-
-impl Default for Snapshot {
-    fn default() -> Self {
-        Self {
-            tabs: vec![],
-            panes: Default::default(),
-            active: 0,
-            next_id: 1,
-            font_size: felis_render_wgpu::DEFAULT_FONT_SIZE_LOGICAL_PX,
-        }
-    }
 }
 
 impl Snapshot {
     pub fn validate(&self) -> anyhow::Result<()> {
         use anyhow::ensure;
         use std::collections::BTreeSet;
+        let window = &self.window;
         ensure!(
-            self.font_size.is_finite()
+            window.font_size.is_finite()
                 && (felis_client_core::config::MIN_FONT_SIZE_LOGICAL_PX
                     ..=felis_client_core::config::MAX_FONT_SIZE_LOGICAL_PX)
-                    .contains(&self.font_size),
+                    .contains(&window.font_size),
             "invalid font size"
         );
-        ensure!(self.active < self.tabs.len().max(1), "invalid active tab");
+        ensure!(
+            window.active < window.tabs.len().max(1),
+            "invalid active tab"
+        );
         fn valid_layout(layout: &Layout) -> bool {
             match layout {
                 Layout::Pane(_) => true,
@@ -134,7 +219,7 @@ impl Snapshot {
             }
         }
         let mut ids = BTreeSet::new();
-        for tab in &self.tabs {
+        for tab in &window.tabs {
             ensure!(valid_layout(&tab.layout), "invalid split layout");
             let panes = tab.layout.panes();
             ensure!(panes.contains(&tab.focused), "focused pane is missing");
@@ -153,7 +238,7 @@ impl Snapshot {
             "layout and panes disagree"
         );
         ensure!(
-            self.next_id > ids.last().copied().unwrap_or(0),
+            window.next_id > ids.last().copied().unwrap_or(0),
             "invalid next pane ID"
         );
         for pane in self.panes.values() {
@@ -246,6 +331,100 @@ mod tests {
                 .to_string(),
             "0000000000000000000000000000000a"
         );
+    }
+
+    fn split_tab() -> Tab {
+        let mut layout = Layout::Pane(1);
+        layout.split(1, 2, crate::layout::Axis::Horizontal);
+        layout.split(2, 3, crate::layout::Axis::Vertical);
+        Tab {
+            name: "test".into(),
+            layout,
+            focused: 1,
+            focus_history: vec![1],
+        }
+    }
+
+    #[test]
+    fn closing_focused_panes_retraces_tab_focus_history() {
+        let mut tab = split_tab();
+        tab.focus(3);
+        tab.focus(2);
+        tab.focus(3);
+        assert!(tab.remove_pane(3));
+        assert_eq!(tab.focused, 2);
+        assert!(tab.remove_pane(2));
+        assert_eq!(tab.focused, 1);
+        assert!(!tab.remove_pane(1));
+    }
+
+    #[test]
+    fn closing_background_panes_prunes_only_their_tabs_history() {
+        let mut tab = split_tab();
+        let mut other = split_tab();
+        tab.focus(2);
+        tab.focus(3);
+        other.focus(2);
+        assert!(tab.remove_pane(2));
+        assert_eq!(tab.focused, 3);
+        assert!(tab.remove_pane(3));
+        assert_eq!(tab.focused, 1);
+        assert_eq!(other.focused, 2);
+        assert_eq!(other.focus_history, vec![1, 2]);
+    }
+
+    fn window(panes: u64) -> WindowLayout {
+        let mut window = WindowLayout::default();
+        for _ in 0..panes {
+            let id = window.allocate_pane();
+            window.open_tab(id);
+        }
+        window
+    }
+
+    #[test]
+    fn opened_tabs_take_fresh_pane_ids_and_become_active() {
+        let window = window(3);
+        assert_eq!(
+            names(&window.tabs),
+            ["Terminal 1", "Terminal 2", "Terminal 3"]
+        );
+        assert_eq!(window.active, 2);
+        assert_eq!(window.focused(), Some(3));
+        assert_eq!(window.next_id, 4);
+    }
+
+    #[test]
+    fn closing_a_tabs_last_pane_keeps_the_same_tab_active() {
+        let mut window = window(3);
+        window.active = 2;
+        assert!(window.close_pane(1));
+        assert_eq!(window.focused(), Some(3));
+        assert!(window.close_pane(3));
+        assert_eq!(window.focused(), Some(2));
+        assert!(!window.close_pane(3), "pane is already gone");
+        assert!(window.close_pane(2));
+        assert!(window.tabs.is_empty());
+        assert_eq!(window.focused(), None);
+    }
+
+    #[test]
+    fn closing_the_active_tab_activates_its_right_neighbor_or_the_last_tab() {
+        let mut window = window(3);
+        window.active = 1;
+        assert_eq!(window.close_active_tab().name, "Terminal 2");
+        assert_eq!(window.focused(), Some(3));
+        assert_eq!(window.close_active_tab().name, "Terminal 3");
+        assert_eq!(window.focused(), Some(1));
+    }
+
+    #[test]
+    fn cycling_tabs_wraps_around() {
+        let mut window = window(3);
+        window.cycle_tab(true);
+        assert_eq!(window.active, 0);
+        window.cycle_tab(false);
+        assert_eq!(window.active, 2);
     }
 
     #[test]
