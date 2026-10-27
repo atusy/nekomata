@@ -5,6 +5,11 @@ edition = "2024"
 license = "Apache-2.0"
 description = "A tabbed and split-pane GUI for felis sessions"
 
+[workspace]
+# The vendored renderer is a member so its upstream unit tests, including
+# those of nekomata's embedding patch, run with `cargo test --workspace`.
+members = ["vendor/felis-render-wgpu"]
+
 [dependencies]
 anyhow = "1"
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "persistence", "wgpu", "wayland", "x11"] }

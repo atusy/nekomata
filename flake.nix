@@ -33,6 +33,31 @@
             pkgs.lib.makeLibraryPath [ pkgs.fontconfig ]
           }''${${variable}:+:''$${variable}}"
         '';
+      # The pinned font set felis's dev shell names in FELIS_TEST_FONT_DIR
+      # (felis dev/flake-module.nix testFonts); its renderer tests require it.
+      felisTestFonts =
+        pkgs:
+        pkgs.runCommand "felis-test-fonts" { nativeBuildInputs = [ pkgs.python3Packages.fonttools ]; } ''
+          mkdir -p $out/share/fonts/opentype $out/share/fonts/truetype
+          for family in Neon Argon ArgonNF Xenon; do
+            for face in ${pkgs.monaspace}/share/fonts/opentype/Monaspace$family-*.otf; do
+              case "$face" in
+                *Wide*) ;;
+                *) cp "$face" $out/share/fonts/opentype/ ;;
+              esac
+            done
+          done
+          cp ${pkgs.monaspace}/share/fonts/truetype/MonaspaceNeonFrozen-{Regular,Bold,Italic,BoldItalic,WideRegular}.ttf \
+            "${pkgs.monaspace}/share/fonts/truetype/Monaspace Neon Var.ttf" \
+            $out/share/fonts/truetype/
+          cp ${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols.ttf $out/share/fonts/
+          cp ${pkgs.noto-fonts}/share/fonts/noto/NotoSansSymbols2-Regular.otf $out/share/fonts/
+          cp ${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf $out/share/fonts/
+          pyftsubset ${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc \
+            --font-number=0 --unicodes=U+845B,U+E0100-E0101 --output-file=$out/share/fonts/NotoSansCJKjp-Kuzu.otf
+          pyftsubset ${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc \
+            --font-number=2 --unicodes=U+845B,U+E0100-E0101 --output-file=$out/share/fonts/NotoSansCJKsc-Kuzu.otf
+        '';
       # Crane inputs shared by the package and the Cargo checks, so they reuse
       # one dependency build.
       rustBuild =
@@ -241,6 +266,27 @@
             }
           );
           fmt = craneLib.cargoFmt { inherit (common) src; };
+          # nekomata's embedding patch lives in the vendored renderer, whose
+          # upstream tests read the pinned fonts and the golden fixtures that
+          # are not vendored; both come from the pinned felis source.
+          felis-render-wgpu = craneLib.cargoTest (
+            common
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs =
+                "-p felis-render-wgpu --lib"
+                # Upstream pins its golden instance buffers on Linux only; on
+                # macOS they diverge even in the upstream checkout.
+                + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin " -- --skip row_cache::golden_tests";
+              FELIS_TEST_FONT_DIR = "${felisTestFonts pkgs}/share/fonts";
+              preCheck = ''
+                mkdir -p vendor/felis-render-wgpu/tests
+                cp -r ${felis}/crates/felis-render-wgpu/tests/fixtures vendor/felis-render-wgpu/tests/
+                chmod -R u+w vendor/felis-render-wgpu/tests
+              '';
+              doInstallCargoArtifacts = false;
+            }
+          );
           felis-revision =
             pkgs.runCommand "nekomata-felis-revision"
               {
