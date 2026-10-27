@@ -14,6 +14,14 @@ settings.
 
 Not supported: key release events and OSC 52 clipboard reads.
 
+## Keyboard input
+
+- Ctrl or Alt with a character key sends the key's unshifted ASCII character
+  with those modifiers (Ctrl+- sends `-`, Ctrl+' sends `'`); felis encodes it
+  for the program, as a control byte where one exists, or as an escape
+  sequence when the program enables modifyOtherKeys or the Kitty keyboard
+  protocol. Keys that name no character, such as Copy, are not sent.
+
 ## OSC 52 clipboard writes
 
 A program's OSC 52 write reaches the system clipboard only when felis's

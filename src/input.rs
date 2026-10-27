@@ -128,7 +128,7 @@ fn physical_key(key: egui::Key, mods: egui::Modifiers, has_text: bool) -> Option
     if let Some(named) = named {
         Some(Key::Named(named))
     } else if mods.ctrl || (mods.alt && !has_text) {
-        Some(Key::Character(key_character(key)))
+        key_char(key).map(|character| Key::Character(character.into()))
     } else {
         None
     }
@@ -153,10 +153,6 @@ pub fn key_char(key: egui::Key) -> Option<char> {
     }
 }
 
-fn key_character(key: egui::Key) -> String {
-    key.symbol_or_name().to_lowercase()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,7 +167,35 @@ mod tests {
 
     #[test]
     fn control_bracket_keeps_the_character_needed_for_escape() {
-        assert_eq!(key_character(egui::Key::OpenBracket), "[");
+        assert_eq!(
+            physical_key(egui::Key::OpenBracket, egui::Modifiers::CTRL, false),
+            Some(Key::Character("[".into()))
+        );
+    }
+
+    #[test]
+    fn control_punctuation_names_the_ascii_key() {
+        for (key, character) in [(egui::Key::Minus, "-"), (egui::Key::Quote, "'")] {
+            assert_eq!(
+                physical_key(key, egui::Modifiers::CTRL, false),
+                Some(Key::Character(character.into())),
+                "{key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn modified_keys_send_only_single_ascii_characters() {
+        for key in egui::Key::ALL {
+            if let Some(Key::Character(character)) =
+                physical_key(*key, egui::Modifiers::CTRL, false)
+            {
+                assert!(
+                    character.len() == 1 && character.is_ascii(),
+                    "{key:?} sends {character:?}"
+                );
+            }
+        }
     }
 
     #[test]
