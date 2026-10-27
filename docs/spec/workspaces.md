@@ -56,7 +56,8 @@ size (see [configuration](configuration.md#font-size-precedence)).
 
 - The GUI sends layout snapshots to the daemon as the layout changes.
 - Closing a window saves its layout and detaches the workspace, waiting up to
-  6 seconds for the daemon to acknowledge. If saving fails or times out, the
+  6 seconds in total for the daemon to acknowledge, including layout changes
+  still queued ahead of it; the window stops responding meanwhile. If saving fails or times out, the
   GUI reports it on standard error and exits anyway. A window closed during a
   workspace switch detaches without saving; one closed while it has lost the
   daemon exits without saving.
@@ -107,8 +108,8 @@ notices even while idle, keeps its tabs, panes and shells, and shows the
 error with a button to reconnect at once. Until it reconnects, layout changes
 reach no daemon. It reconnects on its own after 1 second, doubling the delay
 after each failed attempt up to 30 seconds, and starts the daemon if none is
-running. It does not reconnect on its own while a switch is pending or after
-the daemon refuses it, for example for an incompatible protocol version.
+running. It does not reconnect on its own after the daemon refuses it, for
+example for an incompatible protocol version.
 
 On reconnecting, the window attaches a workspace and saves its current layout
 there:

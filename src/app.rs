@@ -1555,6 +1555,9 @@ impl eframe::App for App {
     fn persist_egui_memory(&self) -> bool {
         false
     }
+    // Blocks the GUI thread: eframe tears the window down as soon as this
+    // returns, so the final save must finish here. `close` bounds the wait
+    // by `CLOSE_DEADLINE`, after which the lease ends with the connection.
     fn on_exit(&mut self) {
         if let Some(client) = &self.workspace {
             if client.is_closed() {
