@@ -316,10 +316,11 @@ impl Drop for Session {
 
 /// The text an OSC 52 write puts on the system clipboard, if any.
 ///
-/// Mirrors felis-client: program writes reach the system clipboard only with
+/// Follows felis-client: program writes reach the system clipboard only with
 /// `clipboard.osc_52 = "system"`, and never when `use_os_clipboard = false`
 /// keeps felis off the system clipboard. Under the default `mirror` policy
 /// the daemon's mirror still answers the program's own OSC 52 queries.
+/// Unlike felis-client, PRIMARY (`p`) writes are never applied.
 fn system_clipboard_text(
     write: &felis_protocol::messages::ClipboardWrite,
     config: &felis_client_core::config::ClipboardConfig,
@@ -1304,7 +1305,7 @@ mod tests {
             ops.spawn_session(SpawnArgs {
                 command: "bash".into(),
                 args: vec!["--noprofile".into(), "--norc".into(), "-c".into(),
-                    r#"read -r line; printf '\033]52;c;TkVLT01BVEFfQ0xJUEJPQVJECg==\007'; printf 'OSC52_%s\n' DONE; read -r line"#.into()],
+                    r#"read -r line; printf '\033]52;c;TkVLT01BVEFfQ0xJUEJPQVJECg==\007'; printf 'OSC52_%s\n' WRITTEN; read -r line; printf 'OSC52_%s\n' DONE; read -r line"#.into()],
                 env_base: felis_client_core::env_base::capture(), ..Default::default()
             }).await.unwrap().id
         });
