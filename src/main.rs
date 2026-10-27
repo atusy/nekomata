@@ -18,6 +18,7 @@ mod picker;
 mod presentation;
 mod rectangle;
 mod render;
+mod selection;
 mod session;
 mod shortcuts;
 mod ssh;

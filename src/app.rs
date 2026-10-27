@@ -23,6 +23,8 @@ struct Pane {
     session: Arc<Session>,
     dims: (u16, u16),
     selection: Option<Selection>,
+    /// The session's `selection_epoch` that `selection` was made against.
+    selection_epoch: u64,
     reported_focus: Option<bool>,
     scroll_remainder: f32,
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
@@ -46,11 +48,22 @@ struct Pane {
 }
 
 impl Pane {
+    /// Drops a selection whose cells a grid change has since replaced, so a
+    /// copy never extracts text from a screen the user did not select on.
+    fn expire_selection(&mut self) {
+        let epoch = self.session.state.lock().unwrap().selection_epoch;
+        if self.selection_epoch != epoch {
+            self.selection_epoch = epoch;
+            self.selection = None;
+        }
+    }
+
     fn from_session(session: Arc<Session>) -> Self {
         Self {
             session,
             dims: (0, 0),
             selection: None,
+            selection_epoch: 0,
             reported_focus: None,
             scroll_remainder: 0.0,
             mouse_capture: None,
@@ -1142,7 +1155,8 @@ impl App {
                 }
             }
             Action::Copy => {
-                let pane = &self.panes[&self.tabs[self.active].focused];
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                pane.expire_selection();
                 if let Some(selection) = pane.selection {
                     let state = pane.session.state.lock().unwrap();
                     ctx.copy_text(selection.extract_text(state.screen.screen()));
@@ -1499,6 +1513,7 @@ impl App {
         }
         if !modal {
             let pane = self.panes.get_mut(&focused).unwrap();
+            pane.expire_selection();
             terminal_input(
                 ctx,
                 &mut pane.selection,
@@ -1911,6 +1926,7 @@ fn draw_pane(
         pane.mouse_capture = None;
         pane.link_capture = Default::default();
     }
+    pane.expire_selection();
     let rect = ui.max_rect().shrink(2.0);
     let response = ui.interact(rect, ui.scope_id().with(id), Sense::click_and_drag());
     if response.clicked() || response.drag_started() {
@@ -2570,6 +2586,35 @@ mod tests {
                 "{event:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_grid_change_under_the_selection_drops_it_before_copy() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // This current-thread runtime is never driven: no daemon is contacted.
+        let session = Arc::new(Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-nekomata-test.sock".into()),
+            None,
+            None,
+            vec![],
+        ));
+        let mut pane = Pane::from_session(session);
+        let selection = Some(Selection::new(GridPos { row: 0, col: 1 }));
+        pane.selection = selection;
+        pane.expire_selection();
+        assert_eq!(pane.selection, selection, "nothing moved yet");
+        pane.session.state.lock().unwrap().selection_epoch += 1;
+        pane.expire_selection();
+        assert_eq!(pane.selection, None);
+        // A selection made on the new screen stays.
+        pane.selection = selection;
+        pane.expire_selection();
+        assert_eq!(pane.selection, selection);
     }
 
     #[test]

@@ -99,6 +99,8 @@ pub struct State {
     pub detached: bool,
     pub exited: bool,
     pub clipboard: Option<String>,
+    /// Advances whenever a grid change moves the cells a selection covers.
+    pub selection_epoch: u64,
 }
 
 impl State {
@@ -141,7 +143,17 @@ impl State {
         clipboard: &felis_client_core::config::ClipboardConfig,
     ) -> Result<()> {
         self.pull.on_frame(msg);
+        let alt_screen_before = self.screen.alt_screen();
+        let viewport_before = (self.screen.viewport(), self.screen.viewport_anchor());
         self.screen.apply(msg)?;
+        if crate::selection::grid_change_invalidates_selection(
+            msg,
+            alt_screen_before,
+            self.screen.alt_screen(),
+            viewport_before,
+        ) {
+            self.selection_epoch += 1;
+        }
         self.redraw.request();
         self.colors.apply_grid(msg);
         if matches!(msg, GridMsg::RehydrateBegin) {
@@ -266,6 +278,7 @@ impl Session {
             detached: false,
             exited: false,
             clipboard: None,
+            selection_epoch: 0,
         }));
         let search =
             crate::terminal_search::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
@@ -670,7 +683,71 @@ mod tests {
             detached: false,
             exited: false,
             clipboard: None,
+            selection_epoch: 0,
         }
+    }
+
+    fn mode_flags(alt_screen: bool) -> GridMsg {
+        GridMsg::ModeFlags {
+            bracketed_paste: false,
+            alt_screen,
+            mouse_protocol: Default::default(),
+            application_cursor: false,
+            modify_other_keys: Default::default(),
+            application_keypad: false,
+            win32_input_mode: false,
+            reverse_video: false,
+        }
+    }
+
+    #[test]
+    fn switching_screens_invalidates_the_selection() {
+        let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        state
+            .apply_grid(&mode_flags(true), &Default::default())
+            .unwrap();
+        assert_eq!(state.selection_epoch, 1);
+        // `ModeFlags` resends an unchanged alt-screen bit with other modes.
+        state
+            .apply_grid(&mode_flags(true), &Default::default())
+            .unwrap();
+        assert_eq!(state.selection_epoch, 1);
+        state
+            .apply_grid(&mode_flags(false), &Default::default())
+            .unwrap();
+        assert_eq!(state.selection_epoch, 2);
+    }
+
+    #[test]
+    fn moving_the_viewport_invalidates_the_selection() {
+        let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        // Output pushed two rows and the view followed them: same lines.
+        state
+            .apply_grid(
+                &GridMsg::ViewportState {
+                    lines_from_bottom: 12,
+                    max: 126,
+                    anchor: Some(felis_protocol::messages::ViewportAnchor {
+                        pushed: 44,
+                        generation: 1,
+                    }),
+                },
+                &Default::default(),
+            )
+            .unwrap();
+        assert_eq!(state.selection_epoch, 0);
+        // A scroll or search jump back to live shows other lines.
+        state
+            .apply_grid(
+                &GridMsg::ViewportState {
+                    lines_from_bottom: 0,
+                    max: 126,
+                    anchor: None,
+                },
+                &Default::default(),
+            )
+            .unwrap();
+        assert_eq!(state.selection_epoch, 1);
     }
 
     #[test]
