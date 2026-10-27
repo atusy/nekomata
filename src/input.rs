@@ -98,7 +98,8 @@ pub fn translate(
 }
 
 /// The modifiers and repeat state of a key press that may have typed text:
-/// egui-winit queues no text for named keys or while Ctrl or Cmd is held.
+/// a character key, Space, or the ISO key egui names only by position.
+/// egui-winit queues no text for other keys or while Ctrl or Cmd is held.
 fn text_key(event: &egui::Event) -> Option<(egui::Modifiers, bool)> {
     match event {
         egui::Event::Key {
@@ -108,7 +109,8 @@ fn text_key(event: &egui::Event) -> Option<(egui::Modifiers, bool)> {
             repeat,
             ..
         } if !(modifiers.ctrl || modifiers.command || modifiers.mac_cmd)
-            && (*key == egui::Key::Space || key_char(*key).is_some()) =>
+            && (matches!(*key, egui::Key::Space | egui::Key::IntlBackslash)
+                || key_char(*key).is_some()) =>
         {
             Some((*modifiers, *repeat))
         }
@@ -342,8 +344,8 @@ mod tests {
 
     #[test]
     fn text_from_an_unnamed_key_is_not_paired_with_a_modifier_or_named_key() {
-        // egui reports modifier keys as keys but has no key for `<`, so the
-        // ISO key that types it yields text alone.
+        // egui reports modifier keys as keys but has no key for the JIS
+        // key that types `_`, so that key yields text alone.
         for before in [egui::Key::ShiftLeft, egui::Key::ArrowLeft] {
             let got = translate(
                 &[
@@ -354,7 +356,7 @@ mod tests {
                         repeat: true,
                         modifiers: egui::Modifiers::ALT,
                     },
-                    text("<"),
+                    text("_"),
                 ],
                 egui::Modifiers::SHIFT,
                 false,
@@ -363,8 +365,8 @@ mod tests {
             assert_eq!(
                 got.last(),
                 Some(&sent(
-                    character("<"),
-                    Some("<"),
+                    character("_"),
+                    Some("_"),
                     KeyMods::SHIFT,
                     KeyEventKind::Press
                 )),
@@ -373,9 +375,37 @@ mod tests {
         }
         let ctrl = egui::Modifiers::CTRL;
         assert_eq!(
-            translate(&[press(egui::Key::A, ctrl), text("<")], ctrl, false, false)[0],
+            translate(&[press(egui::Key::A, ctrl), text("_")], ctrl, false, false)[0],
             sent(character("a"), None, KeyMods::CTRL, KeyEventKind::Press),
             "a key that cannot have typed the text still reaches the program"
+        );
+    }
+
+    #[test]
+    fn text_from_the_iso_key_keeps_its_modifiers_and_repeat() {
+        let got = translate(
+            &[
+                egui::Event::Key {
+                    key: egui::Key::IntlBackslash,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: true,
+                    modifiers: egui::Modifiers::SHIFT,
+                },
+                text(">"),
+            ],
+            egui::Modifiers::ALT,
+            false,
+            false,
+        );
+        assert_eq!(
+            got,
+            [sent(
+                character(">"),
+                Some(">"),
+                KeyMods::SHIFT,
+                KeyEventKind::Repeat
+            )]
         );
     }
 
