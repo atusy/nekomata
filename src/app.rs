@@ -1789,13 +1789,15 @@ fn attach_result(
         Some(Err("request cancelled".into()))
     } else if !pane_open {
         Some(Err("pane closed during attach".into()))
-    } else if state.connected {
-        Some(Ok(format!("Attached pane {id}")))
     } else if state.error.is_some() || state.exited || state.detached {
+        // felis reports an eviction or exit before the connection closes, so
+        // `connected` may still be set.
         Some(Err(state
             .error
             .clone()
             .unwrap_or_else(|| "session ended during attach".into())))
+    } else if state.connected {
+        Some(Ok(format!("Attached pane {id}")))
     } else {
         None
     }
@@ -2718,6 +2720,36 @@ mod tests {
         let exact = pane(&full);
         assert_eq!(exact.spec().session, Some(crate::session::SessionId(7)));
         snapshot(&exact).validate().unwrap();
+    }
+
+    #[test]
+    fn an_attach_evicted_before_its_connection_closes_fails() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: the test sets the session state itself.
+        let session = Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-attach-test.sock".into()),
+            Some("abc".into()),
+            None,
+            vec![],
+        );
+        let mut state = session.state.lock().unwrap();
+        assert_eq!(attach_result(1, &state, true, false), None);
+        state.connected = true;
+        assert_eq!(
+            attach_result(1, &state, true, false),
+            Some(Ok("Attached pane 1".into()))
+        );
+        // felis evicts the attach; the connection has not been torn down yet.
+        state.detached = true;
+        assert_eq!(
+            attach_result(1, &state, true, false),
+            Some(Err("session ended during attach".into()))
+        );
     }
 
     #[test]
