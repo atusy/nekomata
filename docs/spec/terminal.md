@@ -28,6 +28,8 @@ Not supported: key release events and OSC 52 clipboard reads.
   application, through `xdg-open` on Linux (bundled with the Nix package).
 - A link that fails felis's validation is not opened; the reason is shown.
 - Plain URL text is not turned into links.
+- The modifier counts only without Alt, and on macOS only without Ctrl. It is
+  checked when the button is pressed; modifiers at release do not matter.
 
 ## Paste
 
@@ -57,10 +59,25 @@ Not supported: key release events and OSC 52 clipboard reads.
   `Regex` (default off).
 - Repeating a search with the same query and options moves to the next
   result; changing either searches again on the next move.
+- Enter in the search field moves to the next result and Shift+Enter to the
+  previous one, like the field's next and previous buttons.
+- A query holds at most 1,024 characters; further input is not accepted.
 - A search returns at most 1,000 results and 1 MiB of response data in total.
   A truncated result count is marked with `+`.
 - While the search field is open, keyboard input is not sent to the terminal
   (mouse input still is). Escape closes the field and its highlights.
+
+## Font size
+
+- The terminal font size applies to every pane of the window. Each larger or
+  smaller step multiplies or divides it by 1.1, whether it comes from felis's
+  `font_size` binding or the font size control, and the result is clamped to
+  4–72 logical pixels.
+- Reset returns to the resolved size described in
+  [configuration](configuration.md#font-size-precedence).
+- `Font: Change size…` opens the font size control, which shows the current
+  size with buttons to step and reset it; Up and Down arrows step it larger
+  and smaller.
 
 ## Rendering
 

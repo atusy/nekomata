@@ -62,18 +62,6 @@ adds only its application layer.
 - Shared code reduces duplication but does not guarantee faster rendering on
   every GPU adapter.
 
-## Decision–Implementation Gap
-
-Two pieces of terminal client policy are still nekomata's own copies:
-
-- **SSH connection and reconnection.** nekomata runs its own SSH relay and
-  redials through it, instead of felis's carrier and redial, because it must
-  keep ownership of the `ssh` child process across cancellation and
-  reconnects. The retry policy itself is still felis's.
-- **Scrollback search navigation.** nekomata keeps its own result list,
-  limits and viewport projection, mirroring the standalone felis GUI, because
-  felis's client libraries do not expose a search model.
-
 ## Related Decisions
 
 - [Keep workspaces in a daemon independent of GUI windows](20261023-120000-separate-workspaces-from-windows.md)

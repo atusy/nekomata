@@ -28,8 +28,9 @@ Every palette label is `Category: verb phrase`, such as `Tab: Switch to next`.
 
 - Labels alone no longer match every natural search phrase; matching relies on
   keywords.
-- Configuration values use the same words as labels, so the keymap's `split`
-  direction is `below` rather than `down`.
+- Keymap argument values use the same words as labels, so the `split`
+  direction is `below` rather than `down`. Binding `kind` names are
+  identifiers, not labels.
 
 ## Related Decisions
 

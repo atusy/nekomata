@@ -4,13 +4,18 @@
 
 nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The felis daemon owns shells, PTYs, terminal parsing, and persistent sessions.
 
-- `src/app.rs`: window UI and terminal rendering.
-- `src/session.rs`: asynchronous felis connections, input, and terminal state.
+- `src/main.rs`, `src/cli.rs`: entry point, window options, and command-line parsing.
+- `src/app.rs`: window UI — tabs, panes, overlays, and input dispatch.
+- `src/render.rs`, `src/presentation.rs`: composing felis's GPU renderer into egui, and native input and repaint deadlines adapted to felis presentation state.
+- `src/session.rs`, `src/ssh.rs`, `src/colors.rs`: asynchronous felis connections, ordered input and terminal state; the SSH relay; per-session color state.
+- `src/terminal_search.rs`, `src/links.rs`, `src/paste.rs`, `src/rectangle.rs`: scrollback search, OSC 8 link opening, paste confirmation, and rectangular selection.
 - `src/daemon.rs`, `src/workspace.rs`, `src/workspace_client.rs`: retained workspaces, versioned leases, and asynchronous layout synchronization.
 - `src/control.rs`: per-window CLI commands and workspace-aware window discovery.
 - `src/layout.rs`, `src/shortcuts.rs`: pane layout, navigation, and keyboard actions.
+- `src/command_palette.rs`, `src/font_size.rs`, `src/picker.rs`: the command registry and palette, the font size control, and the felis session picker.
 - `src/app_config.rs`, `src/ui_font.rs`: nekomata's own `config.toml` (UI font and application keymap) and UI font lookup; `src/terminal_config.rs` resolves felis's shared document.
-- `src/cli.rs`, `src/picker.rs`, `src/theme.rs`: workspace and pane commands, felis session picker, and shared colors.
+- `src/theme.rs`: shared UI colors, metrics, widget styles, and chrome fonts.
+- `src/test_support.rs`, `tests/support/`: CPU-only egui test helpers, and test-only renderer baselines, glyph checks and benchmarks included through `#[path]`.
 - `share/`: fish integration and macOS bundle metadata/native launcher.
 - `scripts/`: isolated integration tests and macOS installation.
 - `flake.nix`: packages, development environments, runtime fonts, and checks.
@@ -23,7 +28,7 @@ Write all documentation in English. Each kind of document has one home:
 - `README.md`: a short introduction for users; link to the manual for details.
 - `docs/manual/`: how to use nekomata, organized by user task. Summarize behavior and link to the spec for exact rules.
 - `docs/spec/`: normative observable behavior. Update it in the same commit as the behavior it describes.
-- `docs/ADR/`: architecture decisions only — ownership, boundaries, and their invariants — following `docs/ADR/template.md`. An ADR is a decision, not a description: record divergence from the code in its "Decision–Implementation Gap" section instead of rewriting the decision. Keep no status tables, validation logs, or change history; `git log` holds them. Delete a superseded ADR rather than renaming it with a `_` prefix.
+- `docs/ADR/`: architecture decisions only — ownership, boundaries, and their invariants — following `docs/ADR/template.md`. An ADR is a decision, not a description, and may diverge from the code: neither rewrite the decision to match nor record the divergence in the ADR; analyze a gap when it matters or file it as a GitHub issue. Keep no status tables, validation logs, or change history; `git log` holds them. Delete a superseded ADR rather than renaming it with a `_` prefix.
 - Other `docs/*.md` files are rendering and validation reports; they describe the code at the time they were written, not its current state: [rendering performance](docs/rendering-performance.md), [felis rendering reuse audit](docs/felis-rendering-reuse-audit.md), [Vitro validation](docs/vitro-rendering-validation.md), [native macOS validation](docs/native-rendering-validation.md) and [glyph placement](docs/glyph-placement-validation.md).
 
 ## Build, Test, and Development Commands

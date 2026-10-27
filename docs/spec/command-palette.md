@@ -25,7 +25,9 @@ Other commands act as soon as they are chosen, though one may still ask for
 confirmation.
 
 Keyboard shortcuts are documented in the manual; the palette has no shortcut
-help action.
+help action. A command bound in nekomata's own keymap shows its shortest
+binding at the right of its row; commands bound only in felis's keymap, such
+as copy, paste and font size, show none.
 
 `Session: Attach…` states that it opens a local daemon session in a new tab;
 it does not follow the active pane to a remote daemon.

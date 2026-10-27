@@ -12,9 +12,9 @@ change it while keeping every component's responsibility intact? If yes, it is
 spec or mechanism, not decision.
 
 An ADR is a decision, not a description of the current code. Do not rewrite it
-to follow the implementation. When the code diverges, state the divergence in
-"Decision–Implementation Gap". When the decision itself changes, write a new
-ADR and delete the old file.
+to follow the implementation, and do not record where the code diverges: such
+a gap is analyzed when it matters or filed as a GitHub issue. When the
+decision itself changes, write a new ADR and delete the old file.
 
 History is NOT recorded here. No status tables, implementation dates,
 validation logs, completion checklists or "renamed from" notes: every file in
@@ -50,10 +50,5 @@ Alternatives that were genuinely evaluated, and why each was or was not chosen.
 ## Consequences
 
 What becomes easier or harder as a result? Include negative consequences.
-
-## Decision–Implementation Gap
-
-<!-- Optional. Include ONLY when the implementation diverges from this
-decision: what is deferred, partial or done differently. -->
 
 ## Related Decisions
