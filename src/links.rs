@@ -13,6 +13,8 @@ use std::{
 /// pane busy forever.
 const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
 
+const BUSY: &str = "Still opening the previous link; click again when it finishes";
+
 #[derive(Default)]
 pub struct LinkGesture(Option<ActivationTarget>);
 
@@ -52,8 +54,13 @@ pub struct LinkOpener {
 }
 
 impl LinkOpener {
+    /// Queues `target` for the next tick. While a launcher still runs the
+    /// click is refused visibly rather than deferred: a deferred launch could
+    /// fire up to `OPENER_TIMEOUT` later, after the user has moved on.
     pub fn request(&mut self, target: ActivationTarget) {
-        if self.queued.is_none() && self.task.is_none() {
+        if self.task.is_some() {
+            self.error = Some(BUSY.into());
+        } else {
             self.queued = Some(target);
             self.error = None;
         }
@@ -464,6 +471,33 @@ mod tests {
             hint(&parse("https://example.org/"), false),
             "Ctrl+click to open"
         );
+    }
+
+    #[test]
+    fn a_click_while_a_link_is_opening_is_refused_visibly() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut opener = LinkOpener::default();
+        opener.request(parse("https://example.org/first"));
+        opener.request(parse("https://example.org/second"));
+        // Before any launcher starts, the latest click is the one queued.
+        assert_eq!(
+            opener.queued.as_ref().map(ActivationTarget::as_str),
+            Some("https://example.org/second")
+        );
+        opener.queued = None;
+        opener.task = Some(runtime.spawn(std::future::pending()));
+        opener.request(parse("https://example.org/third"));
+        assert!(opener.queued.is_none());
+        assert_eq!(opener.error.as_deref(), Some(BUSY));
+        *opener.result.lock().unwrap() = Some(Ok(()));
+        opener.tick(&runtime, &ctx);
+        assert!(opener.task.is_none());
+        assert_eq!(opener.error, None);
+        opener.request(parse("https://example.org/fourth"));
+        assert!(opener.queued.is_some());
     }
 
     #[test]

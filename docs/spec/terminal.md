@@ -49,6 +49,8 @@ daemon delivers each write to at most one window attached to the session.
   machine's hostname. A link to another host, a relative path or a missing
   file is not revealed; the reason is shown.
 - A link that fails felis's validation is not opened; the reason is shown.
+- While a pane's previous link is still opening (at most 10 seconds), a new
+  click is not deferred; the pane says the previous link is still opening.
 - Plain URL text is not turned into links.
 - The modifier counts only without Alt, and on macOS only without Ctrl. It is
   checked when the button is pressed; modifiers at release do not matter.
