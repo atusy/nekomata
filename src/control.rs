@@ -733,7 +733,10 @@ mod tests {
         );
         // Shells started before the token existed keep resolving by ID alone.
         assert_eq!(window_of_workspace(&workspaces, 1, None).unwrap(), 11);
-        assert!(window_of_workspace(&workspaces, 2, Some("current")).is_err());
+        let missing = window_of_workspace(&workspaces, 2, Some("current"))
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("no longer exists") && !missing.contains("restarted"));
         // An earlier daemon's shell may find an empty listing to compare with.
         assert!(
             window_of_workspace(&[], 1, Some("earlier"))
