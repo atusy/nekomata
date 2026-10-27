@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The staging directory is removed when the installer exits.
+# The staging directory is removed on exit unless `staging` is cleared first.
 prepare_staging() {
   staging=$(mktemp -d "$1/.nekomata-install.XXXXXX")
   trap remove_staging EXIT
@@ -23,8 +23,10 @@ replace_application() {
     mv "$application" "$staging/previous.app"
   fi
   if ! mv "$staging/nekomata.app" "$application"; then
-    if [[ -e "$staging/previous.app" ]]; then
-      mv "$staging/previous.app" "$application"
+    if [[ -e "$staging/previous.app" ]] && ! mv "$staging/previous.app" "$application"; then
+      # Removing staging now would delete the only copy of the previous app.
+      echo "Could not restore the previous app; it is kept at $staging/previous.app" >&2
+      staging=
     fi
     exit 1
   fi

@@ -43,6 +43,7 @@ cargo test --locked                        # Run ordinary Rust tests
 cargo fmt --check                          # Check Rust formatting
 cargo clippy --locked --all-targets -- -D warnings
 bash scripts/test-live.sh                   # Run isolated daemon integration tests
+bash scripts/test-install-macos.sh          # Test the macOS installer's app replacement
 ```
 
 Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` to run the package build and its Rust tests, rustfmt, clippy, vendored renderer tests, felis revision and fish integration checks. GitHub Actions (`.github/workflows/ci.yml`) runs `nix flake check` on x86_64-linux and aarch64-darwin for every pull request and push to `main`; live tests and native GUI checks are not part of it. Format Nix with `nix fmt -- flake.nix`.
