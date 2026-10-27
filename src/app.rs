@@ -1039,7 +1039,12 @@ impl App {
             let pending = pane.pending_paste.take().unwrap();
             let state = pane.session.state.lock().unwrap();
             if pending.is_current(state.connected, state.reconnects) {
-                pane.session.send(InputMsg::Paste(pending.into_bytes()));
+                drop(state);
+                send_to_program(
+                    &mut pane.selection,
+                    &pane.session,
+                    InputMsg::Paste(pending.into_bytes()),
+                );
             }
         } else if response.inner.1 || response.should_close() {
             pane.pending_paste = None;
@@ -2209,8 +2214,7 @@ fn terminal_input(
     for input in crate::input::translate(&events, mods, explicit_paste, cfg!(target_os = "macos")) {
         match input {
             TerminalInput::Control(bytes) => {
-                *selection = None;
-                session.send(InputMsg::KeyBytes(bytes));
+                send_to_program(selection, session, InputMsg::KeyBytes(bytes));
             }
             TerminalInput::Paste(text) => {
                 let state = session.state.lock().unwrap();
@@ -2226,7 +2230,7 @@ fn terminal_input(
                         *pending_paste = Some(pending);
                         break;
                     }
-                    Err(bytes) => session.send(InputMsg::Paste(bytes)),
+                    Err(bytes) => send_to_program(selection, session, InputMsg::Paste(bytes)),
                 }
             }
             TerminalInput::Copy => {
@@ -2235,17 +2239,23 @@ fn terminal_input(
                     ctx.copy_text(selection.extract_text(state.screen.screen()));
                 }
             }
-            TerminalInput::Commit(text) => session.send(InputMsg::KeyBytes(text.into_bytes())),
-            TerminalInput::Key(key) => {
-                *selection = None;
-                session.send(InputMsg::Viewport {
-                    lines_from_bottom: 0,
-                    anchor: None,
-                });
-                session.send(InputMsg::Key(key));
+            TerminalInput::Commit(text) => {
+                send_to_program(selection, session, InputMsg::KeyBytes(text.into_bytes()));
             }
+            TerminalInput::Key(key) => send_to_program(selection, session, InputMsg::Key(key)),
         }
     }
+}
+
+/// Input for the program shows the live screen it lands on, so a selection
+/// made while browsing no longer marks what is displayed.
+fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: InputMsg) {
+    *selection = None;
+    session.send(InputMsg::Viewport {
+        lines_from_bottom: 0,
+        anchor: None,
+    });
+    session.send(msg);
 }
 
 #[cfg(test)]
@@ -2341,6 +2351,68 @@ mod tests {
         pane.search_query.clear();
         pane.navigate_search(true);
         assert!(!pane.session.search.search.lock().unwrap().active);
+    }
+
+    #[test]
+    fn every_input_for_the_program_returns_to_the_live_view_and_clears_the_selection() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let live = InputMsg::Viewport {
+            lines_from_bottom: 0,
+            anchor: None,
+        };
+        let mut cases = vec![
+            (
+                egui::Event::Ime(egui::ImeEvent::Commit("あ".into())),
+                egui::Modifiers::NONE,
+                InputMsg::KeyBytes("あ".into()),
+            ),
+            (
+                egui::Event::Paste("plain".into()),
+                egui::Modifiers::NONE,
+                InputMsg::Paste(b"plain".to_vec()),
+            ),
+        ];
+        if !cfg!(target_os = "macos") {
+            cases.push((
+                egui::Event::Copy,
+                egui::Modifiers::CTRL,
+                InputMsg::KeyBytes(vec![3]),
+            ));
+        }
+        for (event, modifiers, expected) in cases {
+            let ctx = egui::Context::default();
+            // This current-thread runtime is never driven: no daemon is contacted.
+            let session = Session::start(
+                &runtime,
+                ctx.clone(),
+                Target::Local("/unused-nekomata-test.sock".into()),
+                None,
+                None,
+                vec![],
+            );
+            session.state.lock().unwrap().connected = true;
+            let mut selection = Some(Selection::new(GridPos { row: 0, col: 1 }));
+            let mut pending = None;
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![event.clone()],
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.ctx().input_mut(|input| input.modifiers = modifiers);
+                    terminal_input(ui.ctx(), &mut selection, &session, &mut pending, true)
+                },
+            );
+            assert_eq!(selection, None, "{event:?}");
+            assert!(
+                session.queued_exactly(&[live.clone(), expected]),
+                "{event:?}"
+            );
+        }
     }
 
     #[test]

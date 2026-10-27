@@ -27,6 +27,11 @@ Not supported: key release events and OSC 52 clipboard reads.
   with a named key like an arrow, or together with Ctrl or Cmd. felis's
   `window.macos_option_as_alt` is not applied.
 
+- Everything sent to the program from the keyboard or clipboard (keys,
+  committed IME text, pastes once sent, and the clipboard control bytes of
+  [keymap](keymap.md#clipboard-events)) returns the pane to the bottom of the
+  scrollback and clears the selection.
+
 ## OSC 52 clipboard writes
 
 A program's OSC 52 write reaches the system clipboard only when felis's
