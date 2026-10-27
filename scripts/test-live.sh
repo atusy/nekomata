@@ -42,6 +42,6 @@ exec felis-daemon relay --socket "$NEKOMATA_TEST_SOCKET" --no-spawn
 SSH
 chmod +x "$test_directory/bin/ssh"
 PATH="$test_directory/bin:$PATH" NEKOMATA_TEST_SSH=1 \
-  cargo test --locked live_ssh_carrier -- --ignored --nocapture
+  cargo test --locked live_ssh_carrier -- --ignored --nocapture --test-threads=1
 PATH="$test_directory/bin:$PATH" NEKOMATA_TEST_SSH=1 \
-  cargo test --locked live_pane_attach -- --ignored --nocapture
+  cargo test --locked live_pane_attach -- --ignored --nocapture --test-threads=1
