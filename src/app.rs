@@ -2632,7 +2632,7 @@ mod tests {
     }
 
     #[test]
-    fn an_advanced_selection_epoch_expires_the_pane_selection() { {
+    fn an_advanced_selection_epoch_expires_the_pane_selection() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
