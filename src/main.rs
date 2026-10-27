@@ -29,6 +29,7 @@ mod theme;
 mod ui_font;
 mod workspace;
 mod workspace_client;
+mod workspace_switch;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();

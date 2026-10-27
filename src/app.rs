@@ -16,6 +16,7 @@ use crate::{
     theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
     workspace::{PaneSpec, Snapshot, Tab, move_tab},
     workspace_client::{Client as WorkspaceClient, Command as WorkspaceCommand, Operation},
+    workspace_switch::{self, PaneStatus, Poll, Step, Switch as WorkspaceSwitch},
 };
 
 struct Pane {
@@ -149,15 +150,6 @@ struct PendingAttach {
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
-struct WorkspaceSwitch {
-    id: Option<u64>,
-    snapshot: Option<Snapshot>,
-    panes: BTreeMap<u64, Pane>,
-    committing: bool,
-    cancellation: Option<String>,
-    reply: Option<tokio::sync::oneshot::Sender<Reply>>,
-}
-
 pub struct App {
     workspace: Option<WorkspaceClient>,
     workspace_id: Option<u64>,
@@ -165,7 +157,7 @@ pub struct App {
     daemon_instance: Option<String>,
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
-    pending_workspace: Option<WorkspaceSwitch>,
+    pending_workspace: Option<WorkspaceSwitch<Pane>>,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
@@ -350,26 +342,14 @@ impl App {
                         continue;
                     }
                     if snapshot.tabs.is_empty() {
-                        snapshot.font_size =
-                            crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
-                        let pane = snapshot.next_id;
-                        snapshot.next_id += 1;
-                        snapshot.tabs.push(Tab {
-                            name: format!("Terminal {pane}"),
-                            layout: Layout::Pane(pane),
-                            focused: pane,
-                            focus_history: vec![pane],
-                        });
                         match Target::default_local() {
-                            Ok(target) => {
-                                snapshot.panes.insert(
-                                    pane,
-                                    PaneSpec {
-                                        target,
-                                        session: None,
-                                    },
-                                );
-                            }
+                            Ok(target) => workspace_switch::add_first_tab(
+                                &mut snapshot,
+                                crate::terminal_config::font_size(&crate::terminal_config::get(
+                                    ctx,
+                                )),
+                                target,
+                            ),
                             Err(error) => {
                                 self.cancel_workspace(error.to_string());
                                 continue;
@@ -405,60 +385,56 @@ impl App {
                         })
                         .collect();
                     if let Some(pending) = &mut self.pending_workspace {
-                        pending.id = Some(id);
-                        pending.snapshot = Some(snapshot);
-                        pending.panes = panes;
+                        pending.prepared(id, snapshot, panes);
                     }
                 }
-                (Operation::Finish, Ok(Payload::Done)) => {
-                    if let Some(pending) = self.pending_workspace.take() {
-                        if let Some(error) = pending.cancellation {
-                            if let Some(reply) = pending.reply {
-                                let _ = reply.send(Err(error.clone()));
-                            }
+                (Operation::Finish, result) => {
+                    let Some(pending) = self.pending_workspace.take() else {
+                        if let Err(error) = result {
                             self.workspace_error = Some(error);
-                        } else if pending.committing {
-                            let snapshot = pending.snapshot.unwrap();
-                            self.panes = pending.panes;
+                        }
+                        continue;
+                    };
+                    match pending.finished(result.map(|_| ())) {
+                        Step::Pending(pending) => {
+                            self.workspace_error = pending.error().map(str::to_owned);
+                            self.pending_workspace = Some(pending);
+                        }
+                        Step::Committed {
+                            id,
+                            snapshot,
+                            panes,
+                            reply,
+                        } => {
+                            self.panes = panes;
                             self.tabs = snapshot.tabs;
                             self.active = snapshot.active;
                             self.next_id = snapshot.next_id;
                             self.font_size = snapshot.font_size;
-                            self.workspace_id = pending.id;
+                            self.workspace_id = Some(id);
                             self.last_snapshot = None;
                             self.workspace_error = None;
-                            if let Some(reply) = pending.reply {
-                                let _ = reply.send(Ok(format!(
-                                    "Attached workspace {}",
-                                    pending.id.unwrap()
-                                )));
+                            if let Some(reply) = reply {
+                                let _ = reply.send(Ok(format!("Attached workspace {id}")));
                             }
+                        }
+                        Step::Failed { error, reply } => {
+                            if let Some(reply) = reply {
+                                let _ = reply.send(Err(error.clone()));
+                            }
+                            self.workspace_error = Some(error);
                         }
                     }
                 }
                 (Operation::Prepare | Operation::Disconnected, Err(error)) => {
-                    if let Some(pending) = self.pending_workspace.take()
-                        && let Some(reply) = pending.reply
+                    if let Some(reply) = self
+                        .pending_workspace
+                        .take()
+                        .and_then(WorkspaceSwitch::abort)
                     {
                         let _ = reply.send(Err(error.clone()));
                     }
                     self.workspace_error = Some(error);
-                }
-                (Operation::Finish, Err(error)) => {
-                    if self
-                        .pending_workspace
-                        .as_ref()
-                        .is_some_and(|pending| pending.cancellation.is_some())
-                    {
-                        if let Some(pending) = self.pending_workspace.take()
-                            && let Some(reply) = pending.reply
-                        {
-                            let _ = reply.send(Err(error.clone()));
-                        }
-                        self.workspace_error = Some(error);
-                    } else {
-                        self.cancel_workspace(error);
-                    }
                 }
                 (_, Err(error)) => self.workspace_error = Some(error),
                 _ => {}
@@ -500,14 +476,7 @@ impl App {
                 self.picker.visible = false;
                 self.palette = false;
                 self.font_size_open = false;
-                self.pending_workspace = Some(WorkspaceSwitch {
-                    id: None,
-                    snapshot: None,
-                    panes: BTreeMap::new(),
-                    committing: false,
-                    cancellation: None,
-                    reply,
-                });
+                self.pending_workspace = Some(WorkspaceSwitch::new(reply));
             }
             Err(error) => {
                 let error = error.to_string();
@@ -521,9 +490,7 @@ impl App {
 
     fn cancel_workspace(&mut self, error: String) {
         if let Some(pending) = &mut self.pending_workspace {
-            pending.panes.clear();
-            pending.cancellation = Some(error.clone());
-            pending.committing = false;
+            pending.cancel(error.clone());
         }
         self.workspace_error = Some(error);
     }
@@ -532,73 +499,33 @@ impl App {
         let Some(pending) = &mut self.pending_workspace else {
             return;
         };
-        if pending.committing {
+        let reply_closed = pending.reply_closed();
+        let poll = pending.poll(
+            |pane: &Pane| {
+                let state = pane.session.state.lock().unwrap();
+                if let Some(error) = &state.error {
+                    PaneStatus::Failed(error.clone())
+                } else if state.detached || state.exited {
+                    PaneStatus::Ended
+                } else if state.connected {
+                    PaneStatus::Connected(state.session_id)
+                } else {
+                    PaneStatus::Connecting
+                }
+            },
+            reply_closed,
+        );
+        let Poll::Finish(snapshot) = poll else {
             return;
+        };
+        if snapshot.is_none() {
+            self.workspace_error = pending.error().map(str::to_owned);
         }
-        if pending.cancellation.is_some() {
-            if self
-                .workspace
-                .as_ref()
-                .unwrap()
-                .send(WorkspaceCommand::Finish { snapshot: None })
-                .is_ok()
-            {
-                pending.committing = true;
-            }
-            return;
-        }
-        if pending.snapshot.is_none() {
-            return;
-        }
-        let mut ready = true;
-        let mut error = None;
-        for pane in pending.panes.values() {
-            let state = pane.session.state.lock().unwrap();
-            if state.error.is_some() || state.detached || state.exited {
-                error = Some(
-                    state
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| "destination session ended".into()),
-                );
-                break;
-            }
-            ready &= state.connected;
-        }
-        if pending
-            .reply
-            .as_ref()
-            .is_some_and(|reply| reply.is_closed())
+        if let Some(client) = &self.workspace
+            && client.send(WorkspaceCommand::Finish { snapshot }).is_ok()
+            && let Some(pending) = &mut self.pending_workspace
         {
-            error = Some("workspace switch cancelled".into());
-        }
-        if let Some(error) = error {
-            self.cancel_workspace(error);
-            return;
-        }
-        if ready {
-            let mut snapshot = pending.snapshot.clone().unwrap();
-            for (&id, pane) in &pending.panes {
-                snapshot.panes.get_mut(&id).unwrap().session = pane
-                    .session
-                    .state
-                    .lock()
-                    .unwrap()
-                    .session_id
-                    .map(|id| format!("{id:032x}"));
-            }
-            if self
-                .workspace
-                .as_ref()
-                .unwrap()
-                .send(WorkspaceCommand::Finish {
-                    snapshot: Some(snapshot.clone()),
-                })
-                .is_ok()
-            {
-                pending.snapshot = Some(snapshot);
-                pending.committing = true;
-            }
+            pending.finish_sent();
         }
     }
 
