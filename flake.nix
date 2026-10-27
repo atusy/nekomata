@@ -33,9 +33,9 @@
             pkgs.lib.makeLibraryPath [ pkgs.fontconfig ]
           }''${${variable}:+:''$${variable}}"
         '';
-    in
-    {
-      packages = forAllSystems (
+      # Crane inputs shared by the package and the Cargo checks, so they reuse
+      # one dependency build.
+      rustBuild =
         system:
         let
           pkgs = import nixpkgs { inherit system; };
@@ -71,6 +71,27 @@
             buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux runtimeLibs;
           };
           cargoArtifacts = craneLib.buildDepsOnly common;
+        in
+        {
+          inherit
+            craneLib
+            runtimeLibs
+            common
+            cargoArtifacts
+            ;
+        };
+    in
+    {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          inherit (rustBuild system)
+            craneLib
+            runtimeLibs
+            common
+            cargoArtifacts
+            ;
           fontconfigPath = fontconfigLibraryPath pkgs;
         in
         {
