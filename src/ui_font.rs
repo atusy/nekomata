@@ -412,7 +412,10 @@ mod tests {
             select(&[named(&name)], "UDEV Gothic NF"),
             Ok((path.clone(), 0))
         );
-        assert!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF").is_err());
+        assert!(matches!(
+            select(&[named("NoSuch-Regular")], "UDEV Gothic NF"),
+            Err(Unavailable::Unreadable(reason)) if reason.ends_with("lacks the listed face")
+        ));
     }
 
     #[test]
@@ -430,7 +433,28 @@ mod tests {
                 face: FaceRef::Index(0),
             },
         ];
-        assert!(select(&candidates, "Anything").is_err());
+        assert!(matches!(
+            select(&candidates, "Anything"),
+            Err(Unavailable::Unreadable(reason)) if reason.ends_with("is not a font file")
+        ));
+    }
+
+    #[test]
+    fn a_usable_face_wins_over_an_earlier_failure() {
+        let Some((dir, mut candidates)) = fixture() else {
+            return skip();
+        };
+        candidates.insert(
+            0,
+            Candidate {
+                path: dir.path().join("missing.ttf"),
+                face: FaceRef::Index(0),
+            },
+        );
+        assert_eq!(
+            select(&candidates, "UDEV Gothic NF"),
+            Ok((dir.path().join("c-regular.ttf"), 0))
+        );
     }
 
     #[test]
