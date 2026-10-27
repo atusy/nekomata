@@ -52,7 +52,12 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 pub(crate) fn directory() -> Result<PathBuf> {
     // SAFETY: geteuid has no preconditions and cannot fail.
     let owner = unsafe { libc::geteuid() };
-    let path = default_directory(|name| std::env::var_os(name), owner, user_temp_directory());
+    let path = default_directory(
+        |name| std::env::var_os(name),
+        owner,
+        user_temp_directory(),
+        |base| is_private_directory(base, owner),
+    );
     match std::fs::DirBuilder::new().mode(0o700).create(&path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -61,8 +66,7 @@ pub(crate) fn directory() -> Result<PathBuf> {
                 .with_context(|| format!("create control directory {}", path.display()));
         }
     }
-    let metadata = std::fs::symlink_metadata(&path)?;
-    if !metadata.is_dir() || metadata.uid() != owner || metadata.permissions().mode() & 0o077 != 0 {
+    if !is_private_directory(&path, owner) {
         bail!(
             "control directory {} must be private and owned by the current user",
             path.display()
@@ -78,10 +82,13 @@ const MAX_SOCKET_PATH: usize = 103;
 
 /// Every process of one user must agree on this path whatever its build or
 /// environment, so it uses no hash and no per-shell variable like TMPDIR.
+/// `XDG_RUNTIME_DIR` is read but also implied: logind's `/run/user/<uid>` is
+/// probed for processes started without it.
 fn default_directory(
     env: impl Fn(&str) -> Option<OsString>,
     owner: u32,
     user_temp: Option<PathBuf>,
+    private: impl Fn(&Path) -> bool,
 ) -> PathBuf {
     if let Some(path) = env("NEKOMATA_RUNTIME_DIR") {
         return PathBuf::from(path);
@@ -92,9 +99,19 @@ fn default_directory(
     user_temp
         .into_iter()
         .chain(xdg)
+        .chain([PathBuf::from(format!("/run/user/{owner}"))])
+        .filter(|base| private(base))
         .map(|base| base.join("nekomata"))
         .find(|path| path.as_os_str().len() + 1 + LONGEST_SOCKET_NAME <= MAX_SOCKET_PATH)
         .unwrap_or_else(|| PathBuf::from(format!("/tmp/nekomata-{owner}")))
+}
+
+/// Whether `path` is an existing directory only `owner` can use, as the XDG
+/// specification requires of `XDG_RUNTIME_DIR`.
+fn is_private_directory(path: &Path, owner: u32) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.is_dir() && metadata.uid() == owner && metadata.permissions().mode() & 0o077 == 0
+    })
 }
 
 /// The per-user temporary directory macOS derives from the uid, unlike TMPDIR.
@@ -429,30 +446,37 @@ mod tests {
         }
     }
 
+    /// Treats exactly `bases` as existing private directories of the user.
+    fn private(bases: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |path| bases.iter().any(|base| path == Path::new(base))
+    }
+
     #[test]
     fn runtime_directory_does_not_depend_on_home_or_build() {
         // A hash of HOME could change between Rust releases; the path must not.
         assert_eq!(
-            default_directory(vars(&[("HOME", "/home/a")]), 501, None),
+            default_directory(vars(&[("HOME", "/home/a")]), 501, None, private(&[])),
             PathBuf::from("/tmp/nekomata-501")
         );
         assert_eq!(
-            default_directory(vars(&[("HOME", "/home/b")]), 501, None),
+            default_directory(vars(&[("HOME", "/home/b")]), 501, None, private(&[])),
             PathBuf::from("/tmp/nekomata-501")
         );
     }
 
     #[test]
     fn runtime_directory_prefers_the_override_then_per_user_locations() {
-        let darwin = Some(PathBuf::from("/var/folders/ab/cd/T/"));
+        let darwin = Some(PathBuf::from("/var/folders/ab/cd/T"));
+        let all = private(&["/var/folders/ab/cd/T", "/run/user/501", "/xdg"]);
         assert_eq!(
             default_directory(
                 vars(&[
                     ("NEKOMATA_RUNTIME_DIR", "/x/gui"),
-                    ("XDG_RUNTIME_DIR", "/run/user/501")
+                    ("XDG_RUNTIME_DIR", "/xdg")
                 ]),
                 501,
-                darwin.clone()
+                darwin.clone(),
+                &all
             ),
             PathBuf::from("/x/gui")
         );
@@ -460,23 +484,46 @@ mod tests {
         // macOS directory comes from confstr, not the variable.
         assert_eq!(
             default_directory(
-                vars(&[
-                    ("TMPDIR", "/tmp/nix-shell.x"),
-                    ("XDG_RUNTIME_DIR", "/run/user/501")
-                ]),
+                vars(&[("TMPDIR", "/tmp/nix-shell.x"), ("XDG_RUNTIME_DIR", "/xdg")]),
                 501,
-                darwin
+                darwin,
+                &all
             ),
             PathBuf::from("/var/folders/ab/cd/T/nekomata")
         );
         assert_eq!(
-            default_directory(vars(&[("XDG_RUNTIME_DIR", "/run/user/501")]), 501, None),
+            default_directory(vars(&[("XDG_RUNTIME_DIR", "/xdg")]), 501, None, &all),
+            PathBuf::from("/xdg/nekomata")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_on_linux_does_not_need_xdg_runtime_dir() {
+        // Shells started by felis, cron or a bare ssh login may lack the
+        // variable; they must still meet a desktop-launched GUI.
+        let logind = private(&["/run/user/501"]);
+        assert_eq!(
+            default_directory(vars(&[]), 501, None, &logind),
             PathBuf::from("/run/user/501/nekomata")
         );
         // The XDG specification ignores relative paths.
         assert_eq!(
-            default_directory(vars(&[("XDG_RUNTIME_DIR", "run")]), 501, None),
-            PathBuf::from("/tmp/nekomata-501")
+            default_directory(vars(&[("XDG_RUNTIME_DIR", "run")]), 501, None, &logind),
+            PathBuf::from("/run/user/501/nekomata")
+        );
+    }
+
+    #[test]
+    fn runtime_directory_skips_bases_that_are_missing_or_not_private() {
+        // `sudo -E` keeps another user's XDG_RUNTIME_DIR; a logout removes it.
+        assert_eq!(
+            default_directory(
+                vars(&[("XDG_RUNTIME_DIR", "/run/user/1000")]),
+                0,
+                Some(PathBuf::from("/var/folders/ab/cd/T")),
+                private(&[])
+            ),
+            PathBuf::from("/tmp/nekomata-0")
         );
     }
 
@@ -484,8 +531,8 @@ mod tests {
     fn runtime_directory_skips_bases_too_long_for_socket_paths() {
         let long = Some(PathBuf::from(format!("/{}", "d".repeat(90))));
         assert_eq!(
-            default_directory(vars(&[]), 501, long),
-            PathBuf::from("/tmp/nekomata-501")
+            default_directory(vars(&[]), 501, long, |_| true),
+            PathBuf::from("/run/user/501/nekomata")
         );
     }
 

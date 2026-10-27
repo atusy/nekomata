@@ -98,10 +98,13 @@ Windows and the nekomata daemon publish their sockets (`<window>.sock`,
    from the user ID (`confstr(_CS_DARWIN_USER_TEMP_DIR)`); `$TMPDIR` is not
    consulted, because development shells override it.
 3. `$XDG_RUNTIME_DIR/nekomata`, when that variable holds an absolute path.
-4. `/tmp/nekomata-<uid>`.
+4. `/run/user/<uid>/nekomata`, so that processes started without
+   `$XDG_RUNTIME_DIR` (cron, some SSH logins) still meet a desktop session.
+5. `/tmp/nekomata-<uid>`.
 
-Candidates 2 and 3 are skipped when a socket path inside them would exceed
-the Unix socket path limit. The directory is created with mode 0700; if it
+Candidates 2 to 4 are skipped unless their base is an existing directory
+owned by the current user with no group or other permissions, and when a
+socket path inside them would exceed the Unix socket path limit. The directory is created with mode 0700; if it
 exists but is not a directory owned by the current user with no group or
 other permissions, windows and CLI commands fail and name the directory.
 
