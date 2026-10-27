@@ -22,7 +22,9 @@ felis daemon.
 - Workspaces are held in memory only. Stopping or crashing the daemon, or
   restarting the OS, loses every layout.
 - Client and daemon speak a versioned protocol. On an incompatible version the
-  client reports an error and does not replace the running daemon.
+  client reports an error and does not replace the running daemon. The daemon
+  checks the version before decoding the request, so a request of another
+  version is answered with that error whatever its shape.
 - A UI-only update needs no daemon restart: a restarted GUI reuses a
   compatible running daemon.
 

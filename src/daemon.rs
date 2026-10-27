@@ -85,6 +85,29 @@ struct Envelope {
     request: Request,
 }
 
+/// An envelope of any protocol version. The version is checked before the
+/// request is decoded, so a newer request shape still gets a readable reply.
+#[derive(Deserialize)]
+struct Frame {
+    #[serde(default)]
+    version: Option<u32>,
+    #[serde(default)]
+    request: serde_json::Value,
+}
+
+impl Frame {
+    fn decode(self) -> Result<Request, String> {
+        match self.version {
+            Some(VERSION) => serde_json::from_value(self.request)
+                .map_err(|error| format!("malformed nekomata daemon request: {error}")),
+            version => Err(format!(
+                "incompatible nekomata protocol: client {}, daemon {VERSION}",
+                version.map_or_else(|| "unknown".into(), |version| version.to_string())
+            )),
+        }
+    }
+}
+
 struct Record {
     snapshot: Snapshot,
     owner: Option<(u64, u32)>,
@@ -352,24 +375,19 @@ async fn serve_connection(
     let mut window = None;
     let result = async {
         loop {
-            let envelope: Envelope = read_json(&mut stream).await?;
-            let stopping = matches!(envelope.request, Request::Stop);
-            let response = if envelope.version != VERSION {
-                Err(format!(
-                    "incompatible nekomata protocol: client {}, daemon {VERSION}",
-                    envelope.version
-                ))
-            } else {
+            let request = read_json::<Frame>(&mut stream).await?.decode();
+            let stopping = matches!(request, Ok(Request::Stop));
+            let response = request.and_then(|request| {
                 handle(
                     &mut registry.lock().unwrap(),
                     owner,
                     &mut window,
                     &mut current,
                     &mut pending,
-                    envelope.request,
+                    request,
                 )
                 .map_err(|error| error.to_string())
-            };
+            });
             let written = write_json(&mut stream, &response).await;
             // The registry already refuses attachments; exit even if the
             // stopping client hung up before reading the reply.
@@ -748,6 +766,69 @@ mod tests {
         assert!(registry.lock().unwrap().workspaces.is_empty());
         drop(client);
         let _ = task.await;
+    }
+
+    async fn raw_exchange(client: &mut UnixStream, frame: serde_json::Value) -> Response {
+        write_json(client, &frame).await.unwrap();
+        read_json(client).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn requests_of_another_version_get_a_readable_rejection_whatever_their_shape() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let response = raw_exchange(
+            &mut client,
+            serde_json::json!({"version": VERSION + 1, "request": {"Brand": {"new": 1}}}),
+        )
+        .await;
+        assert!(
+            response
+                .unwrap_err()
+                .contains("incompatible nekomata protocol")
+        );
+        let response = raw_exchange(&mut client, serde_json::json!({"request": "List"})).await;
+        assert!(response.unwrap_err().contains("incompatible"));
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn malformed_requests_are_rejected_without_dropping_the_connection() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let response = raw_exchange(
+            &mut client,
+            serde_json::json!({"version": VERSION, "request": {"Open": {}}}),
+        )
+        .await;
+        assert!(response.unwrap_err().contains("malformed"));
+        assert!(matches!(
+            exchange(&mut client, Request::List).await.unwrap(),
+            Payload::Workspaces(_)
+        ));
+        drop(client);
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn rejections_are_readable_whatever_the_success_payload_looks_like() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let reply = tokio::spawn(async move {
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Err": "refused"}))
+                .await
+                .unwrap();
+            let _: serde_json::Value = read_json(&mut server).await.unwrap();
+            write_json(&mut server, &serde_json::json!({"Ok": {"Future": 1}}))
+                .await
+                .unwrap();
+        });
+        let error = exchange(&mut client, Request::List).await.unwrap_err();
+        assert_eq!(error.downcast_ref::<Rejection>().unwrap().0, "refused");
+        let error = exchange(&mut client, Request::List).await.unwrap_err();
+        assert!(error.downcast_ref::<Rejection>().is_none());
+        reply.await.unwrap();
     }
 
     #[tokio::test]
