@@ -584,11 +584,11 @@ impl App {
         let poll = pending.poll(
             |pane: &Pane| {
                 let state = pane.session.state.lock().unwrap();
-                if let Some(error) = &state.error {
-                    PaneStatus::Failed(error.clone())
-                } else if state.detached || state.exited {
+                if let Some(error) = state.error() {
+                    PaneStatus::Failed(error.to_owned())
+                } else if state.lifecycle.is_ended() {
                     PaneStatus::Ended
-                } else if state.connected {
+                } else if state.lifecycle.is_live() {
                     PaneStatus::Connected(state.session_id)
                 } else {
                     PaneStatus::Connecting
@@ -1004,7 +1004,7 @@ impl App {
             TerminalAction::Scroll(step) => {
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
                 let state = pane.session.state.lock().unwrap();
-                if state.connected
+                if state.lifecycle.is_live()
                     && let Some(request) = state.scroll_action(step)
                 {
                     pane.selection = None;
@@ -1017,7 +1017,7 @@ impl App {
             TerminalAction::ScrollToPrompt(direction) => {
                 let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
                 let state = pane.session.state.lock().unwrap();
-                if state.connected && !state.screen.alt_screen() {
+                if state.lifecycle.is_live() && !state.screen.alt_screen() {
                     pane.selection = None;
                     pane.session.send(InputMsg::JumpPrompt { direction });
                 }
@@ -1092,7 +1092,7 @@ impl App {
             let state = pane.session.state.lock().unwrap();
             // Sent under the lock: a reconnect bumps `reconnects` under it,
             // so the paste cannot reach a connection it was not confirmed for.
-            if pending.is_current(state.connected, state.reconnects) {
+            if pending.is_current(state.lifecycle.is_live(), state.reconnects) {
                 send_to_program(
                     &mut pane.selection,
                     &pane.session,
@@ -1146,7 +1146,7 @@ impl App {
                     pane.close_search();
                 }
                 let state = pane.session.state.lock().unwrap();
-                if !state.connected {
+                if !state.lifecycle.is_live() {
                     pane.session.input_lost();
                 } else if self.paste_requested.is_none() {
                     self.paste_requested = Some((
@@ -1272,7 +1272,7 @@ impl App {
             .iter()
             .filter_map(|(&id, pane)| {
                 let state = pane.session.state.lock().unwrap();
-                (self.pending_workspace.is_none() && (state.detached || state.exited)).then_some(id)
+                (self.pending_workspace.is_none() && state.lifecycle.is_ended()).then_some(id)
             })
             .collect();
         for id in closed {
@@ -1290,11 +1290,9 @@ impl App {
         for pane in self.panes.values_mut() {
             pane.links.tick(&self.runtime, ctx);
             let state = pane.session.state.lock().unwrap();
-            if pane
-                .pending_paste
-                .as_ref()
-                .is_some_and(|pending| !pending.is_current(state.connected, state.reconnects))
-            {
+            if pane.pending_paste.as_ref().is_some_and(|pending| {
+                !pending.is_current(state.lifecycle.is_live(), state.reconnects)
+            }) {
                 pane.pending_paste = None;
             }
         }
@@ -1554,7 +1552,7 @@ impl App {
                     .state
                     .lock()
                     .unwrap();
-                if !state.connected {
+                if !state.lifecycle.is_live() {
                     Some("Unavailable while disconnected")
                 } else if state.screen.alt_screen() {
                     Some("Unavailable in the alternate screen")
@@ -1789,14 +1787,13 @@ fn attach_result(
         Some(Err("request cancelled".into()))
     } else if !pane_open {
         Some(Err("pane closed during attach".into()))
-    } else if state.error.is_some() || state.exited || state.detached {
-        // felis reports an eviction or exit before the connection closes, so
-        // `connected` may still be set.
+    } else if state.lifecycle.is_terminal() {
         Some(Err(state
-            .error
-            .clone()
-            .unwrap_or_else(|| "session ended during attach".into())))
-    } else if state.connected {
+            .lifecycle
+            .failure()
+            .unwrap_or("session ended during attach")
+            .into()))
+    } else if state.lifecycle.is_live() {
         Some(Ok(format!("Attached pane {id}")))
     } else {
         None
@@ -2003,7 +2000,7 @@ fn draw_pane(
     let mut state = pane.session.state.lock().unwrap();
     // Held from here through painting and selection gestures below.
     expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
-    let connected = state.connected;
+    let connected = state.lifecycle.is_live();
     let painter = painter.with_clip_rect(text_rect);
     {
         let mut search = pane.session.search.search.lock().unwrap();
@@ -2029,7 +2026,7 @@ fn draw_pane(
         pane.selection,
     ) {
         Ok(rendered) => pane.session.frame_submitted(&mut state, rendered),
-        Err(error) => state.error = Some(format!("Terminal renderer: {error:#}")),
+        Err(error) => state.renderer_error = Some(format!("Terminal renderer: {error:#}")),
     }
     let text_rect = renderer.content_rect(text_rect);
     let shadow = &state.screen;
@@ -2056,7 +2053,7 @@ fn draw_pane(
             })
         });
     }
-    if let Some(error) = &state.error {
+    if let Some(error) = state.error() {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
@@ -2064,11 +2061,11 @@ fn draw_pane(
             FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             crate::theme::ERROR_FG,
         );
-    } else if !state.connected {
+    } else if !state.lifecycle.is_live() {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
-            if state.reconnecting {
+            if state.lifecycle == crate::session::Lifecycle::Reconnecting {
                 "Reconnecting to felis…"
             } else {
                 "Connecting to felis…"
@@ -2339,7 +2336,7 @@ fn requested_paste_is_current(
     let state = focused.state.lock().unwrap();
     current_frame == frame + 1
         && Arc::ptr_eq(origin, focused)
-        && state.connected
+        && state.lifecycle.is_live()
         && state.reconnects == generation
 }
 
@@ -2359,7 +2356,7 @@ fn terminal_input(
             }
             TerminalInput::Paste(text) => {
                 let state = session.state.lock().unwrap();
-                if !state.connected {
+                if !state.lifecycle.is_live() {
                     session.input_lost();
                     continue;
                 }
@@ -2481,7 +2478,7 @@ mod tests {
         ));
         {
             let mut state = session.state.lock().unwrap();
-            state.connected = true;
+            state.lifecycle = crate::session::Lifecycle::Connected;
             state.session_id = Some(crate::session::SessionId(1));
         }
         let mut pane = Pane::from_session(session);
@@ -2739,13 +2736,13 @@ mod tests {
         );
         let mut state = session.state.lock().unwrap();
         assert_eq!(attach_result(1, &state, true, false), None);
-        state.connected = true;
+        state.lifecycle = crate::session::Lifecycle::Connected;
         assert_eq!(
             attach_result(1, &state, true, false),
             Some(Ok("Attached pane 1".into()))
         );
         // felis evicts the attach; the connection has not been torn down yet.
-        state.detached = true;
+        state.lifecycle = crate::session::Lifecycle::Detached;
         assert_eq!(
             attach_result(1, &state, true, false),
             Some(Err("session ended during attach".into()))
@@ -2769,7 +2766,7 @@ mod tests {
             vec![],
         );
         let session = Arc::new(session);
-        session.state.lock().unwrap().connected = true;
+        session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
         assert!(requested_paste_is_current((4, 0, &session), 5, &session));
         assert!(!requested_paste_is_current((4, 0, &session), 6, &session));
         assert!(!requested_paste_is_current((4, 1, &session), 5, &session));
@@ -2782,11 +2779,11 @@ mod tests {
             vec![],
         );
         let other = Arc::new(other);
-        other.state.lock().unwrap().connected = true;
+        other.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
         assert!(!requested_paste_is_current((4, 0, &session), 5, &other));
-        session.state.lock().unwrap().connected = false;
+        session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Reconnecting;
         assert!(!requested_paste_is_current((4, 0, &session), 5, &session));
-        session.state.lock().unwrap().connected = true;
+        session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
         let original = Some(Selection::new(GridPos { row: 0, col: 1 }));
         let mut selection = original;
         let mut pending = None;
@@ -3024,7 +3021,7 @@ mod tests {
                 && app
                     .panes
                     .values()
-                    .all(|p| p.session.state.lock().unwrap().connected)
+                    .all(|p| p.session.state.lock().unwrap().lifecycle.is_live())
         };
         let mut config = felis_client_core::config::EffectiveConfig::default();
         config.font.size_px = Some(21.0);
@@ -3553,7 +3550,13 @@ mod tests {
             }
         };
         pump(&mut app, &|app| {
-            app.panes[&1].session.state.lock().unwrap().connected
+            app.panes[&1]
+                .session
+                .state
+                .lock()
+                .unwrap()
+                .lifecycle
+                .is_live()
         });
         app.action(&ctx, Action::Search);
         assert!(app.searching());
@@ -3755,9 +3758,17 @@ mod tests {
         assert_eq!(app.panes[&2].session.target, target);
         pump(&mut app, &|app| {
             let state = app.panes[&2].session.state.lock().unwrap();
-            state.connected || state.error.is_some()
+            state.lifecycle.is_live() || state.lifecycle.failure().is_some()
         });
-        assert!(app.panes[&2].session.state.lock().unwrap().connected);
+        assert!(
+            app.panes[&2]
+                .session
+                .state
+                .lock()
+                .unwrap()
+                .lifecycle
+                .is_live()
+        );
         app.runtime.block_on(async {
             let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
                 .await

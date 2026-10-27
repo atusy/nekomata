@@ -135,6 +135,43 @@ impl Target {
     }
 }
 
+/// Where a pane's felis session is in its life; exactly one holds at a time.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Lifecycle {
+    #[default]
+    Connecting,
+    Connected,
+    Reconnecting,
+    /// felis evicted this attach; the shell may live on elsewhere.
+    Detached,
+    Exited,
+    Failed(String),
+}
+
+impl Lifecycle {
+    /// Input, scrolling and rendering may use the session.
+    pub fn is_live(&self) -> bool {
+        matches!(self, Self::Connected)
+    }
+
+    /// felis released the session without error, so its pane closes.
+    pub fn is_ended(&self) -> bool {
+        matches!(self, Self::Detached | Self::Exited)
+    }
+
+    /// The session will never become live again.
+    pub fn is_terminal(&self) -> bool {
+        self.is_ended() || self.failure().is_some()
+    }
+
+    pub fn failure(&self) -> Option<&str> {
+        match self {
+            Self::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 pub struct State {
     pub screen: ShadowScreen,
     pub effective_minor: u16,
@@ -143,12 +180,10 @@ pub struct State {
     pub colors: crate::colors::Colors,
     pub images: felis_client_core::ImageShadow,
     pub session_id: Option<SessionId>,
-    pub error: Option<String>,
-    pub connected: bool,
+    pub lifecycle: Lifecycle,
+    /// Painting failed; the session itself may still be live.
+    pub renderer_error: Option<String>,
     pub reconnects: u64,
-    pub reconnecting: bool,
-    pub detached: bool,
-    pub exited: bool,
     pub clipboard: Option<String>,
     /// Advances when the screen switches, resizes or is rehydrated, or the
     /// viewport moves to other lines; a selection made before is stale.
@@ -156,6 +191,11 @@ pub struct State {
 }
 
 impl State {
+    /// The message a pane shows in place of its terminal, if any.
+    pub fn error(&self) -> Option<&str> {
+        self.lifecycle.failure().or(self.renderer_error.as_deref())
+    }
+
     pub fn scroll_action(&self, step: felis_client_core::ScrollStep) -> Option<InputMsg> {
         use felis_client_core::ScrollStep;
         let half_page = i32::from(self.screen.screen().rows() / 2).max(1);
@@ -173,7 +213,7 @@ impl State {
     }
 
     pub fn scroll_request(&self, rows: i32) -> Option<InputMsg> {
-        if !self.connected || self.screen.alt_screen() {
+        if !self.lifecycle.is_live() || self.screen.alt_screen() {
             return None;
         }
         felis_client_core::viewport::step_request(
@@ -228,7 +268,7 @@ impl State {
     }
 
     pub fn render_ready(&self) -> bool {
-        self.connected && !self.screen.is_rehydrating() && !self.pull.cycle_open()
+        self.lifecycle.is_live() && !self.screen.is_rehydrating() && !self.pull.cycle_open()
     }
 }
 
@@ -421,12 +461,9 @@ impl Session {
             )),
             images: felis_client_core::ImageShadow::new(),
             session_id: None,
-            error: None,
-            connected: false,
+            lifecycle: Lifecycle::Connecting,
+            renderer_error: None,
             reconnects: 0,
-            reconnecting: false,
-            detached: false,
-            exited: false,
             clipboard: None,
             selection_epoch: 0,
         }));
@@ -450,18 +487,14 @@ impl Session {
             .await;
             rx.close();
             let mut state = shared.lock().unwrap();
-            state.connected = false;
-            state.reconnecting = false;
-            state.error = if state.detached || state.exited {
-                None
-            } else {
-                Some(match result {
+            if !state.lifecycle.is_ended() {
+                state.lifecycle = Lifecycle::Failed(match result {
                     Ok(()) => {
                         "Session disconnected. The shell may still be running in felis.".into()
                     }
                     Err(err) => format!("{err:#}"),
-                })
-            };
+                });
+            }
             ctx.request_repaint();
         });
         Self {
@@ -622,7 +655,7 @@ async fn run(
         state.screen = ShadowScreen::new(info.dims.rows, info.dims.cols);
         state.effective_minor = conn.effective_minor;
         state.session_id = Some(SessionId(info.id));
-        state.connected = true;
+        state.lifecycle = Lifecycle::Connected;
     }
     ctx.request_repaint();
     loop {
@@ -636,8 +669,7 @@ async fn run(
         rx.close();
         {
             let mut state = shared.lock().unwrap();
-            state.connected = false;
-            state.reconnecting = true;
+            state.lifecycle = Lifecycle::Reconnecting;
             let gate = state.pull.cycle_open();
             state.pull =
                 felis_client_core::pull::PullScheduler::new(matches!(target, Target::Local(_)))
@@ -661,11 +693,9 @@ async fn run(
         relay = child;
         {
             let mut state = shared.lock().unwrap();
-            // Accept input before publishing the new generation: the GUI
-            // re-sends size and focus as soon as it sees it.
+            // Reopen before publishing the new generation so size and focus can be resent.
             rx.reopen();
-            state.connected = true;
-            state.reconnecting = false;
+            state.lifecycle = Lifecycle::Connected;
             state.reconnects = state.reconnects.wrapping_add(1);
             state.effective_minor = conn.effective_minor;
         }
@@ -813,12 +843,12 @@ async fn pump(
                             {
                                 match delivery.msg {
                                     felis_protocol::messages::PushMsg::Evicted { .. } => {
-                                        shared.lock().unwrap().detached = true;
+                                        shared.lock().unwrap().lifecycle = Lifecycle::Detached;
                                         return Ok(());
                                     }
                                     felis_protocol::messages::PushMsg::SessionExited { id }
                                         if shared.lock().unwrap().session_id == Some(SessionId(id)) => {
-                                        shared.lock().unwrap().exited = true;
+                                        shared.lock().unwrap().lifecycle = Lifecycle::Exited;
                                         return Ok(());
                                     }
                                     _ => {}
@@ -865,12 +895,9 @@ mod tests {
             colors: Default::default(),
             images: felis_client_core::ImageShadow::new(),
             session_id: None,
-            error: None,
-            connected: true,
+            lifecycle: Lifecycle::Connected,
+            renderer_error: None,
             reconnects: 0,
-            reconnecting: false,
-            detached: false,
-            exited: false,
             clipboard: None,
             selection_epoch: 0,
         }
@@ -1044,7 +1071,7 @@ mod tests {
     #[test]
     fn disconnected_panes_do_not_enqueue_scroll_steps() {
         let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
-        state.connected = false;
+        state.lifecycle = Lifecycle::Reconnecting;
         assert!(state.scroll_request(1).is_none());
     }
 
@@ -1242,7 +1269,7 @@ mod tests {
                 let mut state = session.state.lock().unwrap();
                 // Headless tests stand in for a completed visible GPU frame.
                 session.frame_submitted(&mut state, true);
-                assert!(state.error.is_none(), "{:?}", state.error);
+                assert!(state.error().is_none(), "{:?}", state.error());
                 if predicate(&state) {
                     return;
                 }
@@ -1516,7 +1543,7 @@ mod tests {
             None,
             vec![],
         );
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         session.send(InputMsg::KeyBytes(
             b"NEKO_RECONNECT_MARKER=kept; printf '\\nBEFORE_%s\\n' \"$NEKO_RECONNECT_MARKER\"\n"
                 .to_vec(),
@@ -1527,7 +1554,7 @@ mod tests {
         let id = session.state.lock().unwrap().session_id;
         disconnect.send(()).unwrap();
         wait_for(&session, &ctx, &repaints, |state| {
-            state.connected && state.reconnects > 0
+            state.lifecycle.is_live() && state.reconnects > 0
         });
         assert_eq!(session.state.lock().unwrap().session_id, id);
         session.send(InputMsg::KeyBytes(
@@ -1550,7 +1577,7 @@ mod tests {
             let _ = repaint_tx.send(());
         });
         let session = Session::new(&runtime, ctx.clone(), None, None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         session.send(InputMsg::KeyBytes(
             b"printf '\\033_Ga=T,f=24,s=1,v=1,i=77,q=2;AP8A\\033\\\\'\n".to_vec(),
         ));
@@ -1580,8 +1607,8 @@ mod tests {
             .into_owned();
         let session = Session::new(&runtime, ctx.clone(), None, Some(cwd.clone()));
         let sibling = Session::new(&runtime, ctx.clone(), None, None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
-        wait_for(&sibling, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
+        wait_for(&sibling, &ctx, &repaints, |state| state.lifecycle.is_live());
         let command = format!(
             "test \"$PWD\" = '{}' && printf '\\033[31mNEKOMATA_READY\\033[0m\\n'\r",
             cwd.replace('\'', "'\\''")
@@ -1590,12 +1617,11 @@ mod tests {
         wait_for(&session, &ctx, &repaints, has_red_marker);
         session.send(InputMsg::KeyBytes(b"exit\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
-            state.exited && !state.connected
+            state.lifecycle == Lifecycle::Exited
         });
         let state = sibling.state.lock().unwrap();
-        assert!(state.connected);
-        assert!(!state.exited);
-        assert!(state.error.is_none());
+        assert_eq!(state.lifecycle, Lifecycle::Connected);
+        assert!(state.error().is_none());
     }
 
     #[test]
@@ -1609,7 +1635,7 @@ mod tests {
             let _ = tx.send(());
         });
         let session = Session::new(&runtime, ctx.clone(), None, None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         let id = session.state.lock().unwrap().session_id.unwrap();
         session.send(InputMsg::Resize {
             dims: RequestedDims {
@@ -1656,7 +1682,9 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&detached.stderr)
         );
-        wait_for(&session, &ctx, &repaints, |state| state.detached);
+        wait_for(&session, &ctx, &repaints, |state| {
+            state.lifecycle == Lifecycle::Detached
+        });
         drop(session);
         runtime.block_on(async {
             let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
@@ -1685,7 +1713,9 @@ mod tests {
             let _ = tx.send(());
         });
         let original = Session::new(&runtime, ctx.clone(), None, None);
-        wait_for(&original, &ctx, &repaints, |state| state.connected);
+        wait_for(&original, &ctx, &repaints, |state| {
+            state.lifecycle.is_live()
+        });
         let id = original.state.lock().unwrap().session_id.unwrap();
         drop(original);
         let remote = Session::start(
@@ -1699,7 +1729,7 @@ mod tests {
             None,
             vec![],
         );
-        wait_for(&remote, &ctx, &repaints, |state| state.connected);
+        wait_for(&remote, &ctx, &repaints, |state| state.lifecycle.is_live());
         assert_eq!(remote.state.lock().unwrap().session_id, Some(id));
         remote.send(InputMsg::KeyBytes(
             b"printf 'SSH_%s_OK\\n' CARRIER\r".to_vec(),
@@ -1719,7 +1749,7 @@ mod tests {
             Some("/nekomata-local-path-must-not-be-forwarded".into()),
             vec![("NEKOMATA_TEST_LOCAL_ENV".into(), "leaked".into())],
         );
-        wait_for(&spawned, &ctx, &repaints, |state| state.connected);
+        wait_for(&spawned, &ctx, &repaints, |state| state.lifecycle.is_live());
         let spawned_id = spawned.state.lock().unwrap().session_id.unwrap();
         spawned.send(InputMsg::KeyBytes(
             b"/bin/sh -c 'printf \"REMOTE_ENV_%s_DONE\\n\" \"${NEKOMATA_TEST_LOCAL_ENV-unset}\"'\r"
@@ -1781,7 +1811,7 @@ mod tests {
             let _ = tx.send(());
         });
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "NAVIGATION_READY")
@@ -1849,7 +1879,7 @@ mod tests {
             let _ = tx.send(());
         });
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "OSC52_WRITTEN")
@@ -1912,7 +1942,7 @@ mod tests {
             let _ = tx.send(());
         });
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "COLOR_REPLY=")
@@ -1950,7 +1980,7 @@ mod tests {
             let _ = tx.send(());
         });
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
-        wait_for(&session, &ctx, &repaints, |state| state.connected);
+        wait_for(&session, &ctx, &repaints, |state| state.lifecycle.is_live());
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             state.screen.title() == Some("fixture-ready") && contains_text(state, "ACTIVE_PROMPT")

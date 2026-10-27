@@ -30,7 +30,7 @@ struct Source {
 
 fn source(state: &Mutex<State>) -> Option<Source> {
     let state = state.lock().unwrap();
-    state.connected.then_some(Source {
+    state.lifecycle.is_live().then_some(Source {
         id: state.session_id?,
         generation: state.reconnects,
     })
@@ -569,7 +569,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         };
-        wait(&|| session.state.lock().unwrap().connected);
+        wait(&|| session.state.lock().unwrap().lifecycle.is_live());
         session.send(InputMsg::KeyBytes(
             b"printf 'NEKOMATA_SEARCH_MARKER\\n'\r".to_vec(),
         ));
@@ -590,8 +590,8 @@ mod tests {
             drop(search);
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(session.state.lock().unwrap().connected);
-        assert!(!session.state.lock().unwrap().detached);
+        assert!(session.state.lock().unwrap().lifecycle.is_live());
+        assert!(!session.state.lock().unwrap().lifecycle.is_ended());
         session.search.search(
             "(".into(),
             SearchOptions {
@@ -601,7 +601,7 @@ mod tests {
         );
         wait(&|| !session.search.search.lock().unwrap().running);
         assert!(session.search.search.lock().unwrap().error.is_some());
-        assert!(session.state.lock().unwrap().connected);
+        assert!(session.state.lock().unwrap().lifecycle.is_live());
         session.search.cancel_search();
         assert!(!session.search.search.lock().unwrap().active);
         assert!(
@@ -639,7 +639,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         };
-        wait(&|| session.state.lock().unwrap().connected);
+        wait(&|| session.state.lock().unwrap().lifecycle.is_live());
         let quoted_socket = std::path::Path::new(&socket)
             .parent()
             .unwrap()
@@ -670,8 +670,8 @@ mod tests {
             drop(search);
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(session.state.lock().unwrap().connected);
-        assert!(!session.state.lock().unwrap().detached);
+        assert!(session.state.lock().unwrap().lifecycle.is_live());
+        assert!(!session.state.lock().unwrap().lifecycle.is_ended());
         std::fs::remove_file(quoted_socket).unwrap();
     }
 }
