@@ -3129,7 +3129,7 @@ mod tests {
             app.workspace.as_ref().map(WorkspaceClient::saved)
                 == Some(crate::workspace_client::Saved {
                     acknowledged: Some(app.snapshot()),
-                    unconfirmed: None,
+                    unconfirmed: vec![],
                 })
         });
         // The test binary cannot start a daemon itself; the real one can.

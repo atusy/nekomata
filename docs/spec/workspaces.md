@@ -117,7 +117,8 @@ there, never into another window's retained layout:
 
 1. Its own workspace, if the daemon still holds it under the previous ID with
    exactly a layout this window saved there: the last one the daemon
-   acknowledged, or one sent after it whose answer was lost.
+   acknowledged, or one of the last few sent after it whose answers were
+   lost, including by an earlier reconnect attempt.
 2. Otherwise the workspace the daemon offers at startup, if it has no tabs.
 3. Otherwise a new workspace.
 
