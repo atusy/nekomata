@@ -2705,7 +2705,8 @@ mod tests {
     }
 
     #[test]
-    fn an_attach_evicted_before_its_connection_closes_fails() {
+    fn pending_attaches_resolve_once_their_session_settles() {
+        use crate::session::Lifecycle;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -2720,17 +2721,35 @@ mod tests {
             vec![],
         );
         let mut state = session.state.lock().unwrap();
-        assert_eq!(attach_result(1, &state, true, false), None);
-        state.lifecycle = crate::session::Lifecycle::Connected;
+        let ok = || Some(Ok("Attached pane 1".to_owned()));
+        let err = |message: &str| Some(Err(message.to_owned()));
+        for (lifecycle, expected) in [
+            (Lifecycle::Connecting, None),
+            (Lifecycle::Reconnecting, None),
+            (Lifecycle::Connected, ok()),
+            (Lifecycle::Detached, err("session ended during attach")),
+            (Lifecycle::Exited, err("session ended during attach")),
+            (
+                Lifecycle::Failed("no such session".into()),
+                err("no such session"),
+            ),
+        ] {
+            state.lifecycle = lifecycle;
+            assert_eq!(
+                attach_result(1, &state, true, false),
+                expected,
+                "{:?}",
+                state.lifecycle
+            );
+        }
+        state.lifecycle = Lifecycle::Connected;
         assert_eq!(
-            attach_result(1, &state, true, false),
-            Some(Ok("Attached pane 1".into()))
+            attach_result(1, &state, false, false),
+            err("pane closed during attach")
         );
-        // felis evicts the attach; the connection has not been torn down yet.
-        state.lifecycle = crate::session::Lifecycle::Detached;
         assert_eq!(
-            attach_result(1, &state, true, false),
-            Some(Err("session ended during attach".into()))
+            attach_result(1, &state, false, true),
+            err("request cancelled")
         );
     }
 
