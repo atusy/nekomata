@@ -118,4 +118,37 @@ mod tests {
         assert_eq!(linear_rgba_to_srgb8(theme.bg), [0x44, 0x55, 0x66, 255]);
         assert_eq!(theme.palette[4], Some([0x77, 0x88, 0x99]));
     }
+
+    #[test]
+    fn nekomata_overlay_selects_the_osc52_policy() {
+        use felis_client_core::config::Osc52Policy;
+        let resolve = |toml: &str| {
+            let (config, diagnostics) = ConfigDocument::parse(toml, None)
+                .unwrap()
+                .resolve("nekomata");
+            assert!(!diagnostics.has_errors());
+            config.clipboard.osc_52
+        };
+        assert_eq!(resolve(""), Osc52Policy::Mirror);
+        assert_eq!(
+            resolve(
+                r#"
+                [clipboard]
+                osc_52 = "system"
+                [client.nekomata.clipboard]
+                osc_52 = "mirror"
+            "#
+            ),
+            Osc52Policy::Mirror
+        );
+        assert_eq!(
+            resolve(
+                r#"
+                [client.nekomata.clipboard]
+                osc_52 = "system"
+            "#
+            ),
+            Osc52Policy::System
+        );
+    }
 }

@@ -32,8 +32,16 @@ size_px = 16
 nekomata honors fonts (family, size, style, fallbacks, OpenType features),
 colors (including the extended palette and minimum contrast), the cursor, and
 the keymap actions for copy, paste, font size, scrolling, prompt navigation
-and search. It does not yet honor `window`, `shader`, `mouse` or `clipboard`;
-such settings are silently ignored. Fonts are installed OS fonts chosen by
+and search. It does not yet honor `window`, `shader` or `mouse`; such settings
+are silently ignored.
+
+Programs can copy to the system clipboard with OSC 52 escape sequences only
+after you opt in, as in felis:
+
+```toml
+[clipboard]
+osc_52 = "system"
+``` Fonts are installed OS fonts chosen by
 name.
 
 The configured font size applies when the GUI starts and to new workspaces.
