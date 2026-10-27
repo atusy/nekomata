@@ -249,26 +249,6 @@ fn parse_keymap(
         .collect()
 }
 
-/// felis's binding kinds that act on one terminal or felis session; they
-/// belong in felis's `[keymap]`.
-const TERMINAL_KINDS: &[&str] = &[
-    "send_string",
-    "paste",
-    "copy",
-    "reload",
-    "detach",
-    "toggle_fullscreen",
-    "font_size",
-    "scroll",
-    "scroll_to_prompt",
-    "open_scrollback_search",
-    "switch_session",
-    "new_session",
-    "kill_session",
-    "pipe",
-    "run",
-];
-
 /// `None` is `unbind`.
 fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
     let binding = value
@@ -348,12 +328,11 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
         "command_palette" => (Some(Action::Palette), &[]),
         "new_workspace" => (Some(Action::NewWorkspace), &[]),
         "open_workspaces" => (Some(Action::OpenWorkspaces), &[]),
-        kind if TERMINAL_KINDS.contains(&kind) => {
+        _ => {
             return Err(format!(
-                "`{kind}` is a terminal binding; set it in felis's config.toml"
+                "unknown kind `{kind}`; terminal bindings may belong in felis's config.toml"
             ));
         }
-        _ => return Err(format!("unknown kind `{kind}`")),
     };
     if let Some(unknown) = binding
         .keys()
@@ -786,14 +765,16 @@ mod tests {
     }
 
     #[test]
-    fn every_felis_terminal_kind_points_to_felis_document() {
-        for kind in TERMINAL_KINDS {
+    fn unknown_kinds_suggest_the_terminal_document_without_claiming_support() {
+        for kind in ["copy", "run", "new_tba", "future_terminal_action"] {
             let (config, warnings) =
                 parse(&format!("[keymap]\n\"alt+q\" = {{ kind = \"{kind}\" }}")).unwrap();
             assert_eq!(config.keymap, AppKeymap::default(), "{kind}");
-            assert!(
-                matches!(&warnings[..], [warning] if warning.contains("is a terminal binding")),
-                "{kind}: {warnings:?}"
+            assert_eq!(
+                warnings,
+                [format!(
+                    "`keymap.\"alt+q\"` is dropped: unknown kind `{kind}`; terminal bindings may belong in felis's config.toml"
+                )]
             );
         }
     }

@@ -86,6 +86,10 @@ means Alt+W followed by C.
 - Copy, paste, font size, scrolling and search are terminal actions and are
   bound in felis's keymap, not here.
 
+Unknown application `kind` values are dropped with a warning suggesting that
+terminal bindings may belong in felis's `config.toml`. This is a general hint,
+not a claim that felis recognizes the kind or that nekomata implements it.
+
 ## Clipboard events
 
 The window delivers Cmd+X / Cmd+C / Cmd+V on macOS, and Ctrl+X / Ctrl+C /
