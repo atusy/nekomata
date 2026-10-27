@@ -121,3 +121,62 @@ impl Drop for SessionPicker {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attaching_closes_the_picker() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let mut picker = SessionPicker::default();
+        picker.query = "0123".into();
+        *picker.roster.lock().unwrap() = Some(Ok(vec![]));
+        let mut open = true;
+        let mut frame = || {
+            crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                assert_eq!(picker.show(&runtime, ui.ctx(), &mut open), None);
+            })
+        };
+        // A window lays itself out invisibly in its first frame.
+        drop(frame());
+        let output = frame();
+        assert!(open, "showing alone keeps the picker open");
+        let button = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Attach" => {
+                    Some(text.pos + egui::vec2(5.0, 5.0))
+                }
+                _ => None,
+            })
+            .expect("the picker must show its Attach button");
+        let mut selected = None;
+        for pressed in [true, false] {
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(button),
+                        egui::Event::PointerButton {
+                            pos: button,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    selected = selected
+                        .take()
+                        .or(picker.show(&runtime, ui.ctx(), &mut open))
+                },
+            );
+        }
+        assert_eq!(selected.as_deref(), Some("0123"));
+        assert!(!open, "a selection must close the picker");
+    }
+}
