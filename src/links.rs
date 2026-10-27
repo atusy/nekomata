@@ -280,9 +280,20 @@ fn plan(platform: Platform, launch: &Launch) -> Vec<Step> {
             ]
             .map(OsString::from)
             .to_vec(),
-            vec!["xdg-open".into(), folder.into()],
+            vec!["xdg-open".into(), directory_argument(folder)],
         ],
     }
+}
+
+/// `folder` with a trailing slash, which makes path lookup fail unless it
+/// is a directory: a folder replaced by a file or a symlink to one after
+/// `resolve` checked it is refused instead of opened.
+fn directory_argument(folder: &Path) -> OsString {
+    let mut argument = folder.as_os_str().to_owned();
+    if !argument.as_bytes().ends_with(b"/") {
+        argument.push("/");
+    }
+    argument
 }
 
 fn command(step: &[OsString]) -> tokio::process::Command {
@@ -476,7 +487,17 @@ mod tests {
             "['file:///tmp/x/a%2Cb%27c%22%5Bd%5D.sh']"
         );
         assert_eq!(linux[0][linux[0].len() - 1], "''");
-        assert_eq!(linux[1], [OsString::from("xdg-open"), "/tmp/x".into()]);
+        // The trailing slash makes path lookup demand a directory, even if
+        // the folder were swapped for a file after it was checked.
+        assert_eq!(linux[1], [OsString::from("xdg-open"), "/tmp/x/".into()]);
+        let root = Launch::Reveal {
+            item: "/".into(),
+            folder: "/".into(),
+        };
+        assert_eq!(
+            plan(Platform::Linux, &root)[1],
+            [OsString::from("xdg-open"), "/".into()]
+        );
     }
 
     #[test]
