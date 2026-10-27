@@ -737,7 +737,13 @@ mod tests {
     fn holding_a_bound_key_repeats_its_action() {
         let (actions, remaining) = consume_events(vec![
             press(Key::PageUp, Modifiers::SHIFT),
-            press(Key::PageUp, Modifiers::SHIFT),
+            Event::Key {
+                key: Key::PageUp,
+                physical_key: None,
+                pressed: true,
+                repeat: true,
+                modifiers: Modifiers::SHIFT,
+            },
         ]);
         let scroll = Action::Terminal(TerminalAction::Scroll(
             felis_client_core::ScrollStep::HalfPageUp,
