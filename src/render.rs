@@ -70,7 +70,8 @@ const MAX_REQUESTED_ROWS: u32 = 500;
 /// every other client attached to it.
 pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<RequestedDims> {
     let fit = |extent: f32, cell: u32, max: u32| {
-        // A NaN extent (or ppp) fails the comparison as well.
+        // A zero cell (a degenerate font metric) would divide to infinity; a
+        // NaN extent or ppp fails the comparison by itself.
         let count = (extent * ppp / cell as f32).floor();
         (cell > 0 && count >= 1.0).then(|| (count as u32).min(max))
     };
