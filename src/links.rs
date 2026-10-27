@@ -58,7 +58,9 @@ impl LinkOpener {
     /// click is refused visibly rather than deferred: a deferred launch could
     /// fire up to `OPENER_TIMEOUT` later, after the user has moved on.
     pub fn request(&mut self, target: ActivationTarget) {
-        if self.task.is_some() {
+        // A launcher that finished after this frame's tick is idle; its
+        // result is still collected by the next tick.
+        if self.task.as_ref().is_some_and(|task| !task.is_finished()) {
             self.error = Some(BUSY.into());
         } else {
             self.queued = Some(target);
@@ -69,7 +71,10 @@ impl LinkOpener {
     pub fn tick(&mut self, runtime: &tokio::runtime::Runtime, ctx: &egui::Context) {
         if let Some(result) = self.result.lock().unwrap().take() {
             self.task = None;
-            self.error = result.err();
+            // A click accepted since then supersedes the old outcome.
+            if self.queued.is_none() {
+                self.error = result.err();
+            }
         }
         let Some(target) = self.queued.take() else {
             return;
@@ -510,6 +515,29 @@ mod tests {
         assert_eq!(opener.error, None);
         opener.request(parse("https://example.org/fourth"));
         assert!(opener.queued.is_some());
+    }
+
+    #[test]
+    fn a_click_after_the_launcher_finished_is_accepted_before_the_next_tick() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let mut opener = LinkOpener::default();
+        // The launcher finished after this frame's tick but before the click.
+        let task = runtime.spawn(async {});
+        while !task.is_finished() {
+            std::thread::yield_now();
+        }
+        opener.task = Some(task);
+        *opener.result.lock().unwrap() = Some(Err("old failure".into()));
+        // A missing file fails before any launcher runs, so the test opens nothing.
+        opener.request(parse("file:///nonexistent/nekomata-link-test"));
+        assert_eq!(opener.error, None);
+        assert!(opener.queued.is_some());
+        opener.tick(&runtime, &egui::Context::default());
+        assert_eq!(opener.error, None);
+        assert!(opener.queued.is_none());
     }
 
     #[test]
