@@ -911,9 +911,10 @@ mod tests {
         });
         let sent = session.state.lock().unwrap().pull.sent();
         session.send(InputMsg::KeyBytes(b"printf '\nPULL_LATEST\n'\n".to_vec()));
-        // No visible frame is submitted while this pane is hidden. At most
-        // the already outstanding pull may be answered during that interval.
-        std::thread::sleep(Duration::from_millis(200));
+        // No visible frame is submitted while this pane is hidden, and only
+        // frame_submitted issues pulls, so new output alone must not pull; at
+        // most the already outstanding pull is answered. Waiting on a clock
+        // here would observe nothing more.
         assert_eq!(session.state.lock().unwrap().pull.sent(), sent);
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "PULL_LATEST") && state.render_ready()
