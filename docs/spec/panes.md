@@ -73,12 +73,12 @@ A CLI command targets a window as follows:
 1. `--window`, when given.
 2. Otherwise, if `NEKOMATA_WORKSPACE_ID` holds a workspace ID (else, if the
    legacy `NEKOMATA_SESSION_ID` does), the window that workspace is attached
-   to. If that workspace has no window, the nekomata daemon is unreachable,
-   or `NEKOMATA_DAEMON_INSTANCE` is set and names a daemon other than the
-   running one, the command fails; it does not fall back further. A restarted
-   daemon numbers workspaces from 1 again, so the instance check keeps a shell
-   from reaching an unrelated window. A shell without
-   `NEKOMATA_DAEMON_INSTANCE` resolves by workspace ID alone.
+   to. The command fails, without falling back further, if that workspace no
+   longer exists or has no window, if the nekomata daemon is unreachable, or
+   if `NEKOMATA_DAEMON_INSTANCE` is non-empty and names a daemon other than
+   the running one. A restarted daemon numbers workspaces from 1 again, so the
+   instance check keeps a shell from reaching an unrelated window. A shell
+   without `NEKOMATA_DAEMON_INSTANCE` resolves by workspace ID alone.
 3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
 4. Otherwise the only running GUI window. With no window or several, the
    command fails; with several, it reports the

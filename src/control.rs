@@ -332,7 +332,19 @@ fn window_of_workspace(
     workspaces
         .iter()
         .find(|workspace| workspace.id == id)
-        .and_then(|workspace| workspace.window)
+        .with_context(|| {
+            format!(
+                "the shell's workspace no longer exists{}; pass --window WINDOW_ID",
+                // With nothing listed to compare tokens with, a restart is
+                // the likely cause but cannot be confirmed.
+                if instance.is_some() && workspaces.is_empty() {
+                    " (the nekomata daemon may have restarted)"
+                } else {
+                    ""
+                }
+            )
+        })?
+        .window
         .context("the shell's workspace is not attached to a window")
 }
 
@@ -722,6 +734,23 @@ mod tests {
         // Shells started before the token existed keep resolving by ID alone.
         assert_eq!(window_of_workspace(&workspaces, 1, None).unwrap(), 11);
         assert!(window_of_workspace(&workspaces, 2, Some("current")).is_err());
+        // An earlier daemon's shell may find an empty listing to compare with.
+        assert!(
+            window_of_workspace(&[], 1, Some("earlier"))
+                .unwrap_err()
+                .to_string()
+                .contains("restarted")
+        );
+        let detached = [crate::daemon::Summary {
+            window: None,
+            ..workspaces[0].clone()
+        }];
+        assert!(
+            window_of_workspace(&detached, 1, Some("current"))
+                .unwrap_err()
+                .to_string()
+                .contains("not attached")
+        );
     }
 
     #[test]
