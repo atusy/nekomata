@@ -6,9 +6,9 @@ mod command_palette;
 mod commands;
 mod control;
 mod daemon;
+mod doctor;
 mod font_size;
 mod input;
-mod doctor;
 mod layout;
 mod links;
 #[cfg(test)]
