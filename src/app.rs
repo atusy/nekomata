@@ -1222,7 +1222,9 @@ fn config_problems_banner(
             .show(ui, |ui| {
                 for problem in problems.iter() {
                     let color = match problem.severity {
-                        Severity::Error => ui.visuals().error_fg_color,
+                        // egui's error red falls just short of WCAG AA on
+                        // the panel background; the workspace error's does not.
+                        Severity::Error => egui::Color32::LIGHT_RED,
                         Severity::Warning => ui.visuals().warn_fg_color,
                     };
                     // Monospace keeps the caret of toml's source excerpt
@@ -3276,6 +3278,27 @@ mod tests {
             .find(|(text, ..)| *text == shown)
             .expect("the problem is listed");
         assert_eq!(*family, egui::FontFamily::Monospace);
+    }
+
+    #[test]
+    fn configuration_errors_use_the_window_error_red_and_warnings_another_color() {
+        use crate::config_report::Problem;
+        let mut problems = vec![
+            Problem::error("/a.toml", "broken"),
+            Problem::warning("/b.toml", "unknown key `x`"),
+        ];
+        let shown: Vec<String> = problems.iter().map(ToString::to_string).collect();
+        let entries = banner_entries(&mut problems);
+        let color = |shown: &str| {
+            entries
+                .iter()
+                .find(|(text, ..)| text == shown)
+                .map(|(.., color)| *color)
+                .expect("the problem is listed")
+        };
+        // The workspace error's red, which reads on the panel background.
+        assert_eq!(color(&shown[0]), egui::Color32::LIGHT_RED);
+        assert_ne!(color(&shown[1]), egui::Color32::LIGHT_RED);
     }
 
     #[test]
