@@ -222,7 +222,7 @@ impl Renderer {
                 self.size = size;
             }
             if self.color_revision != state.colors.revision() {
-                self.gpu.set_theme(&state.colors.theme());
+                self.gpu.set_theme(state.colors.theme());
                 self.color_revision = state.colors.revision();
             }
             self.gpu.set_reverse_video(state.screen.reverse_video());
