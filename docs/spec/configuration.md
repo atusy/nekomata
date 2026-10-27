@@ -37,8 +37,8 @@ nekomata applies:
 - `clipboard.osc_52`: where a program's OSC 52 write lands (see
   [terminal](terminal.md#osc-52-clipboard-writes)). `"mirror"`, felis's
   default, keeps it in the felis daemon's mirror; `"system"` also writes it to
-  the system clipboard. `clipboard.use_os_clipboard = false` makes
-  `"system"` behave like `"mirror"`, as in felis.
+  the system clipboard. As in felis, `clipboard.use_os_clipboard = false`
+  keeps OSC 52 writes off the system clipboard even under `"system"`.
 
 nekomata does not apply `window`, `shader` or `mouse`, and applies
 `clipboard.use_os_clipboard` only to OSC 52 writes: nekomata's own copy and
