@@ -1,6 +1,7 @@
 //! The application-layer document nekomata owns, beside felis's shared one.
 use std::path::{Path, PathBuf};
 
+use crate::config_report::printable;
 use crate::layout::{Axis, Direction};
 use crate::shortcuts::{Action, AppKeymap};
 use felis_client_core::Chord;
@@ -55,22 +56,6 @@ fn read(path: &Path, warnings: &mut Warnings) -> anyhow::Result<AppConfig> {
             printable(&error)
         )
     })
-}
-
-/// Escapes control characters, which TOML strings and quoted keys can
-/// carry, so a config file cannot drive the terminal showing stderr.
-/// Line breaks and tabs stay: they cannot, and toml's parse errors lay
-/// out a source excerpt with them.
-fn printable(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        if c.is_control() && !matches!(c, '\n' | '\t') {
-            out.extend(c.escape_default());
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// The document resolved against the platform: what the GUI applies.
@@ -576,7 +561,6 @@ mod tests {
         let shown = printable(&warnings[0]);
         assert!(!shown.chars().any(char::is_control), "{shown}");
         assert!(shown.contains("\\u{1b}]0;x\\u{7}"), "{shown}");
-        assert_eq!(printable("keymap.\"alt+x\" ✓"), "keymap.\"alt+x\" ✓");
     }
 
     #[test]
@@ -587,7 +571,6 @@ mod tests {
         let error = read(&path, &mut Warnings::new()).unwrap_err().to_string();
         // toml points at the error on the line below the excerpt.
         assert!(error.contains("\n1 | [appearance\n"), "{error}");
-        assert_eq!(printable("a\nb\tc\u{1b}"), "a\nb\tc\\u{1b}");
     }
 
     #[test]

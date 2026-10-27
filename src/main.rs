@@ -4,6 +4,7 @@ mod cli;
 mod colors;
 mod command_palette;
 mod commands;
+mod config_report;
 mod control;
 mod daemon;
 mod font_size;

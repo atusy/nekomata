@@ -14,7 +14,7 @@ nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The fel
 - `src/control.rs`: per-window CLI commands and workspace-aware window discovery.
 - `src/layout.rs`, `src/shortcuts.rs`: pane layout, navigation, and keyboard actions.
 - `src/commands.rs`, `src/command_palette.rs`, `src/font_size.rs`, `src/picker.rs`: the public command registry, palette, the font size control, and the felis session picker.
-- `src/app_config.rs`, `src/ui_font.rs`: nekomata's own `config.toml` (UI font and application keymap) and UI font lookup; `src/terminal_config.rs` resolves felis's shared document.
+- `src/app_config.rs`, `src/ui_font.rs`: nekomata's own `config.toml` (UI font and application keymap) and UI font lookup; `src/terminal_config.rs` resolves felis's shared document. `src/config_report.rs` formats both documents' problems for display.
 - `src/theme.rs`: shared UI colors, metrics, widget styles, and chrome fonts.
 - `src/test_support.rs`, `tests/support/`: CPU-only egui test helpers, and test-only renderer baselines, glyph checks and benchmarks included through `#[path]`.
 - `share/`: fish integration and macOS bundle metadata/native launcher.
