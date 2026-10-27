@@ -48,6 +48,7 @@ pub struct Server {
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_MESSAGE: u64 = 65536;
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+const MAX_ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 
 pub(crate) fn directory() -> Result<PathBuf> {
     // SAFETY: geteuid has no preconditions and cannot fail.
@@ -176,14 +177,19 @@ async fn accept_each<S, F>(mut accept: impl FnMut() -> F, mut handle: impl FnMut
 where
     F: Future<Output = std::io::Result<S>>,
 {
+    let mut backoff = ACCEPT_BACKOFF;
     loop {
         match accept().await {
-            Ok(stream) => handle(stream),
+            Ok(stream) => {
+                backoff = ACCEPT_BACKOFF;
+                handle(stream);
+            }
             // Errors such as EMFILE pass once connections close; retrying
             // without a pause would spin while the condition lasts.
             Err(err) => {
                 eprintln!("nekomata: accept control connection: {err}");
-                tokio::time::sleep(ACCEPT_BACKOFF).await;
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(MAX_ACCEPT_BACKOFF);
             }
         }
     }
@@ -591,7 +597,7 @@ mod tests {
         std::os::unix::net::UnixStream::connect(&path).unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn transient_accept_errors_do_not_stop_the_control_socket() {
         let mut results = std::collections::VecDeque::from([
             Err(std::io::Error::from_raw_os_error(libc::EMFILE)),
@@ -612,6 +618,42 @@ mod tests {
         ));
         assert_eq!(handled.recv().await, Some(1));
         task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sustained_accept_errors_back_off_until_one_succeeds() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = calls.clone();
+        let mut results: std::collections::VecDeque<std::io::Result<u8>> = (0..5)
+            .map(|_| Err(std::io::Error::from_raw_os_error(libc::EMFILE)))
+            .chain([Ok(1)])
+            .chain((0..2).map(|_| Err(std::io::Error::from_raw_os_error(libc::EMFILE))))
+            .chain([Ok(2)])
+            .collect();
+        let (tx, mut handled) = mpsc::unbounded_channel();
+        let task = tokio::spawn(accept_each(
+            move || {
+                record.lock().unwrap().push(tokio::time::Instant::now());
+                let next = results.pop_front();
+                async move {
+                    match next {
+                        Some(result) => result,
+                        None => std::future::pending().await,
+                    }
+                }
+            },
+            move |stream| tx.send(stream).unwrap(),
+        ));
+        assert_eq!(handled.recv().await, Some(1));
+        assert_eq!(handled.recv().await, Some(2));
+        task.abort();
+        let calls = calls.lock().unwrap();
+        let gaps: Vec<_> = calls
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).as_millis())
+            .collect();
+        // Doubles to the cap while errors persist; a success resets it.
+        assert_eq!(gaps, [100, 200, 400, 800, 1000, 0, 100, 200, 0]);
     }
 
     #[test]
