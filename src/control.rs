@@ -128,23 +128,36 @@ impl Server {
         let _guard = runtime.enter();
         let listener = listen(&path).context("bind nekomata control socket")?;
         listener.set_nonblocking(true)?;
-        let listener = UnixListener::from_std(listener)?;
+        let listener = std::sync::Arc::new(UnixListener::from_std(listener)?);
         let (tx, requests) = mpsc::channel::<Message>(16);
-        let task = runtime.spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
+        let task = runtime.spawn(accept_each(
+            move || {
+                let listener = listener.clone();
+                async move { listener.accept().await.map(|(stream, _)| stream) }
+            },
+            move |stream| {
                 let tx = tx.clone();
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(DEADLINE, serve(stream, tx, ctx)).await;
                 });
-            }
-        });
+            },
+        ));
         Ok(Self {
             window,
             requests,
             task,
             path,
         })
+    }
+}
+
+async fn accept_each<S, F>(mut accept: impl FnMut() -> F, mut handle: impl FnMut(S))
+where
+    F: Future<Output = std::io::Result<S>>,
+{
+    while let Ok(stream) = accept().await {
+        handle(stream);
     }
 }
 
