@@ -152,14 +152,8 @@ impl Snapshot {
                     "invalid felis session ID"
                 );
             }
-            match &pane.target {
-                crate::session::Target::Local(path) => {
-                    ensure!(path.is_absolute(), "daemon socket must be absolute")
-                }
-                crate::session::Target::Ssh { host, .. } => ensure!(
-                    !host.is_empty() && !host.starts_with('-'),
-                    "invalid SSH host"
-                ),
+            if let crate::session::Target::Local(path) = &pane.target {
+                ensure!(path.is_absolute(), "daemon socket must be absolute")
             }
         }
         Ok(())

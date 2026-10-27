@@ -815,11 +815,11 @@ impl App {
                             .send(Err("pane already has an attach in progress".into()));
                         continue;
                     }
-                    if session.is_empty()
-                        || ssh
-                            .as_ref()
-                            .is_some_and(|s| s.is_empty() || s.starts_with('-'))
-                    {
+                    let Ok(ssh) = ssh.map(|host| host.parse()).transpose() else {
+                        let _ = message.reply.send(Err("invalid attach target".into()));
+                        continue;
+                    };
+                    if session.is_empty() {
                         let _ = message.reply.send(Err("invalid attach target".into()));
                         continue;
                     }
@@ -3602,7 +3602,7 @@ mod tests {
             assert_eq!(
                 app.panes[&1].session.target,
                 Target::Ssh {
-                    host: "nekomata-test-host".into(),
+                    host: "nekomata-test-host".parse().unwrap(),
                     socket: Some(remote_socket),
                 }
             );

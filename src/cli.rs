@@ -137,7 +137,7 @@ fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
             "--ssh" if verb == "attach" && ssh.is_none() => {
                 let host = args
                     .next()
-                    .filter(|s| !s.is_empty() && !s.starts_with('-'))
+                    .filter(|s| s.parse::<crate::ssh::Host>().is_ok())
                     .ok_or("invalid SSH host")?;
                 ssh = Some(host.to_owned());
             }

@@ -649,7 +649,7 @@ mod tests {
             &runtime,
             ctx,
             Target::Ssh {
-                host: "nekomata-test-host".into(),
+                host: "nekomata-test-host".parse().unwrap(),
                 socket: Some(quoted_socket.to_str().unwrap().into()),
             },
             session.state.clone(),

@@ -11,6 +11,36 @@ use tokio::{
     process::{Child, Command},
 };
 
+/// An SSH destination; one starting with `-` would read as an ssh option.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(transparent)]
+pub struct Host(String);
+
+impl std::str::FromStr for Host {
+    type Err = anyhow::Error;
+
+    fn from_str(host: &str) -> Result<Self> {
+        if host.is_empty() || host.starts_with('-') {
+            bail!("invalid SSH host");
+        }
+        Ok(Self(host.to_owned()))
+    }
+}
+
+impl std::ops::Deref for Host {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Host {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 fn relay_command(host: &str, socket: Option<&str>) -> Command {
     // SSH joins remote argv into shell text. Quote an explicit socket for that
     // shell, including embedded apostrophes. None keeps the remote default.
@@ -100,6 +130,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hosts_ssh_would_read_as_options_are_rejected() {
+        for host in ["", "-oProxyCommand=false", "-"] {
+            assert!(host.parse::<Host>().is_err(), "{host:?}");
+        }
+        for host in ["dev", "user@dev", "dev-1"] {
+            assert_eq!(&*host.parse::<Host>().unwrap(), host);
+        }
+    }
 
     #[test]
     fn host_cannot_be_read_as_an_ssh_option() {

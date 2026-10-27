@@ -19,11 +19,11 @@ use std::{path::PathBuf, time::Duration};
 use tokio::sync::Notify;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(from = "StoredTarget")]
+#[serde(try_from = "StoredTarget")]
 pub enum Target {
     Local(PathBuf),
     Ssh {
-        host: String,
+        host: crate::ssh::Host,
         socket: Option<String>,
     },
 }
@@ -46,13 +46,19 @@ enum StoredSsh {
     },
 }
 
-impl From<StoredTarget> for Target {
-    fn from(value: StoredTarget) -> Self {
-        match value {
-            StoredTarget::Local(path) => Self::Local(path),
-            StoredTarget::Ssh(StoredSsh::Host(host)) => Self::Ssh { host, socket: None },
-            StoredTarget::Ssh(StoredSsh::Socket { host, socket }) => Self::Ssh { host, socket },
-        }
+impl TryFrom<StoredTarget> for Target {
+    type Error = anyhow::Error;
+
+    fn try_from(value: StoredTarget) -> Result<Self> {
+        let (host, socket) = match value {
+            StoredTarget::Local(path) => return Ok(Self::Local(path)),
+            StoredTarget::Ssh(StoredSsh::Host(host)) => (host, None),
+            StoredTarget::Ssh(StoredSsh::Socket { host, socket }) => (host, socket),
+        };
+        Ok(Self::Ssh {
+            host: host.parse()?,
+            socket,
+        })
     }
 }
 
@@ -67,7 +73,7 @@ impl Target {
         match self {
             Self::Local(path) => Carrier::Local(path.clone().into()),
             Self::Ssh { host, .. } => Carrier::Ssh {
-                destination: host.clone(),
+                destination: host.to_string(),
                 // felis splices these before the destination; end options there.
                 ssh_args: vec!["-oBatchMode=yes".into(), "--".into()],
             },
@@ -946,7 +952,7 @@ mod tests {
     #[test]
     fn ssh_carrier_ends_options_before_the_host() {
         let target = Target::Ssh {
-            host: "dev".into(),
+            host: "dev".parse().unwrap(),
             socket: None,
         };
         let Carrier::Ssh { ssh_args, .. } = target.carrier() else {
@@ -956,17 +962,29 @@ mod tests {
     }
 
     #[test]
+    fn retained_ssh_targets_reject_hosts_ssh_would_read_as_options() {
+        for saved in [
+            r#"{"Ssh":"-oProxyCommand=false"}"#,
+            r#"{"Ssh":{"host":"-oProxyCommand=false","socket":null}}"#,
+            r#"{"Ssh":""}"#,
+        ] {
+            let error = serde_json::from_str::<Target>(saved).unwrap_err();
+            assert!(error.to_string().contains("invalid SSH host"), "{error}");
+        }
+    }
+
+    #[test]
     fn retained_ssh_targets_accept_old_hosts_and_round_trip_remote_sockets() {
         let legacy: Target = serde_json::from_str(r#"{"Ssh":"dev"}"#).unwrap();
         assert_eq!(
             legacy,
             Target::Ssh {
-                host: "dev".into(),
+                host: "dev".parse().unwrap(),
                 socket: None
             }
         );
         let target = Target::Ssh {
-            host: "dev".into(),
+            host: "dev".parse().unwrap(),
             socket: Some("relative.sock".into()),
         };
         let saved = serde_json::to_string(&target).unwrap();
@@ -1347,7 +1365,7 @@ mod tests {
             &runtime,
             ctx.clone(),
             Target::Ssh {
-                host: "nekomata-test-host".into(),
+                host: "nekomata-test-host".parse().unwrap(),
                 socket: None,
             },
             Some(format!("{id:032x}")),
@@ -1367,7 +1385,7 @@ mod tests {
             &runtime,
             ctx.clone(),
             Target::Ssh {
-                host: "nekomata-test-host".into(),
+                host: "nekomata-test-host".parse().unwrap(),
                 socket: None,
             },
             None,
