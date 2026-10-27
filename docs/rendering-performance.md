@@ -26,9 +26,12 @@ for the same-process initial/mesh/GPU comparison on Apple M4.
 
 ## Idle wakeups (2026-10-27)
 
-Windows no longer schedule a repaint every 250 ms; they repaint only when
-input, felis output, a workspace or control event, a cursor blink deadline or
-an egui animation asks for one. Measured in the Vitro Linux guest (Debian
+Windows no longer schedule a repaint every 250 ms. They repaint when
+something asks for one: input, felis output, workspace and control events,
+completed link, picker and search jobs, cursor blink deadlines, glyph atlas
+refills, egui animations and tooltips, and a few bounded retries (a failed
+render, a full workspace command queue, and the geometry autosave after a
+move or resize). Measured in the Vitro Linux guest (Debian
 ARM64, X11/openbox, llvmpipe, 4 vCPUs, debug build) with one pane, sampling
 `/proc/<pid>/stat` CPU time and the main thread's context switches over 60 s
 with no input:
