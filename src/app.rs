@@ -356,37 +356,35 @@ impl App {
                             }
                         }
                     }
-                    let panes = snapshot
-                        .panes
-                        .iter()
-                        .map(|(&pane_id, spec)| {
-                            let existing = spec.session.as_ref().and_then(|id| {
-                                self.panes.values().find(|pane| {
-                                    let state = pane.session.state.lock().unwrap();
-                                    pane.session.target == spec.target
-                                        && state.session_id.map(|i| format!("{i:032x}")).as_ref()
-                                            == Some(id)
-                                })
-                            });
-                            let pane = if let Some(existing) = existing {
-                                Pane::from_session(existing.session.clone())
-                            } else {
-                                Pane::connect(
-                                    &self.runtime,
-                                    ctx,
-                                    self.control.window,
-                                    Some((id, self.daemon_instance.as_deref())),
-                                    pane_id,
-                                    spec.clone(),
-                                    None,
-                                )
-                            };
-                            (pane_id, pane)
-                        })
-                        .collect();
-                    if let Some(pending) = &mut self.pending_workspace {
-                        pending.prepared(id, snapshot, panes);
-                    }
+                    let instance = self.daemon_instance.as_deref();
+                    let Some(pending) = &mut self.pending_workspace else {
+                        continue;
+                    };
+                    let current = &self.panes;
+                    let (runtime, window) = (&self.runtime, self.control.window);
+                    pending.prepared(id, snapshot, |pane_id, spec| {
+                        let existing = spec.session.as_ref().and_then(|session| {
+                            current.values().find(|pane| {
+                                let state = pane.session.state.lock().unwrap();
+                                pane.session.target == spec.target
+                                    && state.session_id.map(|i| format!("{i:032x}")).as_ref()
+                                        == Some(session)
+                            })
+                        });
+                        if let Some(existing) = existing {
+                            Pane::from_session(existing.session.clone())
+                        } else {
+                            Pane::connect(
+                                runtime,
+                                ctx,
+                                window,
+                                Some((id, instance)),
+                                pane_id,
+                                spec.clone(),
+                                None,
+                            )
+                        }
+                    });
                 }
                 (Operation::Finish, result) => {
                     let Some(pending) = self.pending_workspace.take() else {

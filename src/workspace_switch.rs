@@ -77,9 +77,19 @@ impl<P> Switch<P> {
         }
     }
 
-    /// The daemon reserved `id`; `panes` connect the destination `snapshot`.
-    pub fn prepared(&mut self, id: u64, snapshot: Snapshot, panes: BTreeMap<u64, P>) {
+    /// The daemon reserved `id`; `connect` opens the panes of its `snapshot`.
+    pub fn prepared(
+        &mut self,
+        id: u64,
+        snapshot: Snapshot,
+        mut connect: impl FnMut(u64, &PaneSpec) -> P,
+    ) {
         if matches!(self.phase, Phase::Preparing) {
+            let panes = snapshot
+                .panes
+                .iter()
+                .map(|(&id, spec)| (id, connect(id, spec)))
+                .collect();
             self.phase = Phase::Connecting {
                 id,
                 snapshot,
@@ -271,14 +281,13 @@ mod tests {
         Switch<std::rc::Rc<Status>>,
         BTreeMap<u64, std::rc::Rc<Status>>,
     ) {
-        let snapshot = destination(sessions);
-        let panes: BTreeMap<_, _> = snapshot
-            .panes
-            .keys()
-            .map(|&id| (id, std::rc::Rc::new(Status::new(PaneStatus::Connecting))))
-            .collect();
+        let mut panes = BTreeMap::new();
         let mut switch = Switch::new(None);
-        switch.prepared(9, snapshot, panes.clone());
+        switch.prepared(9, destination(sessions), |id, _| {
+            let pane = std::rc::Rc::new(Status::new(PaneStatus::Connecting));
+            panes.insert(id, pane.clone());
+            pane
+        });
         (switch, panes)
     }
 
@@ -387,7 +396,7 @@ mod tests {
     fn a_reservation_arriving_after_cancellation_is_released() {
         let mut switch = Switch::new(None);
         switch.cancel("gone".into());
-        switch.prepared(9, destination(&[None]), BTreeMap::from([(1, ())]));
+        switch.prepared(9, destination(&[None]), |_, _| unreachable!());
         assert_eq!(switch.poll(|_| unreachable!(), false), Poll::Finish(None));
     }
 
