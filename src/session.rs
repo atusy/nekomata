@@ -74,7 +74,9 @@ impl Target {
             Self::Local(path) => Carrier::Local(path.clone().into()),
             Self::Ssh { host, .. } => Carrier::Ssh {
                 destination: host.to_string(),
-                // felis splices these before the destination; end options there.
+                // SSH panes connect through ssh::connect, not this carrier. felis
+                // splices these before the destination, so end options there
+                // should a caller ever hand it over.
                 ssh_args: vec!["-oBatchMode=yes".into(), "--".into()],
             },
         }
