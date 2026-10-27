@@ -35,8 +35,19 @@ daemon delivers each write to at most one window attached to the session.
 ## Links
 
 - Hovering a link embedded with OSC 8 shows its URL.
-- Cmd+click (macOS) or Ctrl+click (Linux) passes the URL to the default
-  application, through `xdg-open` on Linux (bundled with the Nix package).
+- Cmd+click (macOS) or Ctrl+click (Linux) passes an `http:`, `https:` or
+  `mailto:` URL to the default application, through `xdg-open` on Linux
+  (bundled with the Nix package).
+- A `file:` link is revealed instead of opened, so a link cannot run a script
+  or application whatever its label says. On macOS, Finder shows the file
+  selected (`open -R`). On Linux, the file manager shows the file through the
+  `org.freedesktop.FileManager1` D-Bus interface (`gdbus`); without that
+  service, `xdg-open` opens the folder that contains the file. The path is
+  resolved through symlinks and `..` first, and the hover hint says the file
+  will be revealed.
+- A `file:` link must name this machine: no host, `localhost` or this
+  machine's hostname. A link to another host, a relative path or a missing
+  file is not revealed; the reason is shown.
 - A link that fails felis's validation is not opened; the reason is shown.
 - Plain URL text is not turned into links.
 - The modifier counts only without Alt, and on macOS only without Ctrl. It is

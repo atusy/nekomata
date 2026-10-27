@@ -2002,11 +2002,7 @@ fn draw_pane(
         {
             match felis_client_core::ActivationTarget::parse(link.uri.as_str()) {
                 Ok(target) => {
-                    let hint = if cfg!(target_os = "macos") {
-                        "Cmd+click to open"
-                    } else {
-                        "Ctrl+click to open"
-                    };
+                    let hint = crate::links::hint(&target, cfg!(target_os = "macos"));
                     response.clone().on_hover_ui_at_pointer(|ui| {
                         ui.label(target.preview(240));
                         ui.label(hint);
