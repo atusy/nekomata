@@ -233,6 +233,7 @@ pub fn reject_all(requests: &mut mpsc::Receiver<Message>, reason: &str) {
 
 /// Abandoning a request drops its reply, which the GUI notices only through
 /// `reply.is_closed()` on a later frame, so wake it to settle the request.
+/// A connection that ends any other way wakes it too, which is harmless.
 async fn serve_within(
     deadline: Duration,
     stream: UnixStream,
