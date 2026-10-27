@@ -1320,7 +1320,12 @@ mod tests {
         let session = Session::new(&runtime, ctx.clone(), Some(format!("{id:032x}")), None);
         wait_for(&session, &ctx, &repaints, |state| state.connected);
         session.send(InputMsg::KeyBytes(b"\r".to_vec()));
-        // Grid messages arrive in order, so the marker follows the OSC 52 write.
+        wait_for(&session, &ctx, &repaints, |state| {
+            contains_text(state, "OSC52_WRITTEN")
+        });
+        // The daemon may compose the first marker's row ahead of the write; a
+        // further round trip guarantees a drive cycle has delivered it.
+        session.send(InputMsg::KeyBytes(b"\r".to_vec()));
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "OSC52_DONE")
         });
