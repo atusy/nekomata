@@ -30,6 +30,8 @@ replace() {
   shift
   mkdir -p "$home/Applications/nekomata.app"
   echo previous > "$home/Applications/nekomata.app/version"
+  # A subshell tested with && or || ignores errexit; the installer relies on it.
+  set +e
   (
     export HOME="$home"
     # shellcheck source=install-macos.sh
@@ -41,7 +43,9 @@ replace() {
       fail_sources+=("${source//@STAGING@/$staging}")
     done
     replace_application "$HOME/Applications/nekomata.app"
-  ) 2> "$home/stderr" && status=0 || status=$?
+  ) 2> "$home/stderr"
+  status=$?
+  set -e
 }
 
 fail() {
