@@ -75,8 +75,8 @@ the active session is disconnected or in the alternate screen.
 - On macOS, Option types the character your layout puts on the key, such as
   `@` for Option+L on a German layout. It works as Alt (Meta) only where it
   types nothing, for example with the arrow keys.
-- Outside macOS, Ctrl+Shift+- makes the font smaller, so press Ctrl+/ to send
-  Ctrl+_ (undo in Emacs and readline).
+- Ctrl+Shift+- makes the font smaller, so press Ctrl+/ to send Ctrl+_ (undo
+  in Emacs and readline).
 
 See the [terminal specification](../spec/terminal.md#keyboard-input) for the
 exact rules.
