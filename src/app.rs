@@ -2191,7 +2191,7 @@ fn mouse_input(
     })
 }
 
-/// egui zooms the whole window on Ctrl (Cmd on macOS) with -, = or 0 after
+/// egui zooms the whole window on Ctrl (Cmd on macOS) with -, =, + or 0 after
 /// the frame has already forwarded those keys to the program; nekomata's own
 /// font-size actions cover zooming.
 fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
@@ -2363,10 +2363,17 @@ mod tests {
     }
 
     #[test]
-    fn control_minus_and_plus_do_not_zoom_the_window() {
+    fn zoom_keys_do_not_zoom_the_window() {
         let ctx = egui::Context::default();
         leave_zoom_keys_to_the_terminal(&ctx);
-        for key in [egui::Key::Minus, egui::Key::Minus, egui::Key::Equals] {
+        // Num0 last would reset an unwanted zoom and hide it.
+        for key in [
+            egui::Key::Num0,
+            egui::Key::Minus,
+            egui::Key::Equals,
+            egui::Key::Plus,
+            egui::Key::Plus,
+        ] {
             let _ = crate::test_support::run(
                 &ctx,
                 egui::RawInput {

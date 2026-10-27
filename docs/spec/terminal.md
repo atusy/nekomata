@@ -25,9 +25,9 @@ Not supported: key release events and OSC 52 clipboard reads.
 - Text typed with Alt held is sent with Alt, which felis encodes as Escape
   followed by the character when it is a single ASCII character (Alt+B sends
   ESC b), except on macOS as described below.
-- Ctrl+-, Ctrl+= and Ctrl+0 (Cmd on macOS) do not scale the window's
-  interface; unless a keymap binds them, they reach the program like any
-  other key.
+- Ctrl (Cmd on macOS) with -, =, + or 0 does not scale the window's
+  interface; those keys follow the keymap and the rules above like any
+  other.
 - On macOS, Option types the character the keyboard layout composes, sent
   without Alt: Option+L on a German layout types `@`, not Alt+@. Option acts
   as Alt only where it composes no character, such as Option+Space, Option
