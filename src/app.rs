@@ -2289,9 +2289,9 @@ fn mouse_input(
     })
 }
 
-/// egui zooms the whole window on Ctrl (Cmd on macOS) with -, =, + or 0 after
-/// the frame has already forwarded those keys to the program; nekomata's own
-/// font-size actions cover zooming.
+/// Text size is the terminal font size, set by felis's font size actions.
+/// egui's built-in Cmd/Ctrl + `+` `=` `-` `0` would also rescale the whole UI
+/// whenever those keys are not bound to such an action.
 fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
 }
