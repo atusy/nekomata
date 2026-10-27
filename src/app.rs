@@ -1967,14 +1967,8 @@ fn draw_pane(
     // Split the unused fractional row between the top and bottom margins.
     let rows = crate::render::layout_rows(rect, renderer.cell_px()[1], ppp);
     let text_rect = crate::render::terminal_rect(rect, rows, ch, ppp);
-    // Pixel sizes change with DPI and font steps even when the grid does not.
-    if let Some(dims) = requested
-        && pane.requested != Some(dims)
-    {
-        if pane
-            .requested
-            .is_none_or(|old| (old.rows, old.cols) != (dims.rows, dims.cols))
-        {
+    if let Some((dims, grid_changed)) = resize_effect(pane.requested, requested) {
+        if grid_changed {
             pane.selection = None;
         }
         pane.requested = Some(dims);
@@ -2296,6 +2290,19 @@ fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
 }
 
+/// The resize that a frame's size calls for after `sent`: the size to send
+/// and whether its rows or columns differ, or `None` when nothing changed or
+/// the pane requests no size. Pixel sizes change with display scale and font
+/// steps even when the grid does not.
+fn resize_effect(
+    sent: Option<RequestedDims>,
+    now: Option<RequestedDims>,
+) -> Option<(RequestedDims, bool)> {
+    let now = now.filter(|now| sent != Some(*now))?;
+    let grid_changed = sent.is_none_or(|old| (old.rows, old.cols) != (now.rows, now.cols));
+    Some((now, grid_changed))
+}
+
 /// The OSC 8 URI of the link drawn at `cell`.
 fn link_at(shadow: &felis_client_core::ShadowScreen, cell: GridPos) -> Option<&str> {
     let id = shadow.screen().cell(cell.row, cell.col)?.link?;
@@ -2495,6 +2502,29 @@ mod tests {
         pane.search_query.clear();
         pane.navigate_search(true);
         assert!(!pane.session.search.search.lock().unwrap().active);
+    }
+
+    #[test]
+    fn a_resize_is_sent_for_pixel_changes_but_clears_only_on_grid_changes() {
+        let dims = |rows, cols, pixel_w| RequestedDims {
+            rows,
+            cols,
+            pixel_w,
+            pixel_h: rows * 20,
+        };
+        let sent = Some(dims(24, 80, 800));
+        assert_eq!(resize_effect(sent, sent), None);
+        assert_eq!(resize_effect(sent, None), None, "too small to request");
+        // A display scale change keeps the grid but not its pixels.
+        assert_eq!(
+            resize_effect(sent, Some(dims(24, 80, 1600))),
+            Some((dims(24, 80, 1600), false))
+        );
+        assert_eq!(
+            resize_effect(sent, Some(dims(24, 81, 810))),
+            Some((dims(24, 81, 810), true))
+        );
+        assert_eq!(resize_effect(None, sent), Some((dims(24, 80, 800), true)));
     }
 
     #[test]
