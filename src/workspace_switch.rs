@@ -104,36 +104,44 @@ impl<P> Switch<P> {
         self.phase = Phase::Cancelling { error, sent: false };
     }
 
+    /// Commits once every destination pane has connected, failed or ended.
+    /// Panes whose session ended leave the layout; failed panes stay and show
+    /// their error. A destination with no connected pane is cancelled.
     pub fn poll(&mut self, status: impl Fn(&P) -> PaneStatus, reply_closed: bool) -> Poll {
         let error = match &mut self.phase {
             Phase::Connecting {
                 snapshot, panes, ..
             } => {
-                let mut sessions = BTreeMap::new();
-                let mut error = None;
-                for (&id, pane) in panes.iter() {
-                    match status(pane) {
-                        PaneStatus::Connected(session) => {
-                            sessions.insert(id, session);
-                        }
-                        PaneStatus::Connecting => {}
-                        PaneStatus::Failed(failure) => {
-                            error = Some(failure);
-                            break;
-                        }
-                        PaneStatus::Ended => {
-                            error = Some("destination session ended".into());
-                            break;
+                if reply_closed {
+                    "workspace switch cancelled".to_owned()
+                } else {
+                    let mut sessions = BTreeMap::new();
+                    let mut ended = vec![];
+                    let mut failure = None;
+                    for (&id, pane) in panes.iter() {
+                        match status(pane) {
+                            PaneStatus::Connecting => return Poll::Wait,
+                            PaneStatus::Connected(session) => {
+                                sessions.insert(id, session);
+                            }
+                            PaneStatus::Failed(error) => {
+                                failure.get_or_insert(error);
+                            }
+                            PaneStatus::Ended => ended.push(id),
                         }
                     }
-                }
-                if reply_closed {
-                    error = Some("workspace switch cancelled".into());
-                }
-                match error {
-                    Some(error) => error,
-                    None if sessions.len() < panes.len() => return Poll::Wait,
-                    None => {
+                    if sessions.is_empty() {
+                        failure.unwrap_or_else(|| "destination session ended".into())
+                    } else {
+                        for id in ended {
+                            panes.remove(&id);
+                            snapshot.panes.remove(&id);
+                            crate::workspace::remove_pane(
+                                &mut snapshot.tabs,
+                                &mut snapshot.active,
+                                id,
+                            );
+                        }
                         for (id, session) in sessions {
                             if let Some(spec) = snapshot.panes.get_mut(&id) {
                                 spec.session = session.map(|id| format!("{id:032x}"));
@@ -301,21 +309,37 @@ mod tests {
         assert_eq!(switch.poll(|_| unreachable!(), false), Poll::Wait);
     }
 
-    #[test]
-    fn the_switch_commits_once_every_destination_pane_connects() {
-        let (mut switch, panes) = connecting(&[Some(&"a".repeat(32)), None]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
-        assert_eq!(switch.poll(status, false), Poll::Wait);
-        *panes[&2].borrow_mut() = PaneStatus::Connected(Some(0xb));
+    const A: &str = "0000000000000000000000000000000a";
+    const B: &str = "0000000000000000000000000000000b";
+
+    fn finish(switch: &mut Switch<std::rc::Rc<Status>>) -> Snapshot {
         let Poll::Finish(Some(snapshot)) = switch.poll(status, false) else {
             panic!("expected a commit")
         };
+        snapshot.validate().unwrap();
+        switch.finish_sent();
+        snapshot
+    }
+
+    fn failure(switch: Switch<std::rc::Rc<Status>>) -> String {
+        let Step::Failed { error, .. } = switch.finished(Ok(())) else {
+            panic!("expected a failed switch")
+        };
+        error
+    }
+
+    #[test]
+    fn the_switch_commits_once_every_destination_pane_connects() {
+        let (mut switch, panes) = connecting(&[Some(A), Some(B)]);
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        assert_eq!(switch.poll(status, false), Poll::Wait);
+        *panes[&2].borrow_mut() = PaneStatus::Connected(Some(0xc));
+        let snapshot = finish(&mut switch);
         assert_eq!(
             snapshot.panes[&2].session.as_deref(),
-            Some(format!("{:032x}", 0xb).as_str()),
+            Some(format!("{:032x}", 0xc).as_str()),
             "the commit records the sessions the panes reached"
         );
-        switch.finish_sent();
         assert_eq!(switch.poll(status, false), Poll::Wait);
         let Step::Committed { id, panes, .. } = switch.finished(Ok(())) else {
             panic!("expected a committed switch")
@@ -326,64 +350,112 @@ mod tests {
 
     #[test]
     fn an_unsent_commit_is_retried() {
-        let (mut switch, panes) = connecting(&[None]);
+        let (mut switch, panes) = connecting(&[Some(A)]);
         *panes[&1].borrow_mut() = PaneStatus::Connected(Some(1));
         assert!(matches!(switch.poll(status, false), Poll::Finish(Some(_))));
         assert!(matches!(switch.poll(status, false), Poll::Finish(Some(_))));
     }
 
     #[test]
-    fn a_failing_destination_pane_cancels_the_switch() {
-        let (mut switch, panes) = connecting(&[None, None]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(1));
-        *panes[&2].borrow_mut() = PaneStatus::Failed("unreachable".into());
+    fn an_unreachable_destination_pane_stays_as_an_error_pane() {
+        let (mut switch, panes) = connecting(&[Some(A), Some(B)]);
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        *panes[&2].borrow_mut() = PaneStatus::Failed("no such session".into());
+        let snapshot = finish(&mut switch);
+        assert_eq!(snapshot.tabs.len(), 2);
+        assert_eq!(
+            snapshot.panes[&2].session.as_deref(),
+            Some(B),
+            "the failed pane keeps its session reference"
+        );
+        let Step::Committed { panes, .. } = switch.finished(Ok(())) else {
+            panic!("expected a committed switch")
+        };
+        assert_eq!(panes.len(), 2);
+    }
+
+    #[test]
+    fn a_pane_still_connecting_holds_the_commit() {
+        let (mut switch, panes) = connecting(&[Some(A), Some(B)]);
+        *panes[&1].borrow_mut() = PaneStatus::Failed("unreachable".into());
+        assert_eq!(switch.poll(status, false), Poll::Wait);
+    }
+
+    #[test]
+    fn ended_destination_sessions_leave_the_layout() {
+        let mut snapshot = destination(&[Some(A), Some(B), Some(A)]);
+        // Pane 3 shares the first tab with pane 1.
+        snapshot.tabs.pop();
+        snapshot.tabs[0].layout = Layout::Split {
+            axis: crate::layout::Axis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(Layout::Pane(1)),
+            second: Box::new(Layout::Pane(3)),
+        };
+        snapshot.tabs[0].focus(3);
+        snapshot.active = 1;
+        let mut panes = BTreeMap::new();
+        let mut switch = Switch::new(None);
+        switch.prepared(9, snapshot, |id, _| {
+            let pane = std::rc::Rc::new(Status::new(PaneStatus::Ended));
+            panes.insert(id, pane.clone());
+            pane
+        });
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        let snapshot = finish(&mut switch);
+        assert_eq!(snapshot.panes.keys().copied().collect::<Vec<_>>(), [1]);
+        assert_eq!(snapshot.tabs.len(), 1);
+        assert_eq!(snapshot.tabs[0].layout, Layout::Pane(1));
+        assert_eq!(snapshot.tabs[0].focused, 1);
+        assert_eq!(snapshot.active, 0);
+        let Step::Committed { panes, .. } = switch.finished(Ok(())) else {
+            panic!("expected a committed switch")
+        };
+        assert_eq!(panes.keys().copied().collect::<Vec<_>>(), [1]);
+    }
+
+    #[test]
+    fn a_destination_without_a_usable_pane_keeps_the_current_workspace() {
+        let (mut switch, panes) = connecting(&[Some(A), Some(B)]);
+        *panes[&1].borrow_mut() = PaneStatus::Failed("unreachable".into());
+        *panes[&2].borrow_mut() = PaneStatus::Ended;
         assert_eq!(switch.poll(status, false), Poll::Finish(None));
         switch.finish_sent();
         assert_eq!(switch.poll(status, false), Poll::Wait);
-        let Step::Failed { error, .. } = switch.finished(Ok(())) else {
-            panic!("expected a failed switch")
-        };
-        assert_eq!(error, "unreachable");
+        assert_eq!(failure(switch), "unreachable");
     }
 
     #[test]
-    fn an_ending_destination_session_cancels_the_switch() {
-        let (mut switch, panes) = connecting(&[None]);
+    fn a_destination_whose_sessions_all_ended_keeps_the_current_workspace() {
+        let (mut switch, panes) = connecting(&[Some(A)]);
         *panes[&1].borrow_mut() = PaneStatus::Ended;
         assert_eq!(switch.poll(status, false), Poll::Finish(None));
         switch.finish_sent();
-        let Step::Failed { error, .. } = switch.finished(Ok(())) else {
-            panic!("expected a failed switch")
-        };
-        assert_eq!(error, "destination session ended");
+        assert_eq!(failure(switch), "destination session ended");
     }
 
     #[test]
     fn a_requester_that_gave_up_cancels_the_switch() {
-        let (mut switch, _panes) = connecting(&[None]);
+        let (mut switch, _panes) = connecting(&[Some(A)]);
         assert_eq!(switch.poll(status, true), Poll::Finish(None));
     }
 
     #[test]
     fn a_rejected_commit_releases_the_reservation() {
-        let (mut switch, panes) = connecting(&[None]);
+        let (mut switch, panes) = connecting(&[Some(A)]);
         *panes[&1].borrow_mut() = PaneStatus::Connected(Some(1));
-        assert!(matches!(switch.poll(status, false), Poll::Finish(Some(_))));
-        switch.finish_sent();
+        finish(&mut switch);
         let Step::Pending(mut switch) = switch.finished(Err("invalid".into())) else {
             panic!("expected the switch to keep cancelling")
         };
         assert_eq!(switch.poll(status, false), Poll::Finish(None));
         switch.finish_sent();
-        let Step::Failed { error, .. } = switch.finished(Ok(())) else {
-            panic!("expected a failed switch")
-        };
-        assert_eq!(error, "invalid");
+        assert_eq!(failure(switch), "invalid");
     }
 
     #[test]
     fn a_rejected_release_reports_its_own_error() {
-        let (mut switch, _panes) = connecting(&[None]);
+        let (mut switch, _panes) = connecting(&[Some(A)]);
         switch.cancel("first".into());
         switch.finish_sent();
         let Step::Failed { error, .. } = switch.finished(Err("second".into())) else {
@@ -396,7 +468,7 @@ mod tests {
     fn a_reservation_arriving_after_cancellation_is_released() {
         let mut switch = Switch::new(None);
         switch.cancel("gone".into());
-        switch.prepared(9, destination(&[None]), |_, _| unreachable!());
+        switch.prepared(9, destination(&[Some(A)]), |_, _| unreachable!());
         assert_eq!(switch.poll(|_| unreachable!(), false), Poll::Finish(None));
     }
 

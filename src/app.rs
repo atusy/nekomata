@@ -2816,11 +2816,14 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         assert_eq!(replacement.snapshot(), before);
 
-        // The destination shares two live shells with the source, but its other
-        // pane is unavailable. Preparing it must not steal those source connections.
-        let mut broken = before.clone();
-        broken.panes.get_mut(&2).unwrap().target =
+        // No pane of the destination can connect. Preparing it must not steal
+        // the source connections, and the window keeps its workspace.
+        let missing =
             Target::Local(crate::test_support::private_runtime_dir().join("missing-felis.sock"));
+        let mut broken = before.clone();
+        for pane in broken.panes.values_mut() {
+            pane.target = missing.clone();
+        }
         replacement.runtime.block_on(async {
             let mut client = daemon::connect().await.unwrap();
             let Payload::Workspace { id, .. } =
@@ -2887,6 +2890,62 @@ mod tests {
             .unwrap()
             .session_id
             .unwrap();
+        let output = command(
+            &mut replacement,
+            vec![
+                "workspaces".into(),
+                "attach".into(),
+                workspace_id.unwrap().to_string(),
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(replacement.snapshot(), before);
+
+        // The destination shares two live shells with the source and its
+        // other pane is unavailable. The switch still commits: the live panes
+        // reuse the source connections and the unavailable one shows its error.
+        let mut partly = before.clone();
+        partly.panes.get_mut(&2).unwrap().target = missing.clone();
+        replacement.runtime.block_on(async {
+            let mut client = daemon::connect().await.unwrap();
+            daemon::exchange(&mut client, daemon::Request::Open { window: u32::MAX })
+                .await
+                .unwrap();
+            daemon::exchange(
+                &mut client,
+                daemon::Request::Prepare(daemon::Selection::Id(other)),
+            )
+            .await
+            .unwrap();
+            daemon::exchange(
+                &mut client,
+                daemon::Request::Finish {
+                    snapshot: Some(partly),
+                },
+            )
+            .await
+            .unwrap();
+            daemon::exchange(&mut client, daemon::Request::Detach)
+                .await
+                .unwrap();
+        });
+        let original_connection = replacement.panes[&1].session.clone();
+        let output = command(
+            &mut replacement,
+            vec!["workspaces".into(), "attach".into(), other.to_string()],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(replacement.workspace_id, Some(other));
+        assert!(Arc::ptr_eq(
+            &replacement.panes[&1].session,
+            &original_connection
+        ));
+        drop(original_connection);
+        {
+            let state = replacement.panes[&2].session.state.lock().unwrap();
+            assert!(state.error.is_some() && !state.connected);
+        }
+        assert_eq!(replacement.snapshot().panes[&2].target, missing);
         let output = command(
             &mut replacement,
             vec![
