@@ -195,6 +195,14 @@ impl Drop for Server {
     }
 }
 
+/// Answers queued requests at once, so CLI calls fail fast instead of
+/// waiting out [`DEADLINE`] while the window cannot act on them.
+pub fn reject_all(requests: &mut mpsc::Receiver<Message>, reason: &str) {
+    while let Ok(message) = requests.try_recv() {
+        let _ = message.reply.send(Err(reason.into()));
+    }
+}
+
 async fn serve(
     mut stream: UnixStream,
     tx: mpsc::Sender<Message>,
@@ -535,6 +543,24 @@ mod tests {
         ));
         assert_eq!(handled.recv().await, Some(1));
         task.abort();
+    }
+
+    #[test]
+    fn pending_requests_are_answered_when_the_window_cannot_serve_them() {
+        let (tx, mut requests) = mpsc::channel(2);
+        let mut replies = Vec::new();
+        for request in [Request::List, Request::Switch { workspace: None }] {
+            let (reply, result) = oneshot::channel();
+            tx.try_send(Message { request, reply }).unwrap();
+            replies.push(result);
+        }
+        reject_all(&mut requests, "workspace is not ready");
+        for mut result in replies {
+            assert_eq!(
+                result.try_recv().unwrap(),
+                Err("workspace is not ready".into())
+            );
+        }
     }
 
     #[test]

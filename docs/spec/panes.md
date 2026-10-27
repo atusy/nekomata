@@ -83,6 +83,10 @@ window after the GUI restarts. A shell carries the IDs it was started with,
 so a shell moved to another workspace by hand still targets its original
 workspace's window; pass `--window` there.
 
+A window that has not yet attached a workspace, because it is still
+connecting to the nekomata daemon or failed to, answers every command at once
+with the error `workspace is not ready`.
+
 ## Runtime directory
 
 Windows and the nekomata daemon publish their sockets (`<window>.sock`,
