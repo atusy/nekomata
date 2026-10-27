@@ -883,16 +883,14 @@ impl App {
         }
     }
 
-    fn input_blocked(&self, ctx: &egui::Context) -> bool {
-        blocks_input(
-            ctx,
-            InputBlockers {
-                overlay: self.overlay.is_some(),
-                searching: self.searching(),
-                paste_pending: self.panes.values().any(|pane| pane.pending_paste.is_some()),
-                switching: self.pending_workspace.is_some(),
-            },
-        )
+    fn input_blocked(&self) -> bool {
+        InputBlockers {
+            overlay: self.overlay.is_some(),
+            searching: self.searching(),
+            paste_pending: self.panes.values().any(|pane| pane.pending_paste.is_some()),
+            switching: self.pending_workspace.is_some(),
+        }
+        .any()
     }
 
     fn searching(&self) -> bool {
@@ -1311,7 +1309,7 @@ impl App {
         let paste_pending = self.panes.values().any(|pane| pane.pending_paste.is_some());
         let mut action = None;
         // Consume application shortcuts before forwarding terminal events.
-        if !self.input_blocked(ctx) {
+        if !self.input_blocked() {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
             for action in actions {
                 self.action(ctx, action);
@@ -1320,7 +1318,11 @@ impl App {
                 }
             }
         }
-        if !self.input_blocked(ctx) {
+        // Requesting terminal focus would take it from an open menu. Only this
+        // request waits for menus: one left by a search field that vanished
+        // with its pane or tab lingers a frame, and keys then belong to the
+        // terminal.
+        if !self.input_blocked() && !egui::Popup::is_any_open(ctx) {
             focus_terminal(ctx);
         }
         let tabs = egui::Panel::top("tabs")
@@ -1450,7 +1452,7 @@ impl App {
         if self.window.tabs.is_empty() {
             return;
         }
-        let modal = self.input_blocked(ctx);
+        let modal = self.input_blocked();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(root_ui, |ui| {
@@ -1774,15 +1776,16 @@ struct InputBlockers {
     switching: bool,
 }
 
-/// An open popup menu owns the keyboard as well, so it blocks input too.
-fn blocks_input(ctx: &egui::Context, blockers: InputBlockers) -> bool {
-    let InputBlockers {
-        overlay,
-        searching,
-        paste_pending,
-        switching,
-    } = blockers;
-    overlay || searching || paste_pending || switching || egui::Popup::is_any_open(ctx)
+impl InputBlockers {
+    fn any(self) -> bool {
+        let Self {
+            overlay,
+            searching,
+            paste_pending,
+            switching,
+        } = self;
+        overlay || searching || paste_pending || switching
+    }
 }
 
 /// The search field draws before the palette and the font size control, so
@@ -3826,10 +3829,8 @@ mod tests {
     }
 
     #[test]
-    fn input_is_blocked_by_any_blocker_or_open_popup() {
-        let ctx = egui::Context::default();
-        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
-        assert!(!blocks_input(&ctx, InputBlockers::default()));
+    fn input_is_blocked_by_any_blocker() {
+        assert!(!InputBlockers::default().any());
         for blockers in [
             InputBlockers {
                 overlay: true,
@@ -3848,17 +3849,8 @@ mod tests {
                 ..Default::default()
             },
         ] {
-            assert!(blocks_input(&ctx, blockers));
+            assert!(blockers.any());
         }
-        let popup = egui::Id::unique("popup");
-        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |root_ui| {
-            egui::CentralPanel::default().show(root_ui, |ui| {
-                let response = ui.button("Options");
-                egui::Popup::open_id(ui.ctx(), popup);
-                egui::Popup::menu(&response).id(popup).show(|_| {});
-            });
-        });
-        assert!(blocks_input(&ctx, InputBlockers::default()));
     }
 
     #[test]
