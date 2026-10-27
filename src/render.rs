@@ -60,18 +60,23 @@ pub fn terminal_rect(rect: Rect, rows: u16, cell_height: f32, ppp: f32) -> Rect 
     )
 }
 
+/// nekomata's own grid limits; felis accepts up to `MAX_GRID_COLS` and
+/// `MAX_GRID_ROWS` (2048) and clamps larger requests itself.
+const MAX_REQUESTED_COLS: u32 = 1000;
+const MAX_REQUESTED_ROWS: u32 = 500;
+
 /// The terminal size that fits whole `cell_px` cells into `rect`, or `None`
 /// when not even one fits: a 1x1 request would resize a shared session for
 /// every other client attached to it.
 pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<RequestedDims> {
-    let fit = |extent: f32, cell: u32, max: f32| {
+    let fit = |extent: f32, cell: u32, max: u32| {
         // A NaN extent (or ppp) fails the comparison as well.
         let count = (extent * ppp / cell as f32).floor();
-        (cell > 0 && count >= 1.0).then(|| count.min(max) as u32)
+        (cell > 0 && count >= 1.0).then(|| (count as u32).min(max))
     };
     let [cell_w, cell_h] = cell_px;
-    let cols = fit(rect.width(), cell_w, 1000.0)?;
-    let rows = fit(rect.height(), cell_h, 500.0)?;
+    let cols = fit(rect.width(), cell_w, MAX_REQUESTED_COLS)?;
+    let rows = fit(rect.height(), cell_h, MAX_REQUESTED_ROWS)?;
     Some(RequestedDims {
         rows,
         cols,
