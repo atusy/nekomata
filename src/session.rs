@@ -37,7 +37,8 @@ impl std::fmt::LowerHex for SessionId {
 impl std::str::FromStr for SessionId {
     type Err = anyhow::Error;
 
-    /// Accepts only a complete ID; felis resolves prefixes, not nekomata.
+    /// Accepts only a complete, 32-character ID as `u128::from_str_radix`
+    /// reads it; felis resolves prefixes, not nekomata.
     fn from_str(id: &str) -> Result<Self> {
         anyhow::ensure!(id.len() == 32, "invalid felis session ID");
         Ok(Self(
@@ -135,7 +136,7 @@ impl Target {
     }
 }
 
-/// Where a pane's felis session is in its life; exactly one holds at a time.
+/// Where a pane's felis session is in its life.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Lifecycle {
     #[default]
@@ -154,7 +155,8 @@ impl Lifecycle {
         matches!(self, Self::Connected)
     }
 
-    /// felis released the session without error, so its pane closes.
+    /// felis released the session without error, so its pane closes unless
+    /// a workspace switch is pending.
     pub fn is_ended(&self) -> bool {
         matches!(self, Self::Detached | Self::Exited)
     }

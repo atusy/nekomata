@@ -6,14 +6,14 @@ use crate::layout::Layout;
 pub struct Tab {
     pub name: String,
     pub layout: Layout,
-    /// Always the last entry of `focus_history`; `focus` keeps them together.
+    /// The last entry of `focus_history`, kept so by `focus` and on load.
     pub focused: u64,
     pub focus_history: Vec<u64>,
 }
 
-// Snapshots come from other nekomata processes, which serialize both fields.
-// Restore the invariant on load instead of rejecting a workspace over the
-// order of its focus history.
+// Snapshots come from other nekomata processes, which serialize both fields
+// independently. Re-focusing on load restores the invariant they may not
+// have kept, without rejecting the workspace.
 #[derive(serde::Deserialize)]
 struct StoredTab {
     name: String,
@@ -166,6 +166,7 @@ impl WindowLayout {
         tab
     }
 
+    /// Panics without tabs; a window closes with its last tab.
     pub fn cycle_tab(&mut self, forward: bool) {
         let len = self.tabs.len();
         self.active = if forward {
