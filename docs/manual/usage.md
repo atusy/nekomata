@@ -81,8 +81,10 @@ the active session is disconnected or in the alternate screen.
   disables the wheel.
 
 - Hovering a link embedded with OSC 8 shows its URL. Cmd+click (macOS) or
-  Ctrl+click (Linux) opens it in the default application. Plain URL text is
-  not turned into links.
+  Ctrl+click (Linux) opens it in the default application. A `file:` link is
+  shown in Finder or the file manager instead of opened, so clicking it never
+  runs the file. Plain URL text is not turned into links. See the
+  [terminal specification](../spec/terminal.md#links) for the exact rules.
 
   ![Link URL preview](../images/terminal-tools-link.png)
 

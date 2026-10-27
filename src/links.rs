@@ -1,10 +1,19 @@
 //! Validated OSC 8 targets opened outside the UI thread.
 use eframe::egui;
-use felis_client_core::ActivationTarget;
+use felis_client_core::{ActivationTarget, SchemeClass};
 use std::{
+    ffi::{OsStr, OsString},
+    os::unix::ffi::{OsStrExt, OsStringExt},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
+
+/// Bounds a whole activation, file resolution and every launcher attempt
+/// included, so one stuck opener cannot keep the pane busy forever.
+const OPENER_TIMEOUT: Duration = Duration::from_secs(10);
+
+const BUSY: &str = "Still opening the previous link; click again when it finishes";
 
 #[derive(Default)]
 pub struct LinkGesture(Option<ActivationTarget>);
@@ -45,8 +54,15 @@ pub struct LinkOpener {
 }
 
 impl LinkOpener {
+    /// Queues `target` for the next tick. While a launcher still runs the
+    /// click is refused visibly rather than deferred: a deferred launch could
+    /// fire up to `OPENER_TIMEOUT` later, after the user has moved on.
     pub fn request(&mut self, target: ActivationTarget) {
-        if self.queued.is_none() && self.task.is_none() {
+        // A launcher that finished after this frame's tick is idle; its
+        // result is still collected by the next tick.
+        if self.task.as_ref().is_some_and(|task| !task.is_finished()) {
+            self.error = Some(BUSY.into());
+        } else {
             self.queued = Some(target);
             self.error = None;
         }
@@ -55,7 +71,10 @@ impl LinkOpener {
     pub fn tick(&mut self, runtime: &tokio::runtime::Runtime, ctx: &egui::Context) {
         if let Some(result) = self.result.lock().unwrap().take() {
             self.task = None;
-            self.error = result.err();
+            // A click accepted since then supersedes the old outcome.
+            if self.queued.is_none() {
+                self.error = result.err();
+            }
         }
         let Some(target) = self.queued.take() else {
             return;
@@ -87,33 +106,256 @@ pub fn modifier(modifiers: egui::Modifiers, macos: bool) -> bool {
         }
 }
 
-fn command(target: &ActivationTarget) -> Result<tokio::process::Command, String> {
-    let program = if cfg!(target_os = "macos") {
-        "/usr/bin/open"
-    } else if cfg!(target_os = "linux") {
-        "xdg-open"
-    } else {
-        return Err("Opening links is not supported on this platform".into());
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Platform {
+    MacOs,
+    Linux,
+}
+
+impl Platform {
+    fn current() -> Option<Self> {
+        if cfg!(target_os = "macos") {
+            Some(Self::MacOs)
+        } else if cfg!(target_os = "linux") {
+            Some(Self::Linux)
+        } else {
+            None
+        }
+    }
+}
+
+/// One launcher invocation: the program followed by its arguments.
+type Step = Vec<OsString>;
+
+/// What activating a target does. A `file:` target is revealed rather than
+/// opened: a link label can claim `https://…` while its target is a script
+/// or application bundle, and handing that to the default application would
+/// execute it.
+#[derive(Debug, PartialEq, Eq)]
+enum Launch {
+    Open(OsString),
+    Reveal {
+        /// The canonical path of the linked file.
+        item: PathBuf,
+        /// The directory that contains `item`; the Linux fallback opens it.
+        folder: PathBuf,
+    },
+}
+
+impl Launch {
+    /// The failure message when a launcher exits unsuccessfully.
+    fn failure(&self, status: std::process::ExitStatus) -> String {
+        match self {
+            Self::Open(_) => format!(
+                "Could not open the link ({status}); check the default application for this URL type"
+            ),
+            Self::Reveal { .. } => {
+                format!("Could not show the linked file ({status}); check the default file manager")
+            }
+        }
+    }
+}
+
+/// The hover hint for an activatable target.
+pub fn hint(target: &ActivationTarget, macos: bool) -> &'static str {
+    match (target.scheme() == SchemeClass::File, macos) {
+        (true, true) => "Cmd+click to reveal in Finder",
+        (true, false) => "Ctrl+click to show in the file manager",
+        (false, true) => "Cmd+click to open",
+        (false, false) => "Ctrl+click to open",
+    }
+}
+
+/// Converts a `file:` URI to a local absolute path. `local_host` is this
+/// machine's hostname, which `ls --hyperlink` and shell integrations put in
+/// the authority.
+fn file_path(uri: &str, local_host: &OsStr) -> Result<PathBuf, String> {
+    let rest = uri
+        .get(..5)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("file:"))
+        .map(|_| &uri[5..])
+        .ok_or("Not a file link")?;
+    let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    let path = match rest.strip_prefix("//") {
+        Some(authority) => {
+            let split = authority.find('/').unwrap_or(authority.len());
+            let (host, path) = authority.split_at(split);
+            let local = host.is_empty()
+                || host.eq_ignore_ascii_case("localhost")
+                || local_host
+                    .to_str()
+                    .is_some_and(|local| host.eq_ignore_ascii_case(local));
+            if !local {
+                return Err(format!("The linked file is on another host ({host})"));
+            }
+            path
+        }
+        None => rest,
     };
-    let mut command = tokio::process::Command::new(program);
-    command.arg(target.as_str()).kill_on_drop(true);
+    if !path.starts_with('/') {
+        return Err("The file link has no absolute path".into());
+    }
+    let bytes = percent_decode(path).ok_or("The file link has invalid percent-encoding")?;
+    if bytes.contains(&0) {
+        return Err("The file link contains a NUL byte".into());
+    }
+    Ok(PathBuf::from(OsString::from_vec(bytes)))
+}
+
+fn percent_decode(text: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut input = text.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = (input.next()? as char).to_digit(16)?;
+            let low = (input.next()? as char).to_digit(16)?;
+            bytes.push((high * 16 + low) as u8);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    Some(bytes)
+}
+
+/// A `file://` URI whose path is percent-encoded outside the RFC 3986
+/// unreserved set and `/`, so it needs no quoting inside GVariant text.
+fn file_uri(path: &Path) -> String {
+    let mut uri = String::from("file://");
+    for &byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
+/// Resolves the target on the filesystem. Canonicalizing first means the
+/// folder is the real parent: the lexical parent of `/x/evil.sh/..` is the
+/// script itself. A symlinked item is revealed as its target.
+fn resolve(target: &ActivationTarget) -> Result<Launch, String> {
+    if target.scheme() != SchemeClass::File {
+        return Ok(Launch::Open(target.as_str().into()));
+    }
+    let path = file_path(target.as_str(), &gethostname::gethostname())?;
+    let item = std::fs::canonicalize(&path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => "The linked file does not exist".to_owned(),
+        _ => format!("Could not find the linked file: {error}"),
+    })?;
+    let folder = item.parent().unwrap_or(&item).to_owned();
+    if !std::fs::metadata(&folder).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err("The linked file has no containing folder".into());
+    }
+    Ok(Launch::Reveal { item, folder })
+}
+
+/// Launchers to try in order until one succeeds. Pure so every platform's
+/// argv is testable on any host.
+fn plan(platform: Platform, launch: &Launch) -> Vec<Step> {
+    match (platform, launch) {
+        (Platform::MacOs, Launch::Open(uri)) => vec![vec!["/usr/bin/open".into(), uri.clone()]],
+        (Platform::Linux, Launch::Open(uri)) => vec![vec!["xdg-open".into(), uri.clone()]],
+        (Platform::MacOs, Launch::Reveal { item, .. }) => {
+            vec![vec!["/usr/bin/open".into(), "-R".into(), item.into()]]
+        }
+        // The freedesktop file manager interface selects the item without
+        // opening it. Without that service, opening the folder is the
+        // closest equivalent that never runs the file.
+        (Platform::Linux, Launch::Reveal { item, folder }) => vec![
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--timeout",
+                "5",
+                "--dest",
+                "org.freedesktop.FileManager1",
+                "--object-path",
+                "/org/freedesktop/FileManager1",
+                "--method",
+                "org.freedesktop.FileManager1.ShowItems",
+                &format!("['{}']", file_uri(item)),
+                "''",
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            vec!["xdg-open".into(), directory_argument(folder)],
+        ],
+    }
+}
+
+/// `folder` with a trailing slash, which makes path lookup fail unless it
+/// is a directory: a folder replaced by a file or a symlink to one after
+/// `resolve` checked it is refused instead of opened.
+fn directory_argument(folder: &Path) -> OsString {
+    let mut argument = folder.as_os_str().to_owned();
+    if !argument.as_bytes().ends_with(b"/") {
+        argument.push("/");
+    }
+    argument
+}
+
+fn command(step: &[OsString]) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(&step[0]);
+    command.args(&step[1..]).kill_on_drop(true);
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    Ok(command)
+    command
 }
 
+/// One deadline covers resolving the file and every fallback, so a hung
+/// mount or a slow first launcher cannot stretch the busy period past
+/// `OPENER_TIMEOUT`.
 async fn open(target: ActivationTarget) -> Result<(), String> {
-    match tokio::time::timeout(Duration::from_secs(10), command(&target)?.status()).await {
-        Ok(Ok(status)) if status.success() => Ok(()),
-        Ok(Ok(status)) => Err(format!(
-            "Could not open the link ({status}); check the default application for this URL type"
+    tokio::time::timeout(OPENER_TIMEOUT, attempt(target))
+        .await
+        .unwrap_or_else(|_| {
+            Err(
+                "Opening the link timed out; check the default application for this URL type"
+                    .into(),
+            )
+        })
+}
+
+async fn attempt(target: ActivationTarget) -> Result<(), String> {
+    let platform = Platform::current().ok_or("Opening links is not supported on this platform")?;
+    // Filesystem calls can block indefinitely on a stale network mount;
+    // keep them off the runtime so the deadline above still fires.
+    let launch = off_runtime(move || resolve(&target))
+        .await
+        .ok_or("Could not resolve the link")??;
+    let mut outcome = Ok(());
+    for step in plan(platform, &launch) {
+        outcome = run(&step, &launch).await;
+        if outcome.is_ok() {
+            break;
+        }
+    }
+    outcome
+}
+
+/// Runs `work` on a detached thread. Not `spawn_blocking`: dropping the
+/// runtime waits for blocking tasks, so a stalled lookup would keep the
+/// app from exiting long after its deadline gave up on it.
+async fn off_runtime<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver.await.ok()
+}
+
+async fn run(step: &[OsString], launch: &Launch) -> Result<(), String> {
+    match command(step).status().await {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(launch.failure(status)),
+        Err(error) => Err(format!(
+            "Could not start {}: {error}",
+            step[0].to_string_lossy()
         )),
-        Ok(Err(error)) => Err(format!("Could not start the link opener: {error}")),
-        Err(_) => Err(
-            "Opening the link timed out; check the default application for this URL type".into(),
-        ),
     }
 }
 
@@ -139,16 +381,253 @@ mod tests {
         assert!(!gesture.active());
     }
 
+    fn parse(uri: &str) -> ActivationTarget {
+        ActivationTarget::parse(uri).unwrap()
+    }
+
+    fn resolved(uri: &str) -> Result<Launch, String> {
+        resolve(&parse(uri))
+    }
+
     #[test]
     fn opener_preserves_the_validated_uri_as_one_literal_argument() {
-        let target =
-            ActivationTarget::parse("https://example.org/?q=$(echo%20x)&a='hello'").unwrap();
-        let command = command(&target).unwrap();
-        let args: Vec<_> = command.as_std().get_args().collect();
-        assert_eq!(args, [std::ffi::OsStr::new(target.as_str())]);
+        let target = parse("https://example.org/?q=$(echo%20x)&a='hello'");
+        let launch = resolved(target.as_str()).unwrap();
+        let uri = OsString::from(target.as_str());
+        assert_eq!(launch, Launch::Open(uri.clone()));
+        assert_eq!(
+            plan(Platform::MacOs, &launch),
+            [vec!["/usr/bin/open".into(), uri.clone()]]
+        );
+        assert_eq!(
+            plan(Platform::Linux, &launch),
+            [vec!["xdg-open".into(), uri]]
+        );
         assert!(ActivationTarget::parse("javascript:alert(1)").is_err());
         assert!(ActivationTarget::parse("https://example.org/\u{202e}hidden").is_err());
     }
+
+    #[test]
+    fn non_file_schemes_are_still_opened() {
+        for uri in ["http://example.org/", "mailto:a@example.org"] {
+            assert_eq!(resolved(uri), Ok(Launch::Open(uri.into())));
+        }
+    }
+
+    #[test]
+    fn file_links_resolve_to_local_absolute_paths() {
+        let host = OsStr::new("Workstation.local");
+        let path = |uri| file_path(uri, host);
+        let ok = |p: &str| Ok(PathBuf::from(p));
+        assert_eq!(path("file:///tmp/x/evil.sh"), ok("/tmp/x/evil.sh"));
+        assert_eq!(path("FILE://localhost/tmp/a"), ok("/tmp/a"));
+        // `ls --hyperlink` names the machine in the authority.
+        assert_eq!(path("file://workstation.LOCAL/tmp/a"), ok("/tmp/a"));
+        assert_eq!(path("file:/tmp/a"), ok("/tmp/a"));
+        assert_eq!(path("file:///tmp/a%20b?q=1#frag"), ok("/tmp/a b"));
+        assert_eq!(
+            path("file:///tmp/%E3%81%82"),
+            Ok(PathBuf::from(OsString::from_vec(vec![
+                b'/', b't', b'm', b'p', b'/', 0xE3, 0x81, 0x82
+            ])))
+        );
+        assert_eq!(
+            path("file://elsewhere/tmp/a"),
+            Err("The linked file is on another host (elsewhere)".into())
+        );
+        assert!(path("file:relative").is_err());
+        // A relative path could otherwise start with `-` and become an option.
+        assert!(path("file:-R").is_err());
+        assert!(path("file:///tmp/a%00b").is_err());
+        assert!(path("file:///tmp/%zz").is_err());
+        assert!(path("file:///tmp/%4").is_err());
+    }
+
+    #[test]
+    fn revealed_files_use_canonical_paths_and_their_real_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let script = root.join("evil.sh");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        let uri = |path: &Path| file_uri(path);
+        let expected = Launch::Reveal {
+            item: script.clone(),
+            folder: root.clone(),
+        };
+        assert_eq!(resolved(&uri(&script)), Ok(expected));
+        // `..` after a file must not make the file itself the folder.
+        let dotdot = resolved(&format!("{}/..", uri(&script)));
+        if cfg!(target_os = "macos") {
+            // macOS resolves the path lexically to the directory.
+            assert_eq!(
+                dotdot,
+                Ok(Launch::Reveal {
+                    item: root.clone(),
+                    folder: root.parent().unwrap().to_owned(),
+                })
+            );
+        } else {
+            let error = dotdot.unwrap_err();
+            assert!(error.contains("Not a directory"), "{error}");
+        }
+        assert_eq!(
+            resolved(&uri(&root.join("missing"))),
+            Err("The linked file does not exist".into())
+        );
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&script, &link).unwrap();
+        assert_eq!(
+            resolved(&uri(&link)),
+            Ok(Launch::Reveal {
+                item: script,
+                folder: root,
+            })
+        );
+    }
+
+    #[test]
+    fn file_links_are_revealed_instead_of_opened() {
+        let launch = Launch::Reveal {
+            item: "/tmp/x/a,b'c\"[d].sh".into(),
+            folder: "/tmp/x".into(),
+        };
+        assert_eq!(
+            plan(Platform::MacOs, &launch),
+            [vec![
+                OsString::from("/usr/bin/open"),
+                "-R".into(),
+                "/tmp/x/a,b'c\"[d].sh".into()
+            ]]
+        );
+        let linux = plan(Platform::Linux, &launch);
+        assert_eq!(linux.len(), 2);
+        // Quotes, commas and brackets are encoded, so GVariant text stays one string.
+        assert_eq!(
+            linux[0],
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--timeout",
+                "5",
+                "--dest",
+                "org.freedesktop.FileManager1",
+                "--object-path",
+                "/org/freedesktop/FileManager1",
+                "--method",
+                "org.freedesktop.FileManager1.ShowItems",
+                "['file:///tmp/x/a%2Cb%27c%22%5Bd%5D.sh']",
+                "''",
+            ]
+            .map(OsString::from)
+        );
+        // The trailing slash makes path lookup demand a directory, even if
+        // the folder were swapped for a file after it was checked.
+        assert_eq!(linux[1], [OsString::from("xdg-open"), "/tmp/x/".into()]);
+        let root = Launch::Reveal {
+            item: "/".into(),
+            folder: "/".into(),
+        };
+        assert_eq!(
+            plan(Platform::Linux, &root)[1],
+            [OsString::from("xdg-open"), "/".into()]
+        );
+    }
+
+    #[test]
+    fn file_link_hints_say_the_file_is_revealed() {
+        assert_eq!(
+            hint(&parse("file:///tmp/a"), true),
+            "Cmd+click to reveal in Finder"
+        );
+        assert_eq!(
+            hint(&parse("file:///tmp/a"), false),
+            "Ctrl+click to show in the file manager"
+        );
+        assert_eq!(
+            hint(&parse("https://example.org/"), true),
+            "Cmd+click to open"
+        );
+        assert_eq!(
+            hint(&parse("https://example.org/"), false),
+            "Ctrl+click to open"
+        );
+    }
+
+    #[test]
+    fn a_click_while_a_link_is_opening_is_refused_visibly() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let ctx = egui::Context::default();
+        let mut opener = LinkOpener::default();
+        opener.request(parse("https://example.org/first"));
+        opener.request(parse("https://example.org/second"));
+        // Before any launcher starts, the latest click is the one queued.
+        assert_eq!(
+            opener.queued.as_ref().map(ActivationTarget::as_str),
+            Some("https://example.org/second")
+        );
+        opener.queued = None;
+        opener.task = Some(runtime.spawn(std::future::pending()));
+        opener.request(parse("https://example.org/third"));
+        assert!(opener.queued.is_none());
+        assert_eq!(opener.error.as_deref(), Some(BUSY));
+        *opener.result.lock().unwrap() = Some(Ok(()));
+        opener.tick(&runtime, &ctx);
+        assert!(opener.task.is_none());
+        assert_eq!(opener.error, None);
+        opener.request(parse("https://example.org/fourth"));
+        assert!(opener.queued.is_some());
+    }
+
+    #[test]
+    fn a_click_after_the_launcher_finished_is_accepted_before_the_next_tick() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        let mut opener = LinkOpener::default();
+        // The launcher finished after this frame's tick but before the click.
+        let task = runtime.spawn(async {});
+        while !task.is_finished() {
+            std::thread::yield_now();
+        }
+        opener.task = Some(task);
+        *opener.result.lock().unwrap() = Some(Err("old failure".into()));
+        // A missing file fails before any launcher runs, so the test opens nothing.
+        opener.request(parse("file:///nonexistent/nekomata-link-test"));
+        assert_eq!(opener.error, None);
+        assert!(opener.queued.is_some());
+        opener.tick(&runtime, &egui::Context::default());
+        assert_eq!(opener.error, None);
+        assert!(opener.queued.is_none());
+    }
+
+    #[test]
+    fn a_stalled_resolution_does_not_hold_up_runtime_shutdown() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .unwrap();
+        let (_never, stalled) = std::sync::mpsc::channel::<()>();
+        let outcome = runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(10),
+                off_runtime(move || stalled.recv()),
+            )
+            .await
+        });
+        assert!(outcome.is_err());
+        let (done, dropped) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(runtime);
+            done.send(()).unwrap();
+        });
+        assert!(dropped.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
     #[test]
     fn activation_requires_the_platform_modifier_without_alt() {
         assert!(modifier(egui::Modifiers::MAC_CMD, true));
