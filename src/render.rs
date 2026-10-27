@@ -256,6 +256,11 @@ impl Renderer {
             );
             if let Err(error) = result {
                 state.redraw.request();
+                // No arriving frame is due to retry the pending redraw, and an
+                // immediate repaint would spin on a persistent GPU error.
+                painter
+                    .ctx()
+                    .request_repaint_after(felis_client_core::pull::PresentRetry::MAX_INTERVAL);
                 return Err(error.into());
             }
             state.redraw.painted();

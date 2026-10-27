@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use felis_client_core::{GridPos, Selection};
@@ -1544,7 +1544,6 @@ impl App {
                 });
         }
         self.save_workspace();
-        ctx.request_repaint_after(Duration::from_millis(250));
     }
 }
 
@@ -2294,6 +2293,7 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn tab_drop_slot_is_the_gap_nearest_the_pointer() {
@@ -2581,6 +2581,48 @@ mod tests {
         let mut selection = Selection::new(GridPos { row: 0, col: 0 });
         selection.extend(GridPos { row: 1, col: 3 });
         assert_eq!(selection.extract_text(shadow.screen()), "abcdEFGH");
+    }
+
+    #[test]
+    #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
+    fn live_idle_window_schedules_no_repaint() {
+        use std::{sync::mpsc, time::Instant};
+        crate::test_support::private_runtime_dir();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let mut app = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
+        // Without a GPU host the pane shows a renderer error instead of a
+        // blinking cursor, so once connected nothing remains to repaint for.
+        let deadline = Instant::now() + Duration::from_secs(25);
+        loop {
+            let output =
+                crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.show(ui));
+            let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            // Earlier live tests may leave this workspace with panes whose
+            // sessions are gone; those settle on an error instead.
+            let settled = !app.panes.is_empty()
+                && app.panes.values().all(|pane| {
+                    let state = pane.session.state.lock().unwrap();
+                    state.connected || state.error.is_some()
+                });
+            if settled && delay == Duration::MAX {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "an idle window kept scheduling repaints every {delay:?} (panes settled: {settled})"
+            );
+            let _ = repaints.recv_timeout(delay.min(Duration::from_millis(50)));
+        }
+        eframe::App::on_exit(&mut app);
     }
 
     #[test]
