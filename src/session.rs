@@ -468,6 +468,11 @@ impl Session {
         self.tx.notice()
     }
 
+    /// Reports shell input dropped before it reached the queue.
+    pub fn input_lost(&self) {
+        self.tx.mark_lost();
+    }
+
     /// Reports a paste the pane would not send.
     pub fn refuse_paste(&self, bytes: usize) {
         self.tx.set_notice(InputNotice::PasteRefused { bytes });

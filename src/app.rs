@@ -1157,7 +1157,9 @@ impl App {
                     pane.close_search();
                 }
                 let state = pane.session.state.lock().unwrap();
-                if state.connected && self.paste_requested.is_none() {
+                if !state.connected {
+                    pane.session.input_lost();
+                } else if self.paste_requested.is_none() {
                     self.paste_requested = Some((
                         ctx.cumulative_frame_nr(),
                         state.reconnects,
@@ -2344,6 +2346,7 @@ fn terminal_input(
             TerminalInput::Paste(text) => {
                 let state = session.state.lock().unwrap();
                 if !state.connected {
+                    session.input_lost();
                     continue;
                 }
                 match crate::paste::Paste::new(
@@ -2778,6 +2781,38 @@ mod tests {
             );
         }
         assert_eq!(link_at(&shadow, GridPos { row: 0, col: 2 }), None);
+    }
+
+    #[test]
+    fn a_paste_while_disconnected_is_reported_as_lost() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let ctx = egui::Context::default();
+        // This current-thread runtime is never driven: no daemon is contacted.
+        let session = Session::start(
+            &runtime,
+            ctx.clone(),
+            Target::Local("/unused-nekomata-test.sock".into()),
+            None,
+            None,
+            vec![],
+        );
+        let mut pending = None;
+        let _ = crate::test_support::run(
+            &ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Paste("echo test".into())],
+                ..Default::default()
+            },
+            |ui| terminal_input(ui.ctx(), &mut None, &session, &mut pending, true),
+        );
+        assert!(pending.is_none());
+        assert_eq!(
+            session.input_notice(),
+            Some(crate::session::InputNotice::Lost)
+        );
     }
 
     #[test]
