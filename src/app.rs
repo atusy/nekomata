@@ -652,16 +652,23 @@ impl App {
         }
     }
 
-    fn save_workspace(&mut self) {
+    fn save_workspace(&mut self, ctx: &egui::Context) {
         if self.workspace_id.is_none() || self.pending_workspace.is_some() {
             return;
         }
         let snapshot = self.snapshot();
-        if self.last_snapshot.as_ref() != Some(&snapshot)
-            && let Some(client) = &self.workspace
-            && client.send(daemon::Request::Save(snapshot.clone())).is_ok()
-        {
+        if self.last_snapshot.as_ref() == Some(&snapshot) {
+            return;
+        }
+        let Some(client) = &self.workspace else {
+            return;
+        };
+        if client.send(daemon::Request::Save(snapshot.clone())).is_ok() {
             self.last_snapshot = Some(snapshot);
+        } else if !client.is_closed() {
+            // The command queue is full. A queued save completes without
+            // waking the GUI, so retry on a timer rather than on the next event.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
 
@@ -1545,7 +1552,7 @@ impl App {
                     ui.label("Connecting to destination panes…");
                 });
         }
-        self.save_workspace();
+        self.save_workspace(ctx);
         let interval = eframe::App::auto_save_interval(self);
         schedule_geometry_autosave(ctx, &mut self.geometry, interval);
     }
@@ -2710,7 +2717,7 @@ mod tests {
                 app.workspace_events(&ctx);
                 app.poll_workspace();
                 app.control_requests(&ctx);
-                app.save_workspace();
+                app.save_workspace(&ctx);
                 if done(app) {
                     break;
                 }
@@ -2763,7 +2770,7 @@ mod tests {
         app.font_size = 18.0;
         let mut before = app.snapshot();
         let workspace_id = app.workspace_id;
-        app.save_workspace();
+        app.save_workspace(&ctx);
         eframe::App::on_exit(&mut app);
         drop(app);
 
