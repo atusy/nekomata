@@ -87,11 +87,19 @@ fn main() -> eframe::Result {
             run_felis(&["sessions", "list"], &options);
         }
     }
-    eframe::run_native(
+    // anyhow's chain survives only as text: eframe boxes the error and its
+    // Display shows only the outermost context.
+    let result = eframe::run_native(
         APP_ID,
         native_options(),
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc)?))),
-    )
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc).map_err(|e| format!("{e:#}"))?))),
+    );
+    // Returning the error from main would print its Debug form.
+    if let Err(error) = result {
+        eprintln!("nekomata: {error}");
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Name passed to eframe; it also keys eframe's on-disk storage.
