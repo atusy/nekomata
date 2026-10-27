@@ -26,7 +26,8 @@ In the command palette (the cat button or Alt+Shift+P):
 nekomata switches once the panes of the workspace you switch to have
 connected. A pane whose shell has ended is dropped; a pane that cannot
 connect, for example because its felis session is gone, shows its error and
-you can close it. If no pane connects, you stay in the current workspace.
+you can close it. If no pane connects, you stay in the current workspace; a new workspace,
+whose shell starts after the switch, switches regardless.
 
 ## From the command line
 
