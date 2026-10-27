@@ -4,13 +4,18 @@
 
 nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The felis daemon owns shells, PTYs, terminal parsing, and persistent sessions.
 
-- `src/app.rs`: window UI and terminal rendering.
-- `src/session.rs`: asynchronous felis connections, input, and terminal state.
+- `src/main.rs`, `src/cli.rs`: entry point, window options, and command-line parsing.
+- `src/app.rs`: window UI — tabs, panes, overlays, and input dispatch.
+- `src/render.rs`, `src/presentation.rs`: composing felis's GPU renderer into egui, and native input and repaint deadlines adapted to felis presentation state.
+- `src/session.rs`, `src/ssh.rs`, `src/colors.rs`: asynchronous felis connections, ordered input and terminal state; the SSH relay; per-session color state.
+- `src/terminal_search.rs`, `src/links.rs`, `src/paste.rs`, `src/rectangle.rs`: scrollback search, OSC 8 link opening, paste confirmation, and rectangular selection.
 - `src/daemon.rs`, `src/workspace.rs`, `src/workspace_client.rs`: retained workspaces, versioned leases, and asynchronous layout synchronization.
 - `src/control.rs`: per-window CLI commands and workspace-aware window discovery.
 - `src/layout.rs`, `src/shortcuts.rs`: pane layout, navigation, and keyboard actions.
+- `src/command_palette.rs`, `src/font_size.rs`, `src/picker.rs`: the command registry and palette, the font size control, and the felis session picker.
 - `src/app_config.rs`, `src/ui_font.rs`: nekomata's own `config.toml` (UI font and application keymap) and UI font lookup; `src/terminal_config.rs` resolves felis's shared document.
-- `src/cli.rs`, `src/picker.rs`, `src/theme.rs`: workspace and pane commands, felis session picker, and shared colors.
+- `src/theme.rs`: shared UI colors and metrics.
+- `src/test_support.rs`, `tests/support/`: CPU-only egui test helpers, and test-only renderer baselines, glyph checks and benchmarks included through `#[path]`.
 - `share/`: fish integration and macOS bundle metadata/native launcher.
 - `scripts/`: isolated integration tests and macOS installation.
 - `flake.nix`: packages, development environments, runtime fonts, and checks.
