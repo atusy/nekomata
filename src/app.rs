@@ -2359,7 +2359,9 @@ fn terminal_input(
                         *pending_paste = Some(pending);
                         break;
                     }
-                    crate::paste::Paste::Send(bytes) => send_to_program(selection, session, InputMsg::Paste(bytes)),
+                    crate::paste::Paste::Send(bytes) => {
+                        send_to_program(selection, session, InputMsg::Paste(bytes))
+                    }
                 }
             }
             TerminalInput::Copy => {
