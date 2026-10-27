@@ -20,11 +20,14 @@ if [[ $(printf '%s' "$expected" | grep -c '') != 1 ]]; then
   exit 1
 fi
 
-# Every Cargo git dependency on felis must name that revision.
-for manifest in Cargo.toml vendor/felis-render-wgpu/Cargo.toml; do
+# Every Cargo git dependency on felis must name that revision, in any
+# manifest; the two known ones must keep depending on felis.
+while IFS= read -r manifest; do
   while IFS= read -r line; do
     [[ "$line" == *"rev = \"$expected\""* ]] || fail "$manifest pins another felis revision: $line"
-  done < <(grep -F "git = \"https://$url\"" "$manifest")
+  done < <(grep -F "$url" "$manifest" | grep -v '^repository = ')
+done < <(find . -name target -prune -o -name Cargo.toml -print)
+for manifest in Cargo.toml vendor/felis-render-wgpu/Cargo.toml; do
   grep -qF "git = \"https://$url\"" "$manifest" || fail "$manifest has no felis git dependency"
 done
 

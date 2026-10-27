@@ -56,3 +56,12 @@ if bash "$check" "$test_directory/root" >/dev/null 2>&1; then
   echo "UPSTREAM.md without the pinned revision went unnoticed" >&2
   exit 1
 fi
+
+fresh_copy
+mkdir -p "$test_directory/root/crates/extra"
+printf '[dependencies]\nfelis-grid = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "%s" }\n' \
+  "$other" >"$test_directory/root/crates/extra/Cargo.toml"
+if bash "$check" "$test_directory/root" >/dev/null 2>&1; then
+  echo "Another manifest pinning a different felis revision went unnoticed" >&2
+  exit 1
+fi
