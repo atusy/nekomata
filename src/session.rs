@@ -146,12 +146,16 @@ impl State {
         let alt_screen_before = self.screen.alt_screen();
         let viewport_before = (self.screen.viewport(), self.screen.viewport_anchor());
         self.screen.apply(msg)?;
-        if crate::selection::grid_change_invalidates_selection(
-            msg,
-            alt_screen_before,
-            self.screen.alt_screen(),
-            viewport_before,
-        ) {
+        // A rehydrate (after reconnecting) resends every cell, possibly of a
+        // screen that changed while this client was away.
+        if matches!(msg, GridMsg::RehydrateBegin)
+            || crate::selection::grid_change_invalidates_selection(
+                msg,
+                alt_screen_before,
+                self.screen.alt_screen(),
+                viewport_before,
+            )
+        {
             self.selection_epoch += 1;
         }
         self.redraw.request();
@@ -716,6 +720,15 @@ mod tests {
             .apply_grid(&mode_flags(false), &Default::default())
             .unwrap();
         assert_eq!(state.selection_epoch, 2);
+    }
+
+    #[test]
+    fn rehydrating_the_screen_invalidates_the_selection() {
+        let mut state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
+        state
+            .apply_grid(&GridMsg::RehydrateBegin, &Default::default())
+            .unwrap();
+        assert_eq!(state.selection_epoch, 1);
     }
 
     #[test]
