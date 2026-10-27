@@ -25,8 +25,10 @@ felis daemon.
   restarting the OS, loses every layout.
 - Client and daemon speak a versioned protocol. On an incompatible version the
   client reports an error and does not replace the running daemon. The daemon
-  checks the version before decoding the request, so a request of another
-  version is answered with that error whatever its shape.
+  checks the version before decoding the request, so any request other than a
+  stop that carries another version, or none, is answered with that error even
+  when the daemon does not recognize the request. Daemons from before this
+  rule close the connection instead.
 - A UI-only update needs no daemon restart: a restarted GUI reuses a
   compatible running daemon.
 

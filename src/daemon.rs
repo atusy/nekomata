@@ -93,10 +93,12 @@ struct Envelope {
 
 /// An envelope of any protocol version. The version is checked before the
 /// request is decoded, so a newer request shape still gets a readable reply.
+/// Any JSON type, so that a client changing even the version's type gets the
+/// rejection instead of a closed connection.
 #[derive(Deserialize)]
 struct Frame {
     #[serde(default)]
-    version: Option<u32>,
+    version: serde_json::Value,
     #[serde(default)]
     request: serde_json::Value,
 }
@@ -106,13 +108,17 @@ impl Frame {
         if self.request == "Stop" {
             return Ok(Request::Stop);
         }
-        match self.version {
-            Some(VERSION) => serde_json::from_value(self.request)
-                .map_err(|error| format!("malformed nekomata daemon request: {error}")),
-            version => Err(format!(
+        if self.version == VERSION {
+            serde_json::from_value(self.request)
+                .map_err(|error| format!("malformed nekomata daemon request: {error}"))
+        } else {
+            Err(format!(
                 "incompatible nekomata protocol: client {}, daemon {VERSION}",
-                version.map_or_else(|| "unknown".into(), |version| version.to_string())
-            )),
+                match self.version {
+                    serde_json::Value::Null => "unknown".into(),
+                    version => version.to_string(),
+                }
+            ))
         }
     }
 }
@@ -967,8 +973,15 @@ mod tests {
                 .unwrap_err()
                 .contains("incompatible nekomata protocol")
         );
-        let response = raw_exchange(&mut client, serde_json::json!({"request": "List"})).await;
-        assert!(response.unwrap_err().contains("incompatible"));
+        for frame in [
+            serde_json::json!({"request": "List"}),
+            serde_json::json!({"version": "2", "request": "List"}),
+            serde_json::json!({"version": 2.5, "request": "List"}),
+            serde_json::json!({"version": -1, "request": "List"}),
+        ] {
+            let response = raw_exchange(&mut client, frame).await;
+            assert!(response.unwrap_err().contains("incompatible"));
+        }
         drop(client);
         let _ = task.await;
     }
