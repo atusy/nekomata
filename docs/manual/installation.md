@@ -65,7 +65,7 @@ The installer signs the app so macOS privacy permissions survive updates.
   certificate's fingerprint, which needs no trust, so trust settings and the
   system keychain are left alone. Earlier versions of the installer trusted the
   certificate for code signing; to drop that setting, run
-  `security remove-trusted-cert ~/.local/share/nekomata/signing/certificate.pem`.
+  `security remove-trusted-cert` on the certificate file named below.
 - The public certificate is saved at
   `~/.local/share/nekomata/signing/certificate.pem` (under `XDG_DATA_HOME`
   when set).
