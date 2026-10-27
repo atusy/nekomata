@@ -116,7 +116,8 @@ On reconnecting, the window attaches a workspace and saves its current layout
 there, never into another window's retained layout:
 
 1. Its own workspace, if the daemon still holds it under the previous ID with
-   exactly the layout the daemon last acknowledged from this window.
+   exactly a layout this window saved there: the last one the daemon
+   acknowledged, or one sent after it whose answer was lost.
 2. Otherwise the workspace the daemon offers at startup, if it has no tabs.
 3. Otherwise a new workspace.
 

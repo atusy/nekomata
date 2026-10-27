@@ -76,12 +76,31 @@ enum Message {
 pub struct Client {
     tx: mpsc::Sender<Message>,
     pub events: mpsc::UnboundedReceiver<Event>,
-    saved: Saved,
+    saved: Shared,
     task: tokio::task::JoinHandle<()>,
 }
 
-/// The layout the daemon last acknowledged for this connection's workspace.
-type Saved = std::sync::Arc<std::sync::Mutex<Option<Snapshot>>>;
+/// Layouts the daemon may hold for a window's workspace.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Saved {
+    /// The last layout the daemon acknowledged.
+    pub acknowledged: Option<Snapshot>,
+    /// A layout sent after it whose answer was lost with the connection.
+    pub unconfirmed: Option<Snapshot>,
+}
+
+impl Saved {
+    fn holds(&self, snapshot: &Snapshot) -> bool {
+        self.acknowledged.as_ref() == Some(snapshot) || self.unconfirmed.as_ref() == Some(snapshot)
+    }
+
+    fn acknowledge(&mut self, snapshot: Snapshot) {
+        self.acknowledged = Some(snapshot);
+        self.unconfirmed = None;
+    }
+}
+
+type Shared = std::sync::Arc<std::sync::Mutex<Saved>>;
 
 /// When a window that lost the daemon tries to reach it again: after 1 s,
 /// doubling up to 30 s while attempts keep failing, and never while an
@@ -142,8 +161,8 @@ impl Reconnect {
 pub struct Resume {
     /// The workspace the window held before the connection was lost.
     pub previous: u64,
-    /// The last snapshot the daemon acknowledged for it.
-    pub sent: Option<Snapshot>,
+    /// The layouts the daemon may hold for it.
+    pub saved: Saved,
     /// The window's layout now, which the resumed workspace takes.
     pub current: Snapshot,
 }
@@ -152,15 +171,13 @@ pub struct Resume {
 /// another window's retained layout. `Open` claims the most recently used
 /// unattached workspace, which need not be this window's own:
 ///
-/// 1. The window's own workspace is the one still holding exactly what the
-///    daemon last acknowledged under the previous ID; it is reclaimed,
-///    whether `Open` offered it or not.
+/// 1. The window's own workspace is the one still holding exactly a layout
+///    this window saved under the previous ID; it is reclaimed, whether
+///    `Open` offered it or not.
 /// 2. Otherwise a workspace without tabs, which is new, takes the layout.
 /// 3. Otherwise the layout moves into a new workspace.
 async fn resume(stream: &mut UnixStream, window: u32, resume: Resume) -> Result<Payload> {
-    let own = |id: u64, retained: &Snapshot| {
-        id == resume.previous && resume.sent.as_ref() == Some(retained)
-    };
+    let own = |id: u64, retained: &Snapshot| id == resume.previous && resume.saved.holds(retained);
     let (id, retained) = workspace(daemon::exchange(stream, Request::Open { window }).await?)?;
     let commit = Request::Finish {
         snapshot: Some(resume.current.clone()),
@@ -247,7 +264,7 @@ impl Client {
         window: u32,
         connect: impl Future<Output = Result<UnixStream>> + Send + 'static,
     ) -> Self {
-        Self::launch(runtime, ctx, async move {
+        Self::launch(runtime, ctx, Saved::default(), async move {
             let opened = async {
                 let mut stream = connect.await?;
                 let payload = daemon::exchange(&mut stream, Request::Open { window }).await?;
@@ -268,7 +285,10 @@ impl Client {
         state: Resume,
         connect: impl Future<Output = Result<UnixStream>> + Send + 'static,
     ) -> Self {
-        Self::launch(runtime, ctx, async move {
+        // Until the resume lands, the daemon may still hold what the previous
+        // connection saved, which the next attempt must still recognize.
+        let saved = state.saved.clone();
+        Self::launch(runtime, ctx, saved, async move {
             let resumed = async {
                 let mut stream = connect.await?;
                 let payload = resume(&mut stream, window, state).await?;
@@ -289,18 +309,19 @@ impl Client {
     fn launch(
         runtime: &tokio::runtime::Handle,
         ctx: egui::Context,
+        saved: Saved,
         open: impl Future<Output = (Option<UnixStream>, Operation, Result<Payload, String>)>
         + Send
         + 'static,
     ) -> Self {
         let (tx, commands) = mpsc::channel(16);
         let (events_tx, events) = mpsc::unbounded_channel();
-        let saved = Saved::default();
+        let saved = Shared::new(saved.into());
         let acknowledged = saved.clone();
         let task = runtime.spawn(async move {
             let (stream, operation, result) = open.await;
             if let Ok(Payload::Workspace { snapshot, .. }) = &result {
-                *acknowledged.lock().unwrap() = Some(snapshot.clone());
+                acknowledged.lock().unwrap().acknowledge(snapshot.clone());
             }
             let sent = events_tx.send(Event { operation, result }).is_ok();
             ctx.request_repaint();
@@ -320,8 +341,8 @@ impl Client {
         self.tx.is_closed()
     }
 
-    /// The layout the daemon last acknowledged, unlike one merely queued.
-    pub fn saved(&self) -> Option<Snapshot> {
+    /// The layouts the daemon may hold, unlike ones merely queued.
+    pub fn saved(&self) -> Saved {
         self.saved.lock().unwrap().clone()
     }
 
@@ -377,7 +398,7 @@ async fn serve(
     mut stream: UnixStream,
     mut commands: mpsc::Receiver<Message>,
     events: mpsc::UnboundedSender<Event>,
-    saved: Saved,
+    saved: Shared,
     ctx: egui::Context,
 ) {
     loop {
@@ -403,29 +424,53 @@ async fn serve(
         };
         let (operation, result) = match message {
             Message::Command(command) => {
-                let stored = match &command {
-                    Command::Save(snapshot)
-                    | Command::Finish {
-                        snapshot: Some(snapshot),
-                    } => Some(snapshot.clone()),
-                    Command::List | Command::Finish { snapshot: None } => None,
-                };
                 let operation = command.operation();
-                let result = daemon::exchange(&mut stream, command.request()).await;
-                if result.is_ok()
-                    && let Some(snapshot) = stored
-                {
-                    *saved.lock().unwrap() = Some(snapshot);
-                }
+                let result = match command {
+                    Command::Save(snapshot) => {
+                        saved.lock().unwrap().unconfirmed = Some(snapshot.clone());
+                        let result =
+                            daemon::exchange(&mut stream, Request::Save(snapshot.clone())).await;
+                        let mut saved = saved.lock().unwrap();
+                        match &result {
+                            Ok(_) => saved.acknowledge(snapshot),
+                            // A refused save stored nothing.
+                            Err(error) if error.downcast_ref::<daemon::Rejection>().is_some() => {
+                                saved.unconfirmed = None;
+                            }
+                            Err(_) => {}
+                        }
+                        result
+                    }
+                    // A commit moves the window to another workspace; one
+                    // whose answer was lost leaves the window on its source.
+                    Command::Finish {
+                        snapshot: Some(snapshot),
+                    } => {
+                        let request = Request::Finish {
+                            snapshot: Some(snapshot.clone()),
+                        };
+                        let result = daemon::exchange(&mut stream, request).await;
+                        if result.is_ok() {
+                            *saved.lock().unwrap() = Saved {
+                                acknowledged: Some(snapshot),
+                                unconfirmed: None,
+                            };
+                        }
+                        result
+                    }
+                    command => daemon::exchange(&mut stream, command.request()).await,
+                };
                 (operation, result)
             }
             Message::Prepare {
                 snapshot,
                 selection,
             } => {
+                // The source save may land even when the reservation fails.
+                saved.lock().unwrap().unconfirmed = Some(snapshot.clone());
                 let result = daemon::prepare(&mut stream, snapshot.clone(), selection).await;
                 if result.is_ok() {
-                    *saved.lock().unwrap() = Some(snapshot);
+                    saved.lock().unwrap().acknowledge(snapshot);
                 }
                 (Operation::Prepare, result)
             }
@@ -615,7 +660,11 @@ mod tests {
     #[tokio::test]
     async fn only_acknowledged_layouts_count_as_saved() {
         let (mut client, mut daemon) = opened().await;
-        assert_eq!(client.saved(), Some(Snapshot::default()), "Open's layout");
+        assert_eq!(
+            client.saved(),
+            acknowledged(Snapshot::default()),
+            "Open's layout"
+        );
         let first = layout();
         let mut second = layout();
         second.font_size += 1.0;
@@ -625,7 +674,9 @@ mod tests {
         client.send(Command::Save(second.clone())).unwrap();
         assert!(receive(&mut daemon).await.is_some());
         respond(&mut daemon, Err("invalid".into())).await;
-        client.send(Command::Save(second)).unwrap();
+        let mut third = layout();
+        third.font_size += 2.0;
+        client.send(Command::Save(third.clone())).unwrap();
         assert!(receive(&mut daemon).await.is_some());
         drop(daemon);
         while let Some(event) = client.events.recv().await {
@@ -633,7 +684,53 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(client.saved(), Some(first));
+        assert_eq!(
+            client.saved(),
+            Saved {
+                acknowledged: Some(first),
+                unconfirmed: Some(third),
+            },
+            "the refused save is forgotten; the lost one may have landed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_source_save_may_have_landed_when_the_reservation_is_lost() {
+        let (mut client, mut daemon) = opened().await;
+        let source = layout();
+        client
+            .prepare(source.clone(), daemon::Selection::New)
+            .unwrap();
+        assert!(matches!(receive(&mut daemon).await, Some(Request::Save(_))));
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Prepare(_))
+        ));
+        drop(daemon);
+        assert_eq!(
+            client.events.recv().await.unwrap().operation,
+            Operation::Disconnected
+        );
+        assert!(client.saved().holds(&source));
+    }
+
+    #[tokio::test]
+    async fn a_failed_resume_keeps_what_the_previous_connection_saved() {
+        let saved = acknowledged(layout());
+        let mut client = Client::resume_with(
+            &tokio::runtime::Handle::current(),
+            egui::Context::default(),
+            7,
+            Resume {
+                previous: 3,
+                saved: saved.clone(),
+                current: Snapshot::default(),
+            },
+            async { Err(anyhow!("no daemon")) },
+        );
+        assert!(client.events.recv().await.is_some());
+        assert_eq!(client.saved(), saved);
     }
 
     #[tokio::test]
@@ -723,6 +820,13 @@ mod tests {
         );
     }
 
+    fn acknowledged(snapshot: Snapshot) -> Saved {
+        Saved {
+            acknowledged: Some(snapshot),
+            unconfirmed: None,
+        }
+    }
+
     /// A layout with one tab, unlike the empty one a new workspace has.
     fn layout() -> Snapshot {
         let mut snapshot = Snapshot::default();
@@ -760,7 +864,7 @@ mod tests {
         let current = layout();
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
-            sent: None,
+            saved: Saved::default(),
             current: current.clone(),
         });
         assert!(matches!(
@@ -799,7 +903,7 @@ mod tests {
         current.font_size += 1.0;
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
-            sent: Some(sent.clone()),
+            saved: acknowledged(sent.clone()),
             current: current.clone(),
         });
         receive(&mut daemon).await.unwrap();
@@ -824,7 +928,7 @@ mod tests {
         let current = layout();
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
-            sent: Some(current.clone()),
+            saved: acknowledged(current.clone()),
             current: current.clone(),
         });
         receive(&mut daemon).await.unwrap();
@@ -869,7 +973,7 @@ mod tests {
         current.font_size += 1.0;
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
-            sent: Some(sent.clone()),
+            saved: acknowledged(sent.clone()),
             current: current.clone(),
         });
         receive(&mut daemon).await.unwrap();
@@ -911,7 +1015,7 @@ mod tests {
         let current = layout();
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
-            sent: Some(current.clone()),
+            saved: acknowledged(current.clone()),
             current: current.clone(),
         });
         receive(&mut daemon).await.unwrap();
@@ -971,7 +1075,7 @@ mod tests {
             7,
             Resume {
                 previous: 3,
-                sent: None,
+                saved: Saved::default(),
                 current: layout(),
             },
             async { Err(anyhow!("no daemon")) },
@@ -985,7 +1089,7 @@ mod tests {
     async fn a_refused_resume_is_not_a_disconnection() {
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
-            sent: None,
+            saved: Saved::default(),
             current: layout(),
         });
         receive(&mut daemon).await.unwrap();

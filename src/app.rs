@@ -647,7 +647,11 @@ impl App {
             self.control.window,
             crate::workspace_client::Resume {
                 previous,
-                sent: self.workspace.as_ref().and_then(WorkspaceClient::saved),
+                saved: self
+                    .workspace
+                    .as_ref()
+                    .map(WorkspaceClient::saved)
+                    .unwrap_or_default(),
                 current: self.snapshot(),
             },
         ));
@@ -3122,7 +3126,11 @@ mod tests {
         let shell = app.panes.values().next().unwrap().session.clone();
         // Nothing is in flight, so only the idle watch can notice the loss.
         pump(&mut app, &|app| {
-            app.workspace.as_ref().and_then(WorkspaceClient::saved) == Some(app.snapshot())
+            app.workspace.as_ref().map(WorkspaceClient::saved)
+                == Some(crate::workspace_client::Saved {
+                    acknowledged: Some(app.snapshot()),
+                    unconfirmed: None,
+                })
         });
         // The test binary cannot start a daemon itself; the real one can.
         let executable = std::env::current_exe()
