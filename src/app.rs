@@ -48,9 +48,11 @@ struct Pane {
     pending_paste: Option<crate::paste::PendingPaste>,
 }
 
-/// Drops a selection made before the screen switched or the view moved.
-/// Callers hold `state` until they have used or replaced the selection, so
-/// the session thread cannot advance the epoch in between.
+/// Drops a selection made before the screen switched, resized or the view
+/// moved. Drawing and `Action::Copy` hold `state` until they have used or
+/// replaced the selection, so the session thread cannot advance the epoch in
+/// between; `Pane::expire_selection` releases it before `terminal_input`
+/// copies, which leaves that path a window of one lock hand-off.
 fn expire_selection(
     selection: &mut Option<Selection>,
     seen_epoch: &mut u64,
