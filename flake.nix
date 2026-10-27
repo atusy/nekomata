@@ -152,6 +152,7 @@
                     pkgs.lib.makeBinPath (
                       [ felis.packages.${system}.felis ]
                       ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+                        pkgs.glib.bin
                         pkgs.openssh
                         pkgs.xdg-utils
                       ]
@@ -206,6 +207,7 @@
                 felis.packages.${system}.felis
               ]
               ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+                pkgs.glib.bin
                 pkgs.openssh
                 pkgs.xdg-utils
               ];
