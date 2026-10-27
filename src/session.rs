@@ -99,7 +99,8 @@ pub struct State {
     pub detached: bool,
     pub exited: bool,
     pub clipboard: Option<String>,
-    /// Advances whenever a grid change moves the cells a selection covers.
+    /// Advances when the screen switches, the viewport moves to other
+    /// lines, or the screen is rehydrated; a selection made before is stale.
     pub selection_epoch: u64,
 }
 

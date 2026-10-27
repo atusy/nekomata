@@ -56,10 +56,12 @@ daemon delivers each write to at most one window attached to the session.
 - When the terminal program uses the mouse, Shift+drag selects text and
   Shift+Alt+drag selects a rectangle.
 - A selection is cleared when the terminal switches between the main and
-  alternate screens, when the view moves to other lines (scrolling, a
-  search or prompt jump, or returning to live output), and on reconnection. Output that scrolls a
-  browsed view along with its lines keeps the selection. Copy never takes text
-  from a screen other than the one selected on.
+  alternate screens, when the view moves to other lines (scrolling, a search
+  or prompt jump, or returning to live output), when the pane's row or column
+  count changes, and on reconnection. Output that scrolls a browsed view
+  along with its lines keeps the selection.
+- A selection keeps its position on screen, not the text under it: output
+  that overwrites or scrolls the live screen changes what Copy takes.
 
 ## Links
 
