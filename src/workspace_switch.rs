@@ -224,7 +224,8 @@ impl<P> Switch<P> {
         }
     }
 
-    /// Whether the CLI that requested the switch stopped waiting for it.
+    /// Whether the control request that asked for the switch timed out, which
+    /// drops its reply channel; an interrupted CLI does not close it.
     pub fn reply_closed(&self) -> bool {
         self.reply.as_ref().is_some_and(|reply| reply.is_closed())
     }
@@ -461,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn a_requester_that_gave_up_cancels_the_switch() {
+    fn a_timed_out_control_request_cancels_the_switch() {
         let (mut switch, _panes) = connecting(&[Some(A)]);
         assert_eq!(switch.poll(status, true), Poll::Finish(None));
     }
