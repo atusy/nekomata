@@ -2374,7 +2374,6 @@ fn ui_text_selected(ctx: &egui::Context) -> bool {
 fn ui_owns_clipboard_event(event: &egui::Event, ui_text_selected: bool) -> bool {
     ui_text_selected && matches!(event, egui::Event::Copy | egui::Event::Cut)
 }
-}
 
 #[cfg(test)]
 mod tests {
@@ -3588,5 +3587,4 @@ mod tests {
             true
         ));
     }
-
 }
