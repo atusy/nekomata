@@ -646,19 +646,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closing_gives_up_at_one_shared_deadline() {
+    async fn closing_gives_up_at_its_deadline_including_queued_saves() {
         let (client, mut daemon) = opened().await;
-        // The daemon reads requests but never answers.
-        let _fake = tokio::spawn(async move { while receive(&mut daemon).await.is_some() {} });
+        // The daemon answers the queued save late and never answers the close.
+        let _fake = tokio::spawn(async move {
+            receive(&mut daemon).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            respond(&mut daemon, Ok(Payload::Done)).await;
+            while receive(&mut daemon).await.is_some() {}
+        });
+        client.send(Command::Save(layout())).unwrap();
         let started = Instant::now();
+        let deadline = started + Duration::from_millis(300);
         let error = client
-            .close_by(
-                Some(Snapshot::default()),
-                started + Duration::from_millis(200),
-            )
+            .close_by(Some(Snapshot::default()), deadline)
             .await
             .unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(1), "{error:#}");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(300) && elapsed < Duration::from_secs(2),
+            "{elapsed:?}: {error:#}"
+        );
     }
 
     /// A layout with one tab, unlike the empty one a new workspace has.
