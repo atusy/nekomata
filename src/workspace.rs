@@ -16,11 +16,14 @@ impl Tab {
         self.focus_history.push(id);
     }
 
-    pub fn remove_pane(&mut self, id: u64) -> bool {
+    pub fn remove_pane(&mut self, id: u64) -> PaneRemoval {
+        if !self.layout.panes().contains(&id) {
+            return PaneRemoval::Missing;
+        }
         self.focus_history.retain(|previous| *previous != id);
         let layout = std::mem::replace(&mut self.layout, Layout::Pane(id));
         let Some(layout) = layout.remove(id) else {
-            return false;
+            return PaneRemoval::LastPane;
         };
         if self.focused == id {
             self.focus(
@@ -31,23 +34,31 @@ impl Tab {
             );
         }
         self.layout = layout;
-        true
+        PaneRemoval::Removed
     }
 }
 
-/// Removes pane `id` from whichever tab holds it, dropping a tab left empty
-/// and keeping `active` on a remaining tab.
+/// Removes a pane and drops a tab left empty.
 pub fn remove_pane(tabs: &mut Vec<Tab>, active: &mut usize, id: u64) {
     let Some(index) = tabs.iter().position(|tab| tab.layout.panes().contains(&id)) else {
         return;
     };
-    if !tabs[index].remove_pane(id) {
+    if tabs[index].remove_pane(id) == PaneRemoval::LastPane {
         tabs.remove(index);
         if index < *active {
             *active -= 1;
         }
         *active = (*active).min(tabs.len().saturating_sub(1));
     }
+}
+
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneRemoval {
+    Removed,
+    /// The pane was the tab's only one; the caller removes the tab.
+    LastPane,
+    Missing,
 }
 
 /// Moves `tabs[from]` into the gap before `tabs[to]` (`to == tabs.len()` means

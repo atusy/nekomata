@@ -1195,8 +1195,12 @@ impl App {
                 let target = self.panes[&source].session.target.clone();
                 let id = self.add_pane(ctx, None, cwd, target);
                 let tab = &mut self.tabs[self.active];
-                tab.layout.split(tab.focused, id, axis);
-                tab.focus(id);
+                if tab.layout.split(source, id, axis) {
+                    tab.focus(id);
+                } else {
+                    // A pane outside every layout would never be drawn or closed.
+                    self.panes.remove(&id);
+                }
             }
             Action::ClosePane => self.close_pane(ctx, self.tabs[self.active].focused),
             Action::CloseTab => {
@@ -3726,8 +3730,8 @@ mod tests {
 
     fn split_tab() -> Tab {
         let mut layout = Layout::Pane(1);
-        layout.split(1, 2, Axis::Horizontal);
-        layout.split(2, 3, Axis::Vertical);
+        assert!(layout.split(1, 2, Axis::Horizontal));
+        assert!(layout.split(2, 3, Axis::Vertical));
         Tab {
             name: "test".into(),
             layout,
@@ -3742,11 +3746,20 @@ mod tests {
         tab.focus(3);
         tab.focus(2);
         tab.focus(3);
-        assert!(tab.remove_pane(3));
+        assert_eq!(tab.remove_pane(3), PaneRemoval::Removed);
         assert_eq!(tab.focused, 2);
-        assert!(tab.remove_pane(2));
+        assert_eq!(tab.remove_pane(2), PaneRemoval::Removed);
         assert_eq!(tab.focused, 1);
-        assert!(!tab.remove_pane(1));
+        assert_eq!(tab.remove_pane(1), PaneRemoval::LastPane);
+    }
+
+    #[test]
+    fn removing_a_pane_outside_the_tab_reports_it_missing() {
+        let mut tab = split_tab();
+        tab.focus(2);
+        let before = tab.clone();
+        assert_eq!(tab.remove_pane(9), PaneRemoval::Missing);
+        assert_eq!(tab, before);
     }
 
     #[test]
@@ -3756,9 +3769,9 @@ mod tests {
         tab.focus(2);
         tab.focus(3);
         other.focus(2);
-        assert!(tab.remove_pane(2));
+        assert_eq!(tab.remove_pane(2), PaneRemoval::Removed);
         assert_eq!(tab.focused, 3);
-        assert!(tab.remove_pane(3));
+        assert_eq!(tab.remove_pane(3), PaneRemoval::Removed);
         assert_eq!(tab.focused, 1);
         assert_eq!(other.focused, 2);
         assert_eq!(other.focus_history, vec![1, 2]);
