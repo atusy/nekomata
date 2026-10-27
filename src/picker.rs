@@ -9,15 +9,14 @@ type Roster = Arc<Mutex<Option<Result<Vec<SessionInfo>, String>>>>;
 
 #[derive(Default)]
 pub struct SessionPicker {
-    pub visible: bool,
     query: String,
     roster: Roster,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SessionPicker {
+    /// Starts loading the roster the picker shows next.
     pub fn open(&mut self, runtime: &tokio::runtime::Runtime, ctx: &egui::Context) {
-        self.visible = true;
         self.refresh(runtime, ctx);
     }
 
@@ -45,19 +44,20 @@ impl SessionPicker {
         }));
     }
 
+    /// Clears `open` when the picker closes, including after a selection.
     pub fn show(
         &mut self,
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
+        open: &mut bool,
     ) -> Option<String> {
-        if !self.visible {
+        if !*open {
             return None;
         }
-        let mut open = true;
         let mut refresh = false;
         let mut selected = None;
         egui::Window::new("Attach a felis session")
-            .open(&mut open)
+            .open(open)
             .collapsible(false)
             .default_width(480.0)
             .show(ctx, |ui| {
@@ -106,7 +106,7 @@ impl SessionPicker {
                     }
                 }
             });
-        self.visible = open && selected.is_none();
+        *open &= selected.is_none();
         if refresh {
             self.refresh(runtime, ctx);
         }

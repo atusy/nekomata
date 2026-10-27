@@ -211,6 +211,7 @@ pub struct App {
     panes: BTreeMap<u64, Pane>,
     window: WindowLayout,
     picker: SessionPicker,
+    picker_open: bool,
     shortcuts: Shortcuts,
     palette: bool,
     palette_state: crate::command_palette::CommandPalette,
@@ -276,6 +277,7 @@ impl App {
                 ..Default::default()
             },
             picker: SessionPicker::default(),
+            picker_open: false,
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
             palette_state: Default::default(),
@@ -546,7 +548,7 @@ impl App {
             Ok(()) => {
                 self.workspace_error = None;
                 self.workspaces_open = false;
-                self.picker.visible = false;
+                self.picker_open = false;
                 self.palette = false;
                 self.font_size_open = false;
                 self.pending_workspace = Some(WorkspaceSwitch::new(reply));
@@ -875,7 +877,7 @@ impl App {
         blocks_input(
             ctx,
             InputBlockers {
-                overlay: self.picker.visible
+                overlay: self.picker_open
                     || self.palette
                     || self.font_size_open
                     || self.workspaces_open,
@@ -1129,7 +1131,10 @@ impl App {
                 self.palette = true;
                 self.palette_state = Default::default();
             }
-            Action::AttachSession => self.picker.open(&self.runtime, ctx),
+            Action::AttachSession => {
+                self.picker_open = true;
+                self.picker.open(&self.runtime, ctx);
+            }
             Action::ChangeFontSize => self.font_size_open = true,
             Action::FontScale(scale) => {
                 self.window.font_size = felis_client_core::config::FontConfig::clamped_font_size(
@@ -1145,7 +1150,7 @@ impl App {
                 // Keys cannot paste while these are open, so only the palette
                 // gets here, and it means the terminal. Each one blocks terminal
                 // input and would make the delivered clipboard event stale.
-                self.picker.visible = false;
+                self.picker_open = false;
                 self.workspaces_open = false;
                 let pane = self
                     .panes
@@ -1288,9 +1293,9 @@ impl App {
         }
         if self.window.tabs.is_empty() {
             egui::CentralPanel::default().show(root_ui, |_| {});
-            if let Some(id) = self.picker.show(&self.runtime, ctx) {
+            if let Some(id) = self.picker.show(&self.runtime, ctx, &mut self.picker_open) {
                 self.add_tab(ctx, Some(id));
-            } else if !self.picker.visible {
+            } else if !self.picker_open {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             return;
@@ -1529,7 +1534,7 @@ impl App {
             });
         }
         self.paste_confirmation(ctx);
-        if let Some(id) = self.picker.show(&self.runtime, ctx) {
+        if let Some(id) = self.picker.show(&self.runtime, ctx, &mut self.picker_open) {
             self.add_tab(ctx, Some(id));
         }
         if self.palette {
@@ -3069,11 +3074,11 @@ mod tests {
         // Pasting from the palette must reach the terminal, whose paste any
         // window that blocks terminal input would otherwise discard.
         app.open_search();
-        app.picker.visible = true;
+        app.picker_open = true;
         app.workspaces_open = true;
         app.action(&ctx, Action::Paste);
         assert!(!app.searching());
-        assert!(!app.picker.visible && !app.workspaces_open);
+        assert!(!app.picker_open && !app.workspaces_open);
         assert!(app.paste_requested.take().is_some());
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
@@ -3558,6 +3563,7 @@ mod tests {
                 ..Default::default()
             },
             picker: SessionPicker::default(),
+            picker_open: false,
             shortcuts: Shortcuts::default(),
             palette: false,
             palette_state: Default::default(),
