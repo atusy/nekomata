@@ -97,6 +97,9 @@ struct Frame {
 
 impl Frame {
     fn decode(self) -> Result<Request, String> {
+        if self.request == "Stop" {
+            return Ok(Request::Stop);
+        }
         match self.version {
             Some(VERSION) => serde_json::from_value(self.request)
                 .map_err(|error| format!("malformed nekomata daemon request: {error}")),
@@ -232,6 +235,33 @@ pub async fn exchange(stream: &mut UnixStream, request: Request) -> Result<Paylo
         .await?;
         let response: Response = read_json(stream).await?;
         response.map_err(|error| Rejection(error).into())
+    })
+    .await
+    .context("nekomata daemon request timed out")?
+}
+
+/// The one request whose wire form never changes, so that any client can
+/// retire a daemon of another protocol version. Version 1 daemons accept Stop
+/// only at their own version; later daemons accept it at any version.
+#[derive(Serialize)]
+struct StopFrame {
+    version: u32,
+    request: &'static str,
+}
+
+fn stop_frame() -> StopFrame {
+    StopFrame {
+        version: 1,
+        request: "Stop",
+    }
+}
+
+async fn request_stop(stream: &mut UnixStream) -> Result<()> {
+    tokio::time::timeout(DEADLINE, async {
+        write_json(stream, &stop_frame()).await?;
+        // Only the Ok/Err tag is frozen; the success payload may differ.
+        let response: Result<serde_json::Value, String> = read_json(stream).await?;
+        response.map(drop).map_err(|error| Rejection(error).into())
     })
     .await
     .context("nekomata daemon request timed out")?
@@ -472,18 +502,11 @@ fn handle(
 
 pub fn command(stop: bool) -> Result<String> {
     tokio::runtime::Runtime::new()?.block_on(async {
-        let mut stream = if stop {
-            UnixStream::connect(socket()?).await?
-        } else {
-            connect().await?
-        };
-        match exchange(
-            &mut stream,
-            if stop { Request::Stop } else { Request::List },
-        )
-        .await?
-        {
-            Payload::Done => Ok("Stopped nekomata daemon".into()),
+        if stop {
+            request_stop(&mut UnixStream::connect(socket()?).await?).await?;
+            return Ok("Stopped nekomata daemon".into());
+        }
+        match exchange(&mut connect().await?, Request::List).await? {
             Payload::Workspaces(workspaces) => {
                 let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
                 for workspace in workspaces {
@@ -829,6 +852,40 @@ mod tests {
         let error = exchange(&mut client, Request::List).await.unwrap_err();
         assert!(error.downcast_ref::<Rejection>().is_none());
         reply.await.unwrap();
+    }
+
+    #[test]
+    fn the_stop_frame_is_frozen_so_any_daemon_version_accepts_it() {
+        assert_eq!(
+            serde_json::to_string(&stop_frame()).unwrap(),
+            r#"{"version":1,"request":"Stop"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Ok(Payload::Done)).unwrap(),
+            r#"{"Ok":"Done"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn daemons_accept_a_stop_from_any_protocol_version() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        let response = raw_exchange(
+            &mut client,
+            serde_json::json!({"version": VERSION + 1, "request": "Stop"}),
+        )
+        .await;
+        assert!(response.is_ok());
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn stop_requests_reach_a_daemon_through_the_frozen_frame() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut client, task) = connection(&registry, 1);
+        request_stop(&mut client).await.unwrap();
+        assert!(registry.lock().unwrap().stopping);
+        let _ = task.await;
     }
 
     #[tokio::test]

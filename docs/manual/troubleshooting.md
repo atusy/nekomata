@@ -4,16 +4,15 @@
 
 After an update, a nekomata daemon from an older version may still be
 running. nekomata refuses to replace it, because that would discard your
-workspaces. The new `nekomata daemon stop` cannot stop it either, because the
-old daemon rejects every request from the new version. Close every window,
-then end the old daemon process:
+workspaces. Close every window of the old version, then stop the old daemon:
 
 ```sh
-pkill -f 'nekomata-bin daemon run'
+nekomata daemon stop
 ```
 
-Your workspace layouts are lost, but your shells keep running in felis;
-[attach to them again](sessions.md) after restarting.
+This works whatever the daemon's version. Your workspace layouts are lost,
+but your shells keep running in felis; [attach to them again](sessions.md)
+after restarting.
 
 ## CLI commands report no running window after an update
 

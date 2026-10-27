@@ -12,9 +12,11 @@ felis daemon.
   use. It keeps running after the last window closes.
 - `nekomata daemon stop` stops it, and refuses while any window has a
   workspace attached. It never starts a daemon. Retained layouts are lost;
-  felis shells keep running. Once the daemon accepts a stop, it refuses
-  windows that try to attach or switch a workspace, and it exits even if the
-  stopping CLI is interrupted before the reply.
+  felis shells keep running. It stops a daemon of any protocol version,
+  including one that rejects every other request from this client. Once the
+  daemon accepts a stop, it refuses windows that try to attach or switch a
+  workspace, and it exits even if the stopping CLI is interrupted before the
+  reply.
 - The daemon removes a stale socket left at its socket path, but refuses to
   start when anything other than a socket is there.
 - Running out of file descriptors or memory while accepting a client does not
