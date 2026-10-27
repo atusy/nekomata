@@ -18,6 +18,10 @@ list, the session picker or a paste confirmation is open, or while a
 workspace switch is in progress. A pending sequence survives these conditions;
 losing window focus cancels it only while key dispatch is active.
 
+Key repeat from holding the last key of a pending sequence, such as a held
+`alt+w`, is ignored: the sequence waits for the next key. Holding a key bound
+to an action repeats the action.
+
 A key that ends a pending application sequence without completing it skips
 the terminal keymap: the keys already pressed are discarded, and this key goes
 to the terminal program.

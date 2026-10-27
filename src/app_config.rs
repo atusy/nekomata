@@ -565,7 +565,8 @@ mod tests {
         assert!(error.contains(&path.display().to_string()), "{error}");
     }
 
-    /// Feeds key presses through a keymap configured by `text`.
+    /// Feeds key taps (press, then release) through a keymap configured by
+    /// `text`.
     fn press(text: &str, keys: &[(eframe::egui::Key, eframe::egui::Modifiers)]) -> Vec<Action> {
         let (config, warnings) = parse(text).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -575,12 +576,14 @@ mod tests {
         );
         let events = keys
             .iter()
-            .map(|&(key, modifiers)| eframe::egui::Event::Key {
-                key,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers,
+            .flat_map(|&(key, modifiers)| {
+                [true, false].map(|pressed| eframe::egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                })
             })
             .collect();
         let ctx = eframe::egui::Context::default();

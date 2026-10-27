@@ -366,12 +366,20 @@ impl Shortcuts {
                 key,
                 pressed: true,
                 modifiers: mods,
+                repeat,
                 ..
             } = event
             else {
                 return true;
             };
             suppress_text = false;
+            let chord = terminal_chord(*key, *mods);
+            // Holding a prefix repeats it; the sequence waits for the next
+            // key rather than treating the repeat as one.
+            if *repeat && self.pending.last() == Some(&chord) {
+                suppress_text = true;
+                return false;
+            }
             let pending = !self.pending.is_empty();
             if pending && *key == Key::Escape {
                 self.pending.clear();
@@ -380,7 +388,7 @@ impl Shortcuts {
             }
             // `pending` is cleared rather than replaced, so its allocation
             // is reused across key presses.
-            self.pending.push(terminal_chord(*key, *mods));
+            self.pending.push(chord);
             let action = match self.keymap.lookup(&self.pending) {
                 Lookup::Prefix => {
                     suppress_text = true;
@@ -669,6 +677,39 @@ mod tests {
                 press(Key::F, ctrl_shift),
             ]
         );
+    }
+
+    #[test]
+    fn holding_a_prefix_keeps_its_sequence_pending() {
+        let repeat = |key, modifiers| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers,
+        };
+        let (actions, remaining) = consume_events(vec![
+            press(Key::W, Modifiers::ALT),
+            repeat(Key::W, Modifiers::ALT),
+            Event::Text("∑".into()),
+            repeat(Key::W, Modifiers::ALT),
+            press(Key::S, Modifiers::ALT),
+        ]);
+        assert_eq!(actions, vec![Action::Split(Axis::Vertical)]);
+        assert!(remaining.is_empty(), "{remaining:?}");
+    }
+
+    #[test]
+    fn holding_a_bound_key_repeats_its_action() {
+        let (actions, remaining) = consume_events(vec![
+            press(Key::PageUp, Modifiers::SHIFT),
+            press(Key::PageUp, Modifiers::SHIFT),
+        ]);
+        let scroll = Action::Terminal(TerminalAction::Scroll(
+            felis_client_core::ScrollStep::HalfPageUp,
+        ));
+        assert_eq!(actions, vec![scroll.clone(), scroll]);
+        assert!(remaining.is_empty());
     }
 
     #[test]
