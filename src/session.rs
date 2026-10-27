@@ -201,7 +201,28 @@ struct InputQueue {
     pending: Mutex<Pending>,
     ready: Notify,
     accepting: AtomicBool,
-    lost: AtomicBool,
+    notice: Mutex<Option<InputNotice>>,
+}
+
+/// Why some input did not reach the shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputNotice {
+    Lost,
+    PasteRefused { bytes: usize },
+}
+
+impl InputNotice {
+    pub fn message(self) -> String {
+        match self {
+            Self::Lost => {
+                "Some input was not delivered. Check the terminal before continuing.".into()
+            }
+            Self::PasteRefused { bytes } => format!(
+                "Paste refused: {bytes} bytes is over the {}-byte limit.",
+                felis_protocol::messages::MAX_PASTE_BYTES
+            ),
+        }
+    }
 }
 
 impl Default for InputQueue {
@@ -210,7 +231,7 @@ impl Default for InputQueue {
             pending: Mutex::default(),
             ready: Notify::new(),
             accepting: AtomicBool::new(true),
-            lost: AtomicBool::new(false),
+            notice: Mutex::default(),
         }
     }
 }
@@ -231,7 +252,7 @@ impl InputQueue {
         let shell_input = is_shell_input(msg);
         let result = self.enqueue(msg, shell_input);
         if shell_input {
-            self.lost.store(result.is_err(), Ordering::Relaxed);
+            *self.notice.lock().unwrap() = result.is_err().then_some(InputNotice::Lost);
         }
         result
     }
@@ -272,11 +293,20 @@ impl InputQueue {
     }
 
     fn mark_lost(&self) {
-        self.lost.store(true, Ordering::Relaxed);
+        self.set_notice(InputNotice::Lost);
     }
 
+    fn set_notice(&self, notice: InputNotice) {
+        *self.notice.lock().unwrap() = Some(notice);
+    }
+
+    fn notice(&self) -> Option<InputNotice> {
+        *self.notice.lock().unwrap()
+    }
+
+    #[cfg(test)]
     fn input_lost(&self) -> bool {
-        self.lost.load(Ordering::Relaxed)
+        self.notice() == Some(InputNotice::Lost)
     }
 
     /// The oldest frame, and whether it carries shell input.
@@ -423,9 +453,15 @@ impl Session {
         let _ = self.tx.push(&msg);
     }
 
-    /// Whether input may not have reached the shell.
-    pub fn input_lost(&self) -> bool {
-        self.tx.input_lost()
+    /// Why recent input may not have reached the shell, until shell
+    /// input is accepted again.
+    pub fn input_notice(&self) -> Option<InputNotice> {
+        self.tx.notice()
+    }
+
+    /// Reports a paste the pane would not send.
+    pub fn refuse_paste(&self, bytes: usize) {
+        self.tx.set_notice(InputNotice::PasteRefused { bytes });
     }
 }
 
@@ -1278,6 +1314,28 @@ mod tests {
             queue.close();
             assert!(queue.input_lost(), "the queued {msg:?} was discarded");
         }
+    }
+
+    #[test]
+    fn a_paste_refusal_stays_until_shell_input_is_accepted() {
+        let queue = InputQueue::default();
+        queue.set_notice(InputNotice::PasteRefused { bytes: 9 });
+        queue
+            .push(&InputMsg::FocusChange { focused: true })
+            .unwrap();
+        assert_eq!(queue.notice(), Some(InputNotice::PasteRefused { bytes: 9 }));
+        assert!(
+            InputNotice::PasteRefused { bytes: 9 }
+                .message()
+                .contains(&felis_protocol::messages::MAX_PASTE_BYTES.to_string())
+        );
+        queue.push(&InputMsg::KeyBytes(b"x".to_vec())).unwrap();
+        assert_eq!(queue.notice(), None);
+        let oversized = vec![b'x'; felis_protocol::messages::MAX_PASTE_BYTES + 1];
+        assert!(
+            queue.push(&InputMsg::Paste(oversized)).is_err(),
+            "the encoder drops an oversized paste, so the pane must refuse it first"
+        );
     }
 
     #[test]

@@ -4,12 +4,15 @@
 pub(crate) enum Paste {
     Send(Vec<u8>),
     Confirm(PendingPaste),
+    Refused { bytes: usize },
 }
 
 impl Paste {
     pub(crate) fn new(text: String, bracketed: bool, generation: u64) -> Self {
         let bytes = text.into_bytes();
-        if felis_client_core::confirm::paste_needs_confirmation(bracketed, &bytes) {
+        if bytes.len() > felis_protocol::messages::MAX_PASTE_BYTES {
+            Self::Refused { bytes: bytes.len() }
+        } else if felis_client_core::confirm::paste_needs_confirmation(bracketed, &bytes) {
             Self::Confirm(PendingPaste { bytes, generation })
         } else {
             Self::Send(bytes)
@@ -58,4 +61,14 @@ mod tests {
             assert_eq!(bytes, text.as_bytes());
         }
     }
+    #[test]
+    fn pastes_over_the_limit_are_refused_before_confirmation() {
+        use felis_protocol::messages::MAX_PASTE_BYTES;
+        assert!(matches!(Paste::new("\n".repeat(MAX_PASTE_BYTES), false, 7), Paste::Confirm(_)));
+        assert!(matches!(Paste::new("x".repeat(MAX_PASTE_BYTES), true, 7), Paste::Send(bytes) if bytes.len() == MAX_PASTE_BYTES));
+        for bracketed in [false, true] {
+            assert!(matches!(Paste::new("\n".repeat(MAX_PASTE_BYTES + 1), bracketed, 7), Paste::Refused { bytes } if bytes == MAX_PASTE_BYTES + 1));
+        }
+    }
+
 }

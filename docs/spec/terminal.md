@@ -96,6 +96,10 @@ daemon delivers each write to at most one window attached to the session.
   bracketed paste is enabled, is sent without confirmation.
 - If the pane's connection changes while confirmation is pending, the paste is
   discarded.
+- A paste larger than felis's paste limit (16 MiB minus 64 bytes) is refused
+  before any confirmation, never truncated, and the pane shows its size and
+  the limit. The notice stays until the next key, paste or mouse report is
+  accepted for sending.
 
 ## Scrolling
 

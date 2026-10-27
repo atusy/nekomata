@@ -2060,11 +2060,11 @@ fn draw_pane(
             font,
             FG,
         );
-    } else if pane.session.input_lost() {
+    } else if let Some(notice) = pane.session.input_notice() {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
-            "Some input was not delivered. Check the terminal before continuing.",
+            notice.message(),
             FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             Color32::LIGHT_RED,
         );
@@ -2358,6 +2358,7 @@ fn terminal_input(
                     crate::paste::Paste::Send(bytes) => {
                         send_to_program(selection, session, InputMsg::Paste(bytes))
                     }
+                    crate::paste::Paste::Refused { bytes } => session.refuse_paste(bytes),
                 }
             }
             TerminalInput::Copy => {
