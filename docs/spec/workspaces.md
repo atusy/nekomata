@@ -18,7 +18,8 @@ felis daemon.
   workspace, and it exits even if the stopping CLI is interrupted before the
   reply.
 - The daemon removes a stale socket left at its socket path, but refuses to
-  start when anything other than a socket is there.
+  start when anything other than a socket is there; the GUI and CLI then
+  report that path instead of starting it.
 - Running out of file descriptors or memory while accepting a client does not
   stop the daemon; it retries shortly after.
 - Workspaces are held in memory only. Stopping or crashing the daemon, or

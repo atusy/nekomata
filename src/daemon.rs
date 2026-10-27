@@ -326,6 +326,8 @@ pub async fn connect() -> Result<UnixStream> {
     if let Ok(stream) = UnixStream::connect(&path).await {
         return Ok(stream);
     }
+    // The spawned daemon would refuse this path with its stderr discarded.
+    socket_at(&path)?;
     let mut child = std::process::Command::new(std::env::current_exe()?)
         .args(["daemon", "run"])
         .stdin(Stdio::null())
@@ -382,19 +384,24 @@ pub fn run() -> Result<()> {
 }
 
 /// Only a socket is ours to remove; a symlink or regular file in its place is
-/// left for the user to inspect.
-fn remove_stale_socket(path: &Path) -> Result<()> {
+/// left for the user to inspect. Returns whether a socket is there.
+fn socket_at(path: &Path) -> Result<bool> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_socket() => {
-            std::fs::remove_file(path).context("remove stale nekomata daemon socket")
-        }
+        Ok(metadata) if metadata.file_type().is_socket() => Ok(true),
         Ok(_) => bail!(
             "{} exists and is not a socket; remove it to start the nekomata daemon",
             path.display()
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error).context("inspect nekomata daemon socket"),
     }
+}
+
+fn remove_stale_socket(path: &Path) -> Result<()> {
+    if socket_at(path)? {
+        std::fs::remove_file(path).context("remove stale nekomata daemon socket")?;
+    }
+    Ok(())
 }
 
 /// Running out of descriptors or memory, or a client resetting before accept,
@@ -615,6 +622,24 @@ mod tests {
         assert!(remove_stale_socket(&socket).is_err());
         assert_eq!(std::fs::read_to_string(&socket).unwrap(), "keep");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep");
+    }
+
+    #[test]
+    fn only_a_socket_or_nothing_may_occupy_the_daemon_socket_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("daemon.sock");
+        assert!(!socket_at(&path).unwrap());
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(socket_at(&path).unwrap());
+        drop(listener);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "keep").unwrap();
+        assert!(
+            socket_at(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("is not a socket")
+        );
     }
 
     #[test]

@@ -23,6 +23,12 @@ a newer window starts a second nekomata daemon beside the old one. Close every
 window, end the old daemon as [above](#nekomata-reports-an-incompatible-daemon),
 then start nekomata again.
 
+## nekomata reports that `daemon.sock` is not a socket
+
+Something other than the nekomata daemon's socket sits where the daemon
+listens, so nekomata will not start the daemon over it. Inspect the reported
+file, move it away if it is not yours to keep, and start nekomata again.
+
 ## An update to felis does not take effect
 
 Restarting the GUI does not restart the felis daemon, which owns your shells.
