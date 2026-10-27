@@ -855,33 +855,17 @@ impl App {
             .pending_attach
             .iter()
             .filter_map(|(&id, pending)| {
-                let state = pending.session.state.lock().unwrap();
-                (state.connected
-                    || state.error.is_some()
-                    || state.exited
-                    || state.detached
-                    || !self.panes.contains_key(&id)
-                    || pending.reply.is_closed())
-                .then_some(id)
+                attach_result(
+                    id,
+                    &pending.session.state.lock().unwrap(),
+                    self.panes.contains_key(&id),
+                    pending.reply.is_closed(),
+                )
+                .map(|result| (id, result))
             })
             .collect();
-        for id in ready {
+        for (id, result) in ready {
             let pending = self.pending_attach.remove(&id).unwrap();
-            let result = {
-                let state = pending.session.state.lock().unwrap();
-                if pending.reply.is_closed() {
-                    Err("request cancelled".into())
-                } else if !self.panes.contains_key(&id) {
-                    Err("pane closed during attach".into())
-                } else if state.connected {
-                    Ok(format!("Attached pane {id}"))
-                } else {
-                    Err(state
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| "session ended during attach".into()))
-                }
-            };
             if result.is_ok() {
                 let pane = self.panes.get_mut(&id).unwrap();
                 pane.session = pending.session;
@@ -1792,6 +1776,29 @@ fn consume_search_escape(ctx: &egui::Context) -> bool {
     !egui::Popup::is_any_open(ctx)
         && ctx.memory(|memory| memory.top_modal_layer().is_none())
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+}
+
+/// Resolves a pending pane attach, or `None` while it is still connecting.
+fn attach_result(
+    id: u64,
+    state: &crate::session::State,
+    pane_open: bool,
+    cancelled: bool,
+) -> Option<Reply> {
+    if cancelled {
+        Some(Err("request cancelled".into()))
+    } else if !pane_open {
+        Some(Err("pane closed during attach".into()))
+    } else if state.connected {
+        Some(Ok(format!("Attached pane {id}")))
+    } else if state.error.is_some() || state.exited || state.detached {
+        Some(Err(state
+            .error
+            .clone()
+            .unwrap_or_else(|| "session ended during attach".into())))
+    } else {
+        None
+    }
 }
 
 /// Returns the insertion gap for a pointer at `x`: the number of tabs whose
