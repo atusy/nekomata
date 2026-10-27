@@ -80,6 +80,12 @@ pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<Request
     })
 }
 
+/// The rows a pane lays out and centers, whether or not it can request a
+/// size: a pane narrower than one cell still shows as many rows as fit.
+pub fn layout_rows(rect: Rect, cell_h: u32, ppp: f32) -> u16 {
+    whole_cells(rect.height(), cell_h, ppp, MAX_REQUESTED_ROWS).map_or(1, |rows| rows as u16)
+}
+
 /// How many whole `cell` physical pixels fit in `extent` points, capped at
 /// `max`; `None` when not one does.
 fn whole_cells(extent: f32, cell: u32, ppp: f32, max: u32) -> Option<u32> {
@@ -511,6 +517,15 @@ mod tests {
         assert_eq!(requested_dims(pane(47.0, 45.0), [20, 0], 2.0), None);
         assert!(requested_dims(pane(10.0, 20.0), cell, 2.0).is_some());
         assert_eq!(requested_dims(pane(47.0, 45.0), cell, f32::NAN), None);
+    }
+
+    #[test]
+    fn a_pane_narrower_than_one_cell_lays_out_every_row_that_fits() {
+        let narrow = Rect::from_min_size(Pos2::ZERO, Vec2::new(5.0, 45.0));
+        assert_eq!(requested_dims(narrow, [20, 40], 2.0), None);
+        assert_eq!(layout_rows(narrow, 40, 2.0), 2);
+        let short = Rect::from_min_size(Pos2::ZERO, Vec2::new(47.0, 5.0));
+        assert_eq!(layout_rows(short, 40, 2.0), 1);
     }
 
     #[test]

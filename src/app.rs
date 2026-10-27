@@ -1965,7 +1965,7 @@ fn draw_pane(
     let Vec2 { x: cw, y: ch } = renderer.cell_size();
     let requested = crate::render::requested_dims(rect, renderer.cell_px(), ppp);
     // Split the unused fractional row between the top and bottom margins.
-    let rows = requested.map_or(1, |dims| dims.rows as u16);
+    let rows = crate::render::layout_rows(rect, renderer.cell_px()[1], ppp);
     let text_rect = crate::render::terminal_rect(rect, rows, ch, ppp);
     // Pixel sizes change with DPI and font steps even when the grid does not.
     if let Some(dims) = requested
