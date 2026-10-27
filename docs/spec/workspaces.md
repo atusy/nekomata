@@ -36,6 +36,9 @@ felis daemon.
   arbitrates simultaneous requests, including concurrent GUI startup.
 - There is no operation to take a workspace from another window.
 - A window that disconnects releases its lease; the workspace remains.
+- A workspace without tabs is discarded once no window holds it, for example
+  after its window closes its last pane or cancels a switch to a new
+  workspace. A discarded workspace's ID is not reused.
 
 ## Startup
 

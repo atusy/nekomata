@@ -190,9 +190,14 @@ impl Registry {
         }
     }
 
-    /// Ends the lease on a workspace.
+    /// Ends the lease on a workspace. One without tabs has nothing to restore,
+    /// so it is discarded rather than listed forever.
     fn unlease(&mut self, id: u64) {
-        self.workspaces.get_mut(&id).unwrap().owner = None;
+        let record = self.workspaces.get_mut(&id).unwrap();
+        record.owner = None;
+        if record.snapshot.tabs.is_empty() {
+            self.workspaces.remove(&id);
+        }
     }
 
     fn list(&self) -> Vec<Summary> {
@@ -595,9 +600,11 @@ mod tests {
     fn startup_resumes_the_latest_unattached_workspace() {
         let mut registry = Registry::default();
         let older = registry.claim(1, 101, Selection::New).unwrap();
+        registry.workspaces.get_mut(&older).unwrap().snapshot = one_pane(15.0);
         registry.touch(older);
         registry.release(1, Some(older));
         let newer = registry.claim(2, 102, Selection::New).unwrap();
+        registry.workspaces.get_mut(&newer).unwrap().snapshot = one_pane(15.0);
         registry.touch(newer);
         registry.release(2, Some(newer));
         assert_eq!(registry.claim(3, 103, Selection::Latest).unwrap(), newer);
@@ -618,6 +625,28 @@ mod tests {
         (client, task)
     }
 
+    fn one_pane(font_size: f32) -> Snapshot {
+        Snapshot {
+            tabs: vec![crate::workspace::Tab {
+                name: "shell".into(),
+                layout: crate::layout::Layout::Pane(1),
+                focused: 1,
+                focus_history: vec![1],
+            }],
+            panes: [(
+                1,
+                crate::workspace::PaneSpec {
+                    target: crate::session::Target::Local("/felis.sock".into()),
+                    session: None,
+                },
+            )]
+            .into(),
+            next_id: 2,
+            font_size,
+            ..Default::default()
+        }
+    }
+
     fn workspace(payload: Payload) -> (u64, Snapshot) {
         let Payload::Workspace { id, snapshot } = payload else {
             panic!("expected workspace")
@@ -629,12 +658,12 @@ mod tests {
     async fn disconnected_window_restores_its_saved_layout_and_releases_reservations() {
         let registry = Arc::new(Mutex::new(Registry::default()));
         let (mut first, task) = connection(&registry, 1);
-        let (id, mut snapshot) = workspace(
+        let (id, _) = workspace(
             exchange(&mut first, Request::Open { window: 11 })
                 .await
                 .unwrap(),
         );
-        snapshot.font_size = 21.0;
+        let snapshot = one_pane(21.0);
         exchange(&mut first, Request::Save(snapshot.clone()))
             .await
             .unwrap();
@@ -645,11 +674,7 @@ mod tests {
         );
         drop(first);
         assert!(task.await.unwrap().is_err());
-        assert!(
-            registry.lock().unwrap().workspaces[&reserved]
-                .owner
-                .is_none()
-        );
+        assert!(!registry.lock().unwrap().workspaces.contains_key(&reserved));
         let (mut replacement, task) = connection(&registry, 2);
         let restored = workspace(
             exchange(&mut replacement, Request::Open { window: 22 })
@@ -670,11 +695,22 @@ mod tests {
                 .await
                 .unwrap(),
         );
+        let (mut other, other_task) = connection(&registry, 2);
         let (target, _) = workspace(
-            exchange(&mut client, Request::Prepare(Selection::New))
+            exchange(&mut other, Request::Open { window: 22 })
                 .await
                 .unwrap(),
         );
+        exchange(&mut other, Request::Save(one_pane(17.0)))
+            .await
+            .unwrap();
+        exchange(&mut other, Request::Detach).await.unwrap();
+        exchange(&mut client, Request::Save(one_pane(15.0)))
+            .await
+            .unwrap();
+        exchange(&mut client, Request::Prepare(Selection::Id(target)))
+            .await
+            .unwrap();
         assert!(registry.lock().unwrap().workspaces[&source].owner.is_some());
         exchange(&mut client, Request::Finish { snapshot: None })
             .await
@@ -684,10 +720,7 @@ mod tests {
         exchange(&mut client, Request::Prepare(Selection::Id(target)))
             .await
             .unwrap();
-        let snapshot = Snapshot {
-            font_size: 19.0,
-            ..Default::default()
-        };
+        let snapshot = one_pane(19.0);
         exchange(
             &mut client,
             Request::Finish {
@@ -702,7 +735,44 @@ mod tests {
             snapshot
         );
         drop(client);
+        drop(other);
         let _ = task.await;
+        let _ = other_task.await;
+    }
+
+    #[tokio::test]
+    async fn workspaces_without_tabs_are_discarded_once_no_window_holds_them() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let workspaces = || registry.lock().unwrap().workspaces.len();
+        let (mut client, task) = connection(&registry, 1);
+        exchange(&mut client, Request::Open { window: 11 })
+            .await
+            .unwrap();
+        exchange(&mut client, Request::Save(one_pane(15.0)))
+            .await
+            .unwrap();
+        // A cancelled switch to a new workspace leaves nothing behind.
+        exchange(&mut client, Request::Prepare(Selection::New))
+            .await
+            .unwrap();
+        assert_eq!(workspaces(), 2);
+        exchange(&mut client, Request::Finish { snapshot: None })
+            .await
+            .unwrap();
+        assert_eq!(workspaces(), 1);
+        // Closing the last pane saves a layout without tabs.
+        exchange(&mut client, Request::Save(Snapshot::default()))
+            .await
+            .unwrap();
+        exchange(&mut client, Request::Detach).await.unwrap();
+        assert_eq!(workspaces(), 0);
+        // A window that disconnects before saving leaves nothing behind.
+        exchange(&mut client, Request::Open { window: 11 })
+            .await
+            .unwrap();
+        drop(client);
+        let _ = task.await;
+        assert_eq!(workspaces(), 0);
     }
 
     #[tokio::test]
@@ -940,6 +1010,9 @@ mod tests {
                 .await
                 .unwrap(),
         );
+        exchange(&mut client, Request::Save(one_pane(15.0)))
+            .await
+            .unwrap();
         exchange(&mut client, Request::Detach).await.unwrap();
         let (mut replacement, replacement_task) = connection(&registry, 2);
         let (restored, _) = workspace(
