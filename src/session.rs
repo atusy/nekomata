@@ -890,6 +890,7 @@ mod tests {
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_hidden_panes_pause_pulls_and_resume_with_the_latest_screen() {
         let socket = PathBuf::from(crate::test_support::private_felis_socket());
+        let marker = socket.with_file_name(format!("hidden-{}.done", std::process::id()));
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (tx, repaints) = sync_mpsc::channel();
@@ -910,11 +911,19 @@ mod tests {
             contains_text(state, "PULL_FIRST")
         });
         let sent = session.state.lock().unwrap().pull.sent();
-        session.send(InputMsg::KeyBytes(b"printf '\nPULL_LATEST\n'\n".to_vec()));
-        // No visible frame is submitted while this pane is hidden, and only
-        // frame_submitted issues pulls, so new output alone must not pull; at
-        // most the already outstanding pull is answered. Waiting on a clock
-        // here would observe nothing more.
+        // The shell creates the marker after printing, so once it exists the
+        // new output has been produced while this pane stayed hidden.
+        session.send(InputMsg::KeyBytes(
+            format!("printf '\\nPULL_LATEST\\n'; : > '{}'\n", marker.display()).into_bytes(),
+        ));
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "the shell never ran the command");
+            // Repaints keep arriving, but no visible frame is submitted.
+            let _ = repaints.recv_timeout(Duration::from_millis(10));
+        }
+        std::fs::remove_file(&marker).unwrap();
+        // At most the already outstanding pull is answered while hidden.
         assert_eq!(session.state.lock().unwrap().pull.sent(), sent);
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "PULL_LATEST") && state.render_ready()
