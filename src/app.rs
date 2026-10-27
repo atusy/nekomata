@@ -182,7 +182,7 @@ pub struct App {
     palette: bool,
     palette_state: crate::command_palette::CommandPalette,
     font_size_open: bool,
-    geometry: Option<Geometry>,
+    geometry: GeometryAutosave,
 }
 
 impl App {
@@ -246,7 +246,7 @@ impl App {
             palette: false,
             palette_state: Default::default(),
             font_size_open: false,
-            geometry: None,
+            geometry: GeometryAutosave::default(),
         };
         Ok(app)
     }
@@ -1554,7 +1554,8 @@ impl App {
         }
         self.save_workspace(ctx);
         let interval = eframe::App::auto_save_interval(self);
-        schedule_geometry_autosave(ctx, &mut self.geometry, interval);
+        self.geometry
+            .schedule(ctx, std::time::Instant::now(), interval);
     }
 }
 
@@ -1588,25 +1589,45 @@ impl eframe::App for App {
 /// The window geometry eframe persists.
 type Geometry = (Option<Rect>, Option<Rect>, Option<bool>, Option<bool>);
 
-/// eframe autosaves window geometry only inside a frame, once `interval` has
+/// eframe autosaves window geometry only inside a frame, once its interval has
 /// passed since its last save. An idle window runs no frames, so after a move
-/// or resize schedule one that is sure to find the autosave due.
-fn schedule_geometry_autosave(
-    ctx: &egui::Context,
-    saved: &mut Option<Geometry>,
-    interval: std::time::Duration,
-) {
-    let geometry = ctx.input(|input| {
-        let viewport = input.viewport();
-        (
-            viewport.outer_rect,
-            viewport.inner_rect,
-            viewport.maximized,
-            viewport.fullscreen,
-        )
-    });
-    if saved.replace(geometry) != Some(geometry) {
-        ctx.request_repaint_after(interval + std::time::Duration::from_secs(1));
+/// or resize keep one scheduled that is sure to find the autosave due.
+#[derive(Default)]
+struct GeometryAutosave {
+    seen: Option<Geometry>,
+    /// egui keeps only the current pass's shortest repaint delay, so an
+    /// intervening frame would drop a one-shot request; every frame re-arms it.
+    due: Option<std::time::Instant>,
+}
+
+impl GeometryAutosave {
+    fn schedule(
+        &mut self,
+        ctx: &egui::Context,
+        now: std::time::Instant,
+        interval: std::time::Duration,
+    ) {
+        let geometry = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.outer_rect,
+                viewport.inner_rect,
+                viewport.maximized,
+                viewport.fullscreen,
+            )
+        });
+        // The first geometry is where the window opened, not a move or resize.
+        if self
+            .seen
+            .replace(geometry)
+            .is_some_and(|seen| seen != geometry)
+        {
+            self.due = Some(now + interval + std::time::Duration::from_secs(1));
+        }
+        match self.due {
+            Some(due) if now < due => ctx.request_repaint_after(due - now),
+            _ => self.due = None,
+        }
     }
 }
 
@@ -2334,9 +2355,10 @@ mod tests {
     #[test]
     fn a_geometry_change_wakes_the_window_once_the_autosave_is_due() {
         let interval = Duration::from_secs(30);
+        let start = std::time::Instant::now();
         let ctx = egui::Context::default();
-        let mut saved = None;
-        let mut frame = |x: f32| {
+        let mut autosave = GeometryAutosave::default();
+        let mut frame = |x: f32, elapsed: u64| {
             let mut input = egui::RawInput::default();
             input
                 .viewports
@@ -2344,15 +2366,20 @@ mod tests {
                 .or_default()
                 .outer_rect = Some(Rect::from_min_size(Pos2::new(x, 0.0), Vec2::splat(400.0)));
             let output = crate::test_support::run(&ctx, input, |ui| {
-                schedule_geometry_autosave(ui.ctx(), &mut saved, interval)
+                autosave.schedule(ui.ctx(), start + Duration::from_secs(elapsed), interval)
             });
             output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
         };
         // egui itself repaints during its first passes.
-        assert!((0..10).any(|_| frame(0.0) == Duration::MAX));
-        let moved = frame(50.0);
+        assert!((0..10).any(|_| frame(0.0, 0) == Duration::MAX));
+        let moved = frame(50.0, 100);
         assert!(moved > interval && moved < Duration::MAX, "{moved:?}");
-        assert_eq!(frame(50.0), Duration::MAX, "an unchanged window stays idle");
+        // An unrelated frame before the save is due must keep the deadline.
+        let pending = frame(50.0, 110);
+        assert!(pending > interval - Duration::from_secs(10), "{pending:?}");
+        assert!(pending < interval, "{pending:?}");
+        assert_eq!(frame(50.0, 140), Duration::MAX, "the due frame saves");
+        assert_eq!(frame(50.0, 200), Duration::MAX, "a saved window stays idle");
     }
 
     #[test]
@@ -3037,7 +3064,7 @@ mod tests {
             palette: false,
             palette_state: Default::default(),
             font_size_open: false,
-            geometry: None,
+            geometry: GeometryAutosave::default(),
         };
         app.add_tab(&ctx, None);
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
