@@ -293,7 +293,7 @@ impl Session {
         }
     }
 
-    /// Called once per visible pane frame; `rendered` is whether this frame
+    /// Called once per visible pane frame that painted without error; `rendered` is whether this frame
     /// submitted new terminal content to the GPU rather than reusing the last
     /// texture. Only a rendered frame may pull (felis `PullScheduler::after_frame`).
     pub fn frame_submitted(&self, state: &mut State, rendered: bool) {
