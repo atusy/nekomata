@@ -2910,8 +2910,8 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         assert_eq!(replacement.snapshot(), before);
 
-        // No pane of the destination can connect. Preparing it must not steal
-        // the source connections, and the window keeps its workspace.
+        // No pane of the destination can connect, so the switch is cancelled
+        // and the window keeps its workspace and its source connections.
         let missing =
             Target::Local(crate::test_support::private_runtime_dir().join("missing-felis.sock"));
         let mut broken = before.clone();
