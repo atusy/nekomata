@@ -17,7 +17,8 @@ nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The fel
 - `src/theme.rs`: shared UI colors, metrics, widget styles, and chrome fonts.
 - `src/test_support.rs`, `tests/support/`: CPU-only egui test helpers, and test-only renderer baselines, glyph checks and benchmarks included through `#[path]`.
 - `share/`: fish integration and macOS bundle metadata/native launcher.
-- `scripts/`: isolated integration tests and macOS installation.
+- `scripts/`: isolated integration tests, pin consistency checks and macOS installation.
+- `.github/workflows/`: CI running `nix flake check`.
 - `flake.nix`: packages, development environments, runtime fonts, and checks.
 - `docs/`: documentation, described below.
 
@@ -43,13 +44,13 @@ cargo clippy --locked --all-targets -- -D warnings
 bash scripts/test-live.sh                   # Run isolated daemon integration tests
 ```
 
-Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` for package and fish integration checks. Format Nix with `nix fmt -- flake.nix`.
+Use `nix run .` to launch the packaged app, `nix build` to build it, and `nix flake check` to run the package build and its Rust tests, rustfmt, clippy, vendored renderer tests, felis revision and fish integration checks. GitHub Actions (`.github/workflows/ci.yml`) runs `nix flake check` on x86_64-linux and aarch64-darwin for every pull request and push to `main`; live tests and native GUI checks are not part of it. Format Nix with `nix fmt -- flake.nix`.
 
 On macOS, `bash scripts/install-macos.sh` installs or updates `~/Applications/nekomata.app`; restart the GUI to load changes.
 
 ## Coding Style & Naming Conventions
 
-Follow rustfmt defaults: four-space indentation, `snake_case` functions/modules, and `PascalCase` types. Keep UI operations on the GUI thread and IPC work asynchronous. Share rendering constants through `src/theme.rs`. Keep Cargo and Nix felis revisions synchronized when updating upstream dependencies.
+Follow rustfmt defaults: four-space indentation, `snake_case` functions/modules, and `PascalCase` types. Keep UI operations on the GUI thread and IPC work asynchronous. Share rendering constants through `src/theme.rs`. Keep Cargo and Nix felis revisions synchronized when updating upstream dependencies; `bash scripts/check-felis-revision.sh` (also a flake check) verifies every pin.
 
 ## Testing Guidelines
 

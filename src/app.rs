@@ -2538,10 +2538,22 @@ mod tests {
     #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
     fn live_gui_restart_and_switch_preserve_workspaces_and_shells() {
         use std::{sync::mpsc, time::Instant};
-        assert!(
-            std::env::var_os("NEKOMATA_RUNTIME_DIR").is_some(),
-            "use scripts/test-live.sh"
-        );
+        crate::test_support::private_runtime_dir();
+        crate::test_support::private_felis_socket();
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        // daemon::connect starts the daemon from current_exe(), which is this
+        // test harness rather than nekomata, so start it from the real binary.
+        let output = std::process::Command::new(&executable)
+            .args(["workspaces", "list"])
+            .output()
+            .expect("build the nekomata binary first: cargo build --bin nekomata");
+        assert!(output.status.success(), "start nekomata daemon: {output:?}");
         let ctx = egui::Context::default();
         let (tx, repaints) = mpsc::channel();
         ctx.set_request_repaint_callback(move |_| {
@@ -2630,13 +2642,6 @@ mod tests {
         assert_eq!(replacement.tabs.len(), 2);
         assert_eq!(replacement.panes.len(), 3);
 
-        let executable = std::env::current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("nekomata");
         let id = workspace_id.unwrap();
         let repaint = ctx.clone();
         let routing_executable = executable.clone();
@@ -2710,10 +2715,8 @@ mod tests {
         // The destination shares two live shells with the source, but its other
         // pane is unavailable. Preparing it must not steal those source connections.
         let mut broken = before.clone();
-        broken.panes.get_mut(&2).unwrap().target = Target::Local(
-            std::path::PathBuf::from(std::env::var_os("NEKOMATA_RUNTIME_DIR").unwrap())
-                .join("missing-felis.sock"),
-        );
+        broken.panes.get_mut(&2).unwrap().target =
+            Target::Local(crate::test_support::private_runtime_dir().join("missing-felis.sock"));
         replacement.runtime.block_on(async {
             let mut client = daemon::connect().await.unwrap();
             let Payload::Workspace { id, .. } =
@@ -2802,7 +2805,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let mut ops = felis_client_core::connect(
-                std::path::PathBuf::from(std::env::var_os("NEKOMATA_TEST_SOCKET").unwrap()),
+                std::path::PathBuf::from(crate::test_support::private_felis_socket()),
                 felis_client_core::Offer::ops(),
             )
             .await
@@ -2820,8 +2823,8 @@ mod tests {
         use felis_protocol::messages::SpawnArgs;
         use std::{sync::mpsc, time::Instant};
 
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        crate::test_support::private_runtime_dir();
+        let socket = crate::test_support::private_felis_socket();
         let other_socket = std::path::Path::new(&socket).with_file_name("other.sock");
         struct StopDaemon(std::path::PathBuf);
         impl Drop for StopDaemon {

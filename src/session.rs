@@ -889,9 +889,8 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_hidden_panes_pause_pulls_and_resume_with_the_latest_screen() {
-        let socket = PathBuf::from(
-            std::env::var_os("NEKOMATA_TEST_SOCKET").expect("private daemon required"),
-        );
+        let socket = PathBuf::from(crate::test_support::private_felis_socket());
+        let marker = socket.with_file_name(format!("hidden-{}.done", std::process::id()));
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (tx, repaints) = sync_mpsc::channel();
@@ -912,10 +911,19 @@ mod tests {
             contains_text(state, "PULL_FIRST")
         });
         let sent = session.state.lock().unwrap().pull.sent();
-        session.send(InputMsg::KeyBytes(b"printf '\nPULL_LATEST\n'\n".to_vec()));
-        // No visible frame is submitted while this pane is hidden. At most
-        // the already outstanding pull may be answered during that interval.
-        std::thread::sleep(Duration::from_millis(200));
+        // The shell creates the marker after printing, so once it exists the
+        // new output has been produced while this pane stayed hidden.
+        session.send(InputMsg::KeyBytes(
+            format!("printf '\\nPULL_LATEST\\n'; : > '{}'\n", marker.display()).into_bytes(),
+        ));
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !marker.exists() {
+            assert!(Instant::now() < deadline, "the shell never ran the command");
+            // Repaints keep arriving, but no visible frame is submitted.
+            let _ = repaints.recv_timeout(Duration::from_millis(10));
+        }
+        std::fs::remove_file(&marker).unwrap();
+        // At most the already outstanding pull is answered while hidden.
         assert_eq!(session.state.lock().unwrap().pull.sent(), sent);
         wait_for(&session, &ctx, &repaints, |state| {
             contains_text(state, "PULL_LATEST") && state.render_ready()
@@ -930,9 +938,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_reconnect_preserves_the_existing_shell_after_transport_loss() {
-        let socket = PathBuf::from(
-            std::env::var_os("NEKOMATA_TEST_SOCKET").expect("use the private daemon runner"),
-        );
+        let socket = PathBuf::from(crate::test_support::private_felis_socket());
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let original = runtime.block_on(async {
             let mut conn = connect_or_spawn_daemon(&socket, Offer::window(false))
@@ -1005,6 +1011,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_kitty_pixels_reach_the_frontend_image_store() {
+        crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (repaint_tx, repaints) = sync_mpsc::channel();
@@ -1029,10 +1036,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_shell_exit_closes_only_its_pane() {
-        assert_eq!(
-            std::env::var("FELIS_SOCKET").unwrap(),
-            std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh")
-        );
+        crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (tx, repaints) = sync_mpsc::channel();
@@ -1066,8 +1070,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_session_input_resize_and_reattach() {
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (tx, repaints) = sync_mpsc::channel();
@@ -1143,8 +1146,7 @@ mod tests {
     #[ignore = "requires the isolated SSH relay fixture; run scripts/test-live.sh via nix develop"]
     fn live_ssh_carrier_attaches_and_keeps_remote_spawn_environment_remote() {
         assert_eq!(std::env::var("NEKOMATA_TEST_SSH").as_deref(), Ok("1"));
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").unwrap();
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let (tx, repaints) = sync_mpsc::channel();
@@ -1230,8 +1232,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_prompt_navigation_and_keyboard_scroll_use_daemon_history() {
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let id = runtime.block_on(async {
             let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
@@ -1297,8 +1298,7 @@ mod tests {
     }
 
     fn live_osc52_clipboard(osc_52: felis_client_core::config::Osc52Policy) -> Option<String> {
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let id = runtime.block_on(async {
             let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
@@ -1361,8 +1361,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_background_query_matches_the_rendered_theme() {
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let id = runtime.block_on(async {
             let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();
@@ -1403,8 +1402,7 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated felis daemon; run scripts/test-live.sh via nix develop"]
     fn live_resize_blanks_the_active_prompt_without_erasing_output() {
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("use scripts/test-live.sh");
-        assert_eq!(std::env::var("FELIS_SOCKET").unwrap(), socket);
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let id = runtime.block_on(async {
             let mut ops = connect_or_spawn_daemon(std::path::Path::new(&socket), Offer::ops()).await.unwrap();

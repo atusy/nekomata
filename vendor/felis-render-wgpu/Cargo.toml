@@ -16,3 +16,15 @@ bytemuck = { version = "1", features = ["derive"] }
 raw-window-handle = "0.6"
 tracing = "0.1"
 thiserror = "2"
+
+# Upstream's workspace lints allow this; as a workspace member here the crate
+# would otherwise be linted with clippy's defaults.
+[lints.clippy]
+too_many_arguments = "allow"
+
+[dev-dependencies]
+felis-shaping = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951", features = ["testing"] }
+felis-render-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951", features = ["testing"] }
+felis-vt = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
+proptest = "1"
+wgpu = { version = "30", features = ["noop"] }

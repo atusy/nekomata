@@ -352,7 +352,9 @@ impl Offscreen {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: OFFSCREEN_FORMAT,
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::COPY_SRC | TextureUsages::TEXTURE_BINDING,
+            usage: TextureUsages::RENDER_ATTACHMENT
+                | TextureUsages::COPY_SRC
+                | TextureUsages::TEXTURE_BINDING,
             view_formats: &[TextureFormat::Rgba8Unorm],
         });
         let view = texture.create_view(&TextureViewDescriptor::default());
@@ -578,7 +580,15 @@ impl Renderer {
         stack: FontStack,
     ) -> Result<Self, RendererError> {
         let cfg = offscreen_config(cfg)?;
-        Ok(Self::build_offscreen(device, queue, UploadMode::Staged, width, height, &cfg, stack))
+        Ok(Self::build_offscreen(
+            device,
+            queue,
+            UploadMode::Staged,
+            width,
+            height,
+            &cfg,
+            stack,
+        ))
     }
 
     /// Sample encoded sRGB pixels as egui expects, without CPU readback or a

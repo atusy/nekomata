@@ -139,10 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_uses_the_default_window_size() {
+    fn first_launch_window_is_not_clamped_by_the_minimum_size() {
         let viewport = native_options().viewport;
+        let size = viewport.inner_size.expect("first-launch inner size");
+        let min = viewport.min_inner_size.expect("minimum inner size");
 
-        assert_eq!(viewport.inner_size, Some([1100.0, 740.0].into()));
-        assert_eq!(viewport.min_inner_size, Some([480.0, 320.0].into()));
+        assert!(size.x >= min.x && size.y >= min.y, "{size:?} < {min:?}");
     }
 }

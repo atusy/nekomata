@@ -129,8 +129,9 @@ mod tests {
         task.abort();
         assert!(matches!(task.await, Err(error) if error.is_cancelled()));
         loop {
-            let alive = Command::new("/bin/kill")
-                .args(["-0", pid.trim()])
+            // The shell builtin: the Nix build sandbox on Linux has no /bin/kill.
+            let alive = Command::new("/bin/sh")
+                .args(["-c", "kill -0 \"$1\"", "kill", pid.trim()])
                 .stderr(std::process::Stdio::null())
                 .status()
                 .await

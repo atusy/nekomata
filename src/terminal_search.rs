@@ -551,7 +551,7 @@ mod tests {
     #[test]
     #[ignore = "requires private felis daemon; run scripts/test-live.sh"]
     fn live_scrollback_search_does_not_evict_the_window_attachment() {
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("private test socket required");
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let session = crate::session::Session::start(
@@ -618,7 +618,7 @@ mod tests {
     #[ignore = "requires private fake SSH relay; run scripts/test-live.sh"]
     fn live_ssh_carrier_search_preserves_explicit_socket() {
         assert_eq!(std::env::var("NEKOMATA_TEST_SSH").as_deref(), Ok("1"));
-        let socket = std::env::var("NEKOMATA_TEST_SOCKET").expect("private socket required");
+        let socket = crate::test_support::private_felis_socket();
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
         let session = crate::session::Session::start(

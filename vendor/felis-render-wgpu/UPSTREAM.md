@@ -24,5 +24,10 @@ reapply and validate this seam. Remove the copy when an equivalent public
 upstream embedding API becomes available.
 
 Upstream benchmarks, proptest regression seeds and binary golden test fixtures
-are not vendored. Dependency unit tests are not part of the application test
-suite; see `docs/felis-rendering-reuse-audit.md` for the integration audit.
+are not vendored; Cargo.toml restores the upstream dev-dependencies other than
+the benchmark harness. This crate is a workspace member so its unit tests,
+including those of the patch, run as the `felis-render-wgpu` flake check, which
+supplies the pinned test fonts and golden fixtures from the felis input. The
+golden tests are skipped on macOS, where upstream's Linux-pinned instance
+buffers diverge even in the upstream checkout. See
+`docs/felis-rendering-reuse-audit.md` for the integration audit.
