@@ -21,9 +21,9 @@ is distinct from the felis session ID.
   shell (`-l`).
 - New local shells receive `NEKOMATA_WINDOW_ID`, `NEKOMATA_PANE_ID` and
   `NEKOMATA_SHELL_INTEGRATION=1`. Once the window's workspace is known, they
-  also receive `NEKOMATA_WORKSPACE_ID` and `NEKOMATA_DAEMON_INSTANCE`, which
-  identifies the nekomata daemon that issued that ID. nekomata never rewrites the environment of an
-  existing shell.
+  also receive `NEKOMATA_WORKSPACE_ID` and, when the daemon reports one,
+  `NEKOMATA_DAEMON_INSTANCE`, which identifies the nekomata daemon that issued
+  that ID. nekomata never rewrites the environment of an existing shell.
 - A new remote shell runs the remote daemon's default command. It receives
   none of the above: no `$SHELL`, working directory or environment is
   forwarded.
@@ -85,7 +85,7 @@ A CLI command targets a window as follows:
    [runtime directory](#runtime-directory).
 
 Because resolution goes through the workspace ID, a shell keeps reaching its
-window after the GUI restarts. A shell carries the IDs it was started with,
+window after the GUI restarts, but not after the nekomata daemon restarts. A shell carries the IDs it was started with,
 so a shell moved to another workspace by hand still targets its original
 workspace's window; pass `--window` there.
 
