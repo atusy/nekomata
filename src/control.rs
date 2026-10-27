@@ -77,8 +77,10 @@ pub(crate) fn directory() -> Result<PathBuf> {
 
 /// Longest name bound in the directory: `{u32::MAX}.sock`.
 const LONGEST_SOCKET_NAME: usize = "4294967295.sock".len();
-/// `sun_path` holds 104 bytes on macOS (108 on Linux), including the NUL.
-const MAX_SOCKET_PATH: usize = 103;
+/// `sun_path` (104 bytes on macOS, 108 on Linux) less its NUL terminator.
+const MAX_SOCKET_PATH: usize = std::mem::size_of::<libc::sockaddr_un>()
+    - std::mem::offset_of!(libc::sockaddr_un, sun_path)
+    - 1;
 
 /// Every process of one user must agree on this path whatever its build or
 /// environment, so it uses no hash and no per-shell variable like TMPDIR.
@@ -529,9 +531,15 @@ mod tests {
 
     #[test]
     fn runtime_directory_skips_bases_too_long_for_socket_paths() {
-        let long = Some(PathBuf::from(format!("/{}", "d".repeat(90))));
+        // `{base}/nekomata/4294967295.sock` must fit in sun_path.
+        let longest = MAX_SOCKET_PATH - "/nekomata/4294967295.sock".len();
+        let base = |len: usize| PathBuf::from(format!("/{}", "d".repeat(len - 1)));
         assert_eq!(
-            default_directory(vars(&[]), 501, long, |_| true),
+            default_directory(vars(&[]), 501, Some(base(longest)), |_| true),
+            base(longest).join("nekomata")
+        );
+        assert_eq!(
+            default_directory(vars(&[]), 501, Some(base(longest + 1)), |_| true),
             PathBuf::from("/run/user/501/nekomata")
         );
     }
