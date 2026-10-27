@@ -10,9 +10,9 @@ workspaces. Close every window of the old version, then stop the old daemon:
 nekomata daemon stop
 ```
 
-This works whatever the daemon's version. Your workspace layouts are lost,
-but your shells keep running in felis; [attach to them again](sessions.md)
-after restarting.
+This works even though the old daemon rejects every other request from the
+new version. Your workspace layouts are lost, but your shells keep running in
+felis; restart nekomata and [attach to them again](sessions.md).
 
 ## CLI commands report no running window after an update
 

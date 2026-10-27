@@ -51,9 +51,9 @@ nekomata panes attach --ssh dev-server --daemon /run/user/1000/felis.sock --sess
 Run from a nekomata shell, these act on the window showing that shell's
 workspace. Add `--window WINDOW_ID` to pick a window explicitly — for example
 when several GUIs are running, or for a shell you moved into another
-workspace, which still points at the workspace it was started in. The
-`WINDOW` column of `nekomata workspaces list` shows the IDs of running
-windows.
+workspace, which still points at the workspace it was started in, or after
+the nekomata daemon restarts. The `WINDOW` column of `nekomata workspaces
+list` shows the IDs of running windows.
 
 ## Preparing an SSH host
 

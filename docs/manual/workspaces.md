@@ -36,9 +36,10 @@ nekomata workspaces attach WORKSPACE_ID   # switch to an ID from the WORKSPACE c
 
 Run from a nekomata shell, `new` and `attach` act on the window showing that
 shell's workspace. Add `--window WINDOW_ID` to them to pick another, or for a
-shell you moved into another workspace. After the nekomata daemon restarts, a
-shell's old workspace is gone, so these commands fail there until you add
-`--window`.
+shell you moved into another workspace. After the nekomata daemon restarts,
+commands run from a shell started before the restart fail until you add
+`--window`; shells started by older nekomata versions may instead reach an
+unrelated window.
 
 ## What survives what
 
