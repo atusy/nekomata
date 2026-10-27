@@ -206,10 +206,10 @@ impl Renderer {
             self.selection = selection;
             if self.size != size {
                 self.gpu.resize(size[0], size[1]);
-                let view = self
-                    .gpu
-                    .embedded_texture_view()
-                    .context("missing resized GPU target")?;
+                let Some(view) = self.gpu.embedded_texture_view() else {
+                    retry_after_error(painter, state);
+                    anyhow::bail!("missing resized GPU target");
+                };
                 self.host
                     .renderer
                     .write()
@@ -255,12 +255,7 @@ impl Renderer {
                 state.screen.viewport_max(),
             );
             if let Err(error) = result {
-                state.redraw.request();
-                // No arriving frame is due to retry the pending redraw, and an
-                // immediate repaint would spin on a persistent GPU error.
-                painter
-                    .ctx()
-                    .request_repaint_after(felis_client_core::pull::PresentRetry::MAX_INTERVAL);
+                retry_after_error(painter, state);
                 return Err(error.into());
             }
             state.redraw.painted();
@@ -282,6 +277,15 @@ impl Renderer {
         }
         Ok(rendered)
     }
+}
+
+/// How long a pane waits before retrying a failed render. Nothing else is
+/// due to repaint it, and an immediate retry would spin on a persistent error.
+const RENDER_ERROR_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn retry_after_error(painter: &egui::Painter, state: &mut State) {
+    state.redraw.request();
+    painter.ctx().request_repaint_after(RENDER_ERROR_RETRY);
 }
 
 impl Drop for Renderer {
