@@ -21,6 +21,11 @@ Not supported: key release events and OSC 52 clipboard reads.
   for the program, as a control byte where one exists, or as an escape
   sequence when the program enables modifyOtherKeys or the Kitty keyboard
   protocol. Keys that name no character, such as Copy, are not sent.
+- On macOS, Option types the character the keyboard layout composes, sent
+  without Alt: Option+L on a German layout types `@`, not Alt+@. Option acts
+  as Alt only where it composes no character, such as Option+Space, Option
+  with a named key like an arrow, or together with Ctrl or Cmd. felis's
+  `window.macos_option_as_alt` is not applied.
 
 ## OSC 52 clipboard writes
 

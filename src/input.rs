@@ -80,16 +80,33 @@ pub fn translate(
             _ => None,
         };
         if let Some((key, text)) = key {
+            let mut mods = key_mods(event_mods);
+            if macos
+                && text
+                    .as_deref()
+                    .is_some_and(|text| option_composed(text, event_mods))
+            {
+                // felis encodes Alt with an ASCII character as ESC + char,
+                // which would turn `@` typed with Option into Meta-@.
+                mods.remove(KeyMods::ALT);
+            }
             inputs.push(TerminalInput::Key(KeyEvent {
                 key,
                 text,
-                mods: key_mods(event_mods),
+                mods,
                 kind,
                 location: KeyLocation::Standard,
             }));
         }
     }
     inputs
+}
+
+/// macOS reports Option as Alt even when it only selected the character
+/// typed. A plain space is what Option+Space types when it composes
+/// nothing, so it stays Alt+Space.
+fn option_composed(text: &str, mods: egui::Modifiers) -> bool {
+    mods.alt && !mods.ctrl && !mods.mac_cmd && text != " "
 }
 
 fn key_mods(mods: egui::Modifiers) -> KeyMods {
@@ -256,6 +273,57 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn macos_option_composed_text_is_sent_without_alt() {
+        for (key, composed, mods, expected) in [
+            // German Option+L and JIS Option+¥ compose ASCII.
+            (egui::Key::L, "@", egui::Modifiers::ALT, KeyMods::empty()),
+            (
+                egui::Key::Backslash,
+                "\\",
+                egui::Modifiers::ALT,
+                KeyMods::empty(),
+            ),
+            (
+                egui::Key::L,
+                "Ò",
+                egui::Modifiers::ALT | egui::Modifiers::SHIFT,
+                KeyMods::SHIFT,
+            ),
+        ] {
+            let got = translate(&[press(key, mods), text(composed)], mods, false, true);
+            assert_eq!(
+                got,
+                [sent(
+                    character(composed),
+                    Some(composed),
+                    expected,
+                    KeyEventKind::Press
+                )],
+                "{composed}"
+            );
+        }
+    }
+
+    #[test]
+    fn option_text_keeps_alt_where_option_composes_nothing() {
+        let alt = egui::Modifiers::ALT;
+        // Option+Space types a plain space; elsewhere Alt is meta.
+        for (key, typed, macos) in [(egui::Key::Space, " ", true), (egui::Key::B, "b", false)] {
+            let got = translate(&[press(key, alt), text(typed)], alt, false, macos);
+            assert_eq!(
+                got,
+                [sent(
+                    character(typed),
+                    Some(typed),
+                    KeyMods::ALT,
+                    KeyEventKind::Press
+                )],
+                "{typed:?}"
+            );
+        }
     }
 
     #[test]
