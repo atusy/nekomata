@@ -64,11 +64,17 @@ mod tests {
     #[test]
     fn pastes_over_the_limit_are_refused_before_confirmation() {
         use felis_protocol::messages::MAX_PASTE_BYTES;
-        assert!(matches!(Paste::new("\n".repeat(MAX_PASTE_BYTES), false, 7), Paste::Confirm(_)));
-        assert!(matches!(Paste::new("x".repeat(MAX_PASTE_BYTES), true, 7), Paste::Send(bytes) if bytes.len() == MAX_PASTE_BYTES));
+        assert!(matches!(
+            Paste::new("\n".repeat(MAX_PASTE_BYTES), false, 7),
+            Paste::Confirm(_)
+        ));
+        assert!(
+            matches!(Paste::new("x".repeat(MAX_PASTE_BYTES), true, 7), Paste::Send(bytes) if bytes.len() == MAX_PASTE_BYTES)
+        );
         for bracketed in [false, true] {
-            assert!(matches!(Paste::new("\n".repeat(MAX_PASTE_BYTES + 1), bracketed, 7), Paste::Refused { bytes } if bytes == MAX_PASTE_BYTES + 1));
+            assert!(
+                matches!(Paste::new("\n".repeat(MAX_PASTE_BYTES + 1), bracketed, 7), Paste::Refused { bytes } if bytes == MAX_PASTE_BYTES + 1)
+            );
         }
     }
-
 }
