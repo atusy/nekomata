@@ -190,53 +190,144 @@ impl State {
     }
 }
 
+/// Queued frames, with whether losing each one loses shell input.
+#[derive(Default)]
+struct Pending {
+    frames: OutgoingQueue,
+    shell_input: std::collections::VecDeque<bool>,
+}
+
 struct InputQueue {
-    frames: Mutex<OutgoingQueue>,
+    pending: Mutex<Pending>,
     ready: Notify,
     accepting: AtomicBool,
+    notice: Mutex<Option<InputNotice>>,
+}
+
+/// Why some input did not reach the shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputNotice {
+    Lost,
+    PasteRefused { bytes: usize },
+}
+
+impl InputNotice {
+    pub fn message(self) -> String {
+        match self {
+            Self::Lost => {
+                "Some input was not delivered. Check the terminal before continuing.".into()
+            }
+            Self::PasteRefused { bytes } => format!(
+                "Paste refused: {bytes} bytes is over the {}-byte limit.",
+                felis_protocol::messages::MAX_PASTE_BYTES
+            ),
+        }
+    }
 }
 
 impl Default for InputQueue {
     fn default() -> Self {
         Self {
-            frames: Mutex::new(OutgoingQueue::default()),
+            pending: Mutex::default(),
             ready: Notify::new(),
             accepting: AtomicBool::new(true),
+            notice: Mutex::default(),
         }
+    }
+}
+
+/// Input the shell or its program receives. Everything else describes
+/// window state (size, focus, viewport, frame pacing) that the pane sends
+/// again on every new connection, so refusing it loses nothing.
+fn is_shell_input(msg: &InputMsg) -> bool {
+    match msg {
+        InputMsg::Key(_) | InputMsg::KeyBytes(_) | InputMsg::Paste(_) => true,
+        InputMsg::Mouse(_) => felis_client_core::coalesce_key(msg).is_none(),
+        _ => false,
     }
 }
 
 impl InputQueue {
     fn push(&self, msg: &InputMsg) -> Result<()> {
-        let frame = OutgoingFrame::input(msg)?;
-        let mut frames = self.frames.lock().unwrap();
+        let shell_input = is_shell_input(msg);
+        let frame = OutgoingFrame::input(msg);
+        let mut pending = self.pending.lock().unwrap();
+        let result = frame
+            .map_err(anyhow::Error::from)
+            .and_then(|frame| self.enqueue(&mut pending, frame, shell_input));
+        // Updated before releasing the queue, so a close or write failure
+        // of this frame cannot be overwritten by its own acceptance.
+        if shell_input {
+            *self.notice.lock().unwrap() = result.is_err().then_some(InputNotice::Lost);
+        }
+        result
+    }
+
+    fn enqueue(
+        &self,
+        pending: &mut Pending,
+        frame: OutgoingFrame,
+        shell_input: bool,
+    ) -> Result<()> {
         if !self.accepting.load(Ordering::Acquire) {
             bail!("connection is not accepting input");
         }
-        frames
+        let queued = pending.frames.len();
+        pending
+            .frames
             .push(frame)
             .map_err(|full| anyhow::anyhow!("input queue exceeded {} bytes", full.cap))?;
+        // Coalescing replaces a frame in place; only an appended frame
+        // gets its own entry.
+        if pending.frames.len() > queued {
+            pending.shell_input.push_back(shell_input);
+        }
         self.ready.notify_one();
         Ok(())
     }
 
-    fn close(&self) -> bool {
-        let mut frames = self.frames.lock().unwrap();
+    /// Stops accepting input and discards the backlog, reporting lost
+    /// input when the backlog held any.
+    fn close(&self) {
+        let mut pending = self.pending.lock().unwrap();
         self.accepting.store(false, Ordering::Release);
-        let discarded = !frames.is_empty();
-        *frames = OutgoingQueue::default();
-        discarded
+        if pending.shell_input.contains(&true) {
+            self.mark_lost();
+        }
+        *pending = Pending::default();
     }
 
     fn reopen(&self) {
         self.accepting.store(true, Ordering::Release);
     }
 
-    async fn next(&self) -> OutgoingFrame {
+    fn mark_lost(&self) {
+        self.set_notice(InputNotice::Lost);
+    }
+
+    fn set_notice(&self, notice: InputNotice) {
+        *self.notice.lock().unwrap() = Some(notice);
+    }
+
+    fn notice(&self) -> Option<InputNotice> {
+        *self.notice.lock().unwrap()
+    }
+
+    #[cfg(test)]
+    fn input_lost(&self) -> bool {
+        self.notice() == Some(InputNotice::Lost)
+    }
+
+    /// The oldest frame, and whether it carries shell input.
+    async fn next(&self) -> (OutgoingFrame, bool) {
         loop {
             let notified = self.ready.notified();
-            if let Some(frame) = self.frames.lock().unwrap().pop() {
-                return frame;
+            {
+                let mut pending = self.pending.lock().unwrap();
+                if let Some(frame) = pending.frames.pop() {
+                    let shell_input = pending.shell_input.pop_front().unwrap_or(false);
+                    return (frame, shell_input);
+                }
             }
             notified.await;
         }
@@ -245,7 +336,6 @@ impl InputQueue {
 
 pub struct Session {
     pub state: Arc<Mutex<State>>,
-    pub input_failed: Arc<AtomicBool>,
     pub target: Target,
     pub attachment: Option<String>,
     pub search: crate::terminal_search::Tools,
@@ -302,8 +392,6 @@ impl Session {
             crate::terminal_search::Tools::new(runtime, ctx.clone(), target.clone(), state.clone());
         let tx = Arc::new(InputQueue::default());
         let rx = tx.clone();
-        let input_failed = Arc::new(AtomicBool::new(false));
-        let failed = input_failed.clone();
         let attachment = attach.clone();
         let shared = state.clone();
         let destination = target.clone();
@@ -316,7 +404,6 @@ impl Session {
                 attach,
                 cwd,
                 env,
-                failed,
             )
             .await;
             rx.close();
@@ -339,7 +426,6 @@ impl Session {
             state,
             tx,
             task,
-            input_failed,
             target,
             attachment,
             search,
@@ -360,9 +446,9 @@ impl Session {
     /// drains it.
     #[cfg(test)]
     pub fn drain_queued_matches(&self, expected: &[InputMsg]) -> bool {
-        let mut frames = self.tx.frames.lock().unwrap();
+        let mut pending = self.tx.pending.lock().unwrap();
         // Compare wire frames: queueing later frames rewrites coalescing state.
-        let queued: Vec<_> = std::iter::from_fn(|| frames.pop())
+        let queued: Vec<_> = std::iter::from_fn(|| pending.frames.pop())
             .map(|frame| frame.frame().clone())
             .collect();
         let expected: Vec<_> = expected
@@ -373,9 +459,23 @@ impl Session {
     }
 
     pub fn send(&self, msg: InputMsg) {
-        if self.tx.push(&msg).is_err() {
-            self.input_failed.store(true, Ordering::Relaxed);
-        }
+        let _ = self.tx.push(&msg);
+    }
+
+    /// Why recent input may not have reached the shell, until shell
+    /// input is accepted again.
+    pub fn input_notice(&self) -> Option<InputNotice> {
+        self.tx.notice()
+    }
+
+    /// Reports shell input dropped before it reached the queue.
+    pub fn input_lost(&self) {
+        self.tx.mark_lost();
+    }
+
+    /// Reports a paste the pane would not send.
+    pub fn refuse_paste(&self, bytes: usize) {
+        self.tx.set_notice(InputNotice::PasteRefused { bytes });
     }
 }
 
@@ -416,7 +516,6 @@ async fn run(
     attach: Option<String>,
     cwd: Option<String>,
     env: Vec<(String, String)>,
-    input_failed: Arc<AtomicBool>,
 ) -> Result<()> {
     let (mut conn, info, mut relay) = tokio::time::timeout(Duration::from_secs(20), async {
         let carrier = target.carrier();
@@ -485,16 +584,14 @@ async fn run(
     }
     ctx.request_repaint();
     loop {
-        let result = pump(&mut conn, &shared, &ctx, &rx, &input_failed).await;
+        let result = pump(&mut conn, &shared, &ctx, &rx).await;
         let Err(error) = result else {
             return Ok(());
         };
         if !transport_loss(&error) {
             return Err(error);
         }
-        if rx.close() {
-            input_failed.store(true, Ordering::Relaxed);
-        }
+        rx.close();
         {
             let mut state = shared.lock().unwrap();
             state.connected = false;
@@ -522,12 +619,14 @@ async fn run(
         relay = child;
         {
             let mut state = shared.lock().unwrap();
+            // Accept input before publishing the new generation: the GUI
+            // re-sends size and focus as soon as it sees it.
+            rx.reopen();
             state.connected = true;
             state.reconnecting = false;
             state.reconnects = state.reconnects.wrapping_add(1);
             state.effective_minor = conn.effective_minor;
         }
-        rx.reopen();
         ctx.request_repaint();
     }
 }
@@ -602,21 +701,49 @@ async fn redial_target(
     Ok((recovered.conn, None))
 }
 
+/// Applies one daemon frame to the pane's state.
+///
+/// The GUI thread locks this state for every paint, so a panic in the
+/// frame code must not unwind through the guard: that would poison the
+/// mutex and take down every pane of the window. It fails this pane
+/// instead, resetting what the frame may have left half-applied: the
+/// GUI still reads the screen for selection, links and search.
+fn apply_frame(shared: &Mutex<State>, apply: impl FnOnce(&mut State) -> Result<()>) -> Result<()> {
+    let mut state = shared.lock().unwrap();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| apply(&mut state))) {
+        Ok(result) => result,
+        Err(panic) => {
+            let (rows, cols) = (state.screen.screen().rows(), state.screen.screen().cols());
+            state.screen = ShadowScreen::new(rows, cols);
+            state.images = felis_client_core::ImageShadow::new();
+            let reason = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic");
+            bail!("felis frame could not be applied: {reason}")
+        }
+    }
+}
+
 async fn pump(
     conn: &mut CarrierConnection,
     shared: &Arc<Mutex<State>>,
     ctx: &egui::Context,
     rx: &InputQueue,
-    input_failed: &AtomicBool,
 ) -> Result<()> {
     let clipboard = crate::terminal_config::get(ctx).clipboard.clone();
     loop {
         tokio::select! {
-            command = rx.next() => {
-                match tokio::time::timeout(Duration::from_secs(10), conn.writer.send_checked(command.frame())).await {
+            (command, shell_input) = rx.next() => {
+                let sent = tokio::time::timeout(Duration::from_secs(10), conn.writer.send_checked(command.frame())).await;
+                if shell_input && !matches!(sent, Ok(Ok(()))) {
+                    rx.mark_lost();
+                }
+                match sent {
                     Ok(Ok(())) => {},
-                    Ok(Err(error)) => { input_failed.store(true, Ordering::Relaxed); return Err(error.into()); }
-                    Err(error) => { input_failed.store(true, Ordering::Relaxed); return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()); }
+                    Ok(Err(error)) => return Err(error.into()),
+                    Err(error) => return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, error).into()),
                 }
             }
             frame = conn.next_frame() => {
@@ -625,15 +752,17 @@ async fn pump(
                     Incoming::Payload(payload) => match payload.kind {
                         MessageKind::Grid => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<GridMsg>(&payload)? {
-                                shared.lock().unwrap().apply_grid(&delivery.msg, &clipboard)?;
+                                apply_frame(shared, |state| state.apply_grid(&delivery.msg, &clipboard))?;
                                 ctx.request_repaint();
                             }
                         }
                         MessageKind::Image => {
                             if let Delivery::Deliver(delivery) = conn.driver.decode::<felis_protocol::messages::ImageMsg>(&payload)? {
-                                let mut state = shared.lock().unwrap();
-                                state.images.apply(&delivery.msg)?;
-                                state.redraw.request();
+                                apply_frame(shared, |state| {
+                                    state.images.apply(&delivery.msg)?;
+                                    state.redraw.request();
+                                    Ok(())
+                                })?;
                                 ctx.request_repaint();
                             }
                         }
@@ -835,14 +964,14 @@ mod tests {
             queue.push(&request).unwrap();
         }
         let expected = OutgoingFrame::input(&InputMsg::ViewportStep { rows: 1 }).unwrap();
-        let mut frames = queue.frames.lock().unwrap();
+        let mut pending = queue.pending.lock().unwrap();
         for _ in 0..2 {
             assert_eq!(
-                frames.pop().unwrap().frame().body(),
+                pending.frames.pop().unwrap().frame().body(),
                 expected.frame().body()
             );
         }
-        assert!(frames.is_empty());
+        assert!(pending.frames.is_empty());
     }
 
     #[test]
@@ -922,16 +1051,17 @@ mod tests {
             },
         })
         .unwrap();
-        let latest = queue.frames.lock().unwrap().pop().unwrap();
+        let latest = queue.pending.lock().unwrap().frames.pop().unwrap();
         assert_eq!(latest.frame().body(), expected.frame().body());
-        assert!(queue.frames.lock().unwrap().is_empty());
+        assert!(queue.pending.lock().unwrap().frames.is_empty());
     }
 
     #[test]
     fn lost_connection_discards_input_before_accepting_new_keys() {
         let queue = InputQueue::default();
         queue.push(&InputMsg::KeyBytes(b"old".to_vec())).unwrap();
-        assert!(queue.close());
+        queue.close();
+        assert!(queue.input_lost());
         assert!(
             queue
                 .push(&InputMsg::KeyBytes(b"uncertain".to_vec()))
@@ -941,10 +1071,18 @@ mod tests {
         queue.push(&InputMsg::KeyBytes(b"new".to_vec())).unwrap();
         let expected = OutgoingFrame::input(&InputMsg::KeyBytes(b"new".to_vec())).unwrap();
         assert_eq!(
-            queue.frames.lock().unwrap().pop().unwrap().frame().body(),
+            queue
+                .pending
+                .lock()
+                .unwrap()
+                .frames
+                .pop()
+                .unwrap()
+                .frame()
+                .body(),
             expected.frame().body()
         );
-        assert!(queue.frames.lock().unwrap().is_empty());
+        assert!(queue.pending.lock().unwrap().frames.is_empty());
         assert!(!transport_loss(&anyhow::anyhow!("malformed protocol")));
         assert!(transport_loss(
             &std::io::Error::from(std::io::ErrorKind::BrokenPipe).into()
@@ -1139,6 +1277,151 @@ mod tests {
         session.frame_submitted(&mut state, true);
         session.frame_submitted(&mut state, true);
         assert!(state.pull.sent() <= sent + 1, "only one outstanding pull");
+    }
+
+    fn mouse(action: felis_protocol::messages::MouseAction, button: bool) -> InputMsg {
+        use felis_protocol::messages::{InputMods, MouseButton, MouseEvent};
+        InputMsg::Mouse(MouseEvent {
+            x: 1,
+            y: 1,
+            px: 0,
+            py: 0,
+            action,
+            button: button.then_some(MouseButton::Left),
+            mods: InputMods::empty(),
+        })
+    }
+
+    fn state_messages() -> Vec<InputMsg> {
+        use felis_protocol::messages::{MouseAction, PromptJump, RequestedDims};
+        vec![
+            InputMsg::Resize {
+                dims: RequestedDims {
+                    rows: 24,
+                    cols: 80,
+                    pixel_w: 0,
+                    pixel_h: 0,
+                },
+            },
+            InputMsg::FocusChange { focused: true },
+            InputMsg::NextGridFrame,
+            InputMsg::Viewport {
+                lines_from_bottom: 0,
+                anchor: None,
+            },
+            InputMsg::ViewportStep { rows: 1 },
+            InputMsg::JumpPrompt {
+                direction: PromptJump::Previous,
+            },
+            mouse(MouseAction::Motion, false),
+        ]
+    }
+
+    #[test]
+    fn refused_view_and_focus_updates_are_not_lost_input() {
+        let queue = InputQueue::default();
+        queue.close();
+        for msg in state_messages() {
+            assert!(queue.push(&msg).is_err());
+            assert!(!queue.input_lost(), "{msg:?} is not shell input");
+        }
+        queue.reopen();
+        for msg in state_messages() {
+            queue.push(&msg).unwrap();
+        }
+        queue.close();
+        assert!(!queue.input_lost());
+    }
+
+    #[test]
+    fn refused_or_discarded_shell_input_is_reported_until_the_next_delivery() {
+        use felis_protocol::messages::MouseAction;
+        for msg in [
+            InputMsg::KeyBytes(b"x".to_vec()),
+            InputMsg::Paste(b"x".to_vec()),
+            mouse(MouseAction::Press, true),
+        ] {
+            let queue = InputQueue::default();
+            queue.close();
+            assert!(queue.push(&msg).is_err());
+            assert!(queue.input_lost(), "{msg:?} is shell input");
+            queue.reopen();
+            queue
+                .push(&InputMsg::FocusChange { focused: true })
+                .unwrap();
+            assert!(queue.input_lost(), "a focus report is not a delivery");
+            queue.push(&msg).unwrap();
+            assert!(!queue.input_lost());
+            queue.close();
+            assert!(queue.input_lost(), "the queued {msg:?} was discarded");
+        }
+    }
+
+    #[test]
+    fn a_paste_refusal_stays_until_shell_input_is_accepted() {
+        let queue = InputQueue::default();
+        queue.set_notice(InputNotice::PasteRefused { bytes: 9 });
+        queue
+            .push(&InputMsg::FocusChange { focused: true })
+            .unwrap();
+        assert_eq!(queue.notice(), Some(InputNotice::PasteRefused { bytes: 9 }));
+        assert!(
+            InputNotice::PasteRefused { bytes: 9 }
+                .message()
+                .contains(&felis_protocol::messages::MAX_PASTE_BYTES.to_string())
+        );
+        queue.push(&InputMsg::KeyBytes(b"x".to_vec())).unwrap();
+        assert_eq!(queue.notice(), None);
+        let oversized = vec![b'x'; felis_protocol::messages::MAX_PASTE_BYTES + 1];
+        assert!(
+            queue.push(&InputMsg::Paste(oversized)).is_err(),
+            "the encoder drops an oversized paste, so the pane must refuse it first"
+        );
+    }
+
+    #[test]
+    fn a_panic_while_applying_a_frame_fails_only_that_pane() {
+        let shared = Arc::new(Mutex::new(viewport_state(
+            felis_protocol::preface::PROTOCOL_MINOR,
+        )));
+        let error = apply_frame(&shared, |state| {
+            state.screen.apply(&GridMsg::RehydrateBegin)?;
+            panic!("felis bug");
+        })
+        .unwrap_err();
+        assert!(!transport_loss(&error), "a broken frame is not retried");
+        assert!(format!("{error:#}").contains("felis bug"));
+        assert!(!shared.is_poisoned(), "the GUI keeps locking this pane");
+        let state = shared.lock().unwrap();
+        assert!(
+            !state.screen.is_rehydrating(),
+            "half-applied state is reset"
+        );
+        assert_eq!(
+            (state.screen.screen().rows(), state.screen.screen().cols()),
+            (24, 80)
+        );
+    }
+
+    #[test]
+    fn dequeued_frames_say_whether_their_loss_matters() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let queue = InputQueue::default();
+        // The second focus report replaces the first in place: an entry
+        // recorded for it would pair the key with the wrong flag.
+        for focused in [true, false] {
+            queue.push(&InputMsg::FocusChange { focused }).unwrap();
+        }
+        queue.push(&InputMsg::KeyBytes(b"x".to_vec())).unwrap();
+        queue.push(&InputMsg::NextGridFrame).unwrap();
+        let (_, focus) = runtime.block_on(queue.next());
+        let (_, key) = runtime.block_on(queue.next());
+        let (_, frame) = runtime.block_on(queue.next());
+        assert_eq!((focus, key, frame), (false, true, false));
+        assert!(queue.pending.lock().unwrap().shell_input.is_empty());
+        assert!(queue.pending.lock().unwrap().frames.is_empty());
     }
 
     #[test]

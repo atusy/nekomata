@@ -96,6 +96,10 @@ daemon delivers each write to at most one window attached to the session.
   bracketed paste is enabled, is sent without confirmation.
 - If the pane's connection changes while confirmation is pending, the paste is
   discarded.
+- A paste larger than felis's paste limit (16 MiB minus 64 bytes) is refused
+  before any confirmation, never truncated, and the pane shows its size and
+  the limit. The notice stays until the next key, paste, or mouse button, drag
+  or wheel report is accepted for sending.
 
 ## Scrolling
 
@@ -148,5 +152,20 @@ daemon delivers each write to at most one window attached to the session.
 - When the transport to felis is lost, nekomata retries reconnecting to the
   same session for a bounded period. When retries run out, or on any other
   connection error, the pane shows the error.
+- A frame from felis that the pane cannot apply is a connection error of that
+  pane alone; the window and its other panes keep working. Like after any
+  connection error, the pane keeps its last drawn screen under the error.
 - Input whose delivery is uncertain is not resent, and reconnection never
   spawns a replacement shell.
+- Shell input — keys, pastes, and mouse button, drag or wheel reports — made
+  while the pane is reconnecting, or queued or being written when the
+  connection was lost, is discarded; so is a paste made before the first
+  connection. The pane then shows that some input was not delivered. The
+  notice stays until the next shell input is accepted for sending; while the
+  pane is connecting, reconnecting or showing an error, that status is shown
+  instead.
+- Keys typed before the first connection are queued and delivered once it is
+  made.
+- Pane size and focus reports, buttonless mouse motion, scrollback navigation
+  and frame requests are not shell input and show no notice when discarded.
+  The pane reports its current size and focus again on every new connection.
