@@ -145,6 +145,8 @@ impl Renderer {
 
     /// A successful draw submits to the shared GPU queue before egui samples it.
     /// No read_frame/capture path is used by this interactive renderer.
+    /// Returns whether this call rendered new content; `false` reuses the
+    /// previous texture or has nothing ready to show.
     pub fn paint(
         &mut self,
         painter: &egui::Painter,
@@ -152,7 +154,8 @@ impl Renderer {
         rect: Rect,
         focused: bool,
         selection: Option<felis_client_core::Selection>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let mut rendered = false;
         if state.render_ready() {
             let size = [
                 (rect.width() * self.ppp).round().max(1.0) as u32,
@@ -198,15 +201,15 @@ impl Renderer {
                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     Color32::WHITE,
                 );
-                return Ok(());
+                return Ok(false);
             }
             self.selection = selection;
             if self.size != size {
                 self.gpu.resize(size[0], size[1]);
-                let view = self
-                    .gpu
-                    .embedded_texture_view()
-                    .context("missing resized GPU target")?;
+                let Some(view) = self.gpu.embedded_texture_view() else {
+                    retry_after_error(painter, state);
+                    anyhow::bail!("missing resized GPU target");
+                };
                 self.host
                     .renderer
                     .write()
@@ -219,7 +222,7 @@ impl Renderer {
                 self.size = size;
             }
             if self.color_revision != state.colors.revision() {
-                self.gpu.set_theme(&state.colors.theme());
+                self.gpu.set_theme(state.colors.theme());
                 self.color_revision = state.colors.revision();
             }
             self.gpu.set_reverse_video(state.screen.reverse_video());
@@ -252,7 +255,7 @@ impl Renderer {
                 state.screen.viewport_max(),
             );
             if let Err(error) = result {
-                state.redraw.request();
+                retry_after_error(painter, state);
                 return Err(error.into());
             }
             state.redraw.painted();
@@ -262,6 +265,7 @@ impl Renderer {
             }
             state.screen.clear_damage();
             self.rendered = true;
+            rendered = true;
         }
         if self.rendered {
             painter.image(
@@ -271,8 +275,17 @@ impl Renderer {
                 Color32::WHITE,
             );
         }
-        Ok(())
+        Ok(rendered)
     }
+}
+
+/// How long a pane waits before retrying a failed render. Nothing else is
+/// due to repaint it, and an immediate retry would spin on a persistent error.
+const RENDER_ERROR_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn retry_after_error(painter: &egui::Painter, state: &mut State) {
+    state.redraw.request();
+    painter.ctx().request_repaint_after(RENDER_ERROR_RETRY);
 }
 
 impl Drop for Renderer {
@@ -329,6 +342,69 @@ mod tests {
     fn terminal_smaller_than_one_row_keeps_the_available_height() {
         let pane = Rect::from_min_size(Pos2::ZERO, Vec2::new(8.0, 7.0));
         assert_eq!(terminal_rect(pane, 1, 19.0, 1.0), pane);
+    }
+
+    #[test]
+    #[ignore = "requires a GPU adapter; run inside the Vitro desktop with --ignored"]
+    fn gpu_paint_reports_only_frames_that_render_new_content() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let instance = wgpu::Instance::default();
+        let adapter = runtime
+            .block_on(instance.request_adapter(&Default::default()))
+            .expect("GPU adapter");
+        let (device, queue) = runtime
+            .block_on(adapter.request_device(&Default::default()))
+            .expect("GPU device");
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer = Arc::new(egui::mutex::RwLock::new(eframe::egui_wgpu::Renderer::new(
+            &device,
+            format,
+            Default::default(),
+        )));
+        let host = RenderState {
+            adapter,
+            available_adapters: vec![],
+            instance,
+            device,
+            queue,
+            target_format: format,
+            renderer,
+        };
+        let ctx = egui::Context::default();
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("terminal-gpu"), host));
+        let mut renderer = Renderer::new(&ctx, 15.0, 1.0).unwrap();
+        let mut state = crate::session::State {
+            screen: felis_client_core::ShadowScreen::new(2, 4),
+            effective_minor: 0,
+            pull: felis_client_core::pull::PullScheduler::new(true),
+            redraw: felis_client_core::redraw::RedrawScheduler::new(),
+            colors: Default::default(),
+            images: ImageShadow::new(),
+            session_id: None,
+            error: None,
+            connected: true,
+            reconnects: 0,
+            reconnecting: false,
+            detached: false,
+            exited: false,
+            clipboard: None,
+        };
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(40.0, 48.0));
+        let mut paint = |state: &mut crate::session::State| {
+            let mut rendered = None;
+            let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                rendered = Some(
+                    renderer
+                        .paint(ui.painter(), state, rect, false, None)
+                        .unwrap(),
+                );
+            });
+            rendered.unwrap()
+        };
+        assert!(paint(&mut state), "the first frame renders");
+        assert!(!paint(&mut state), "an unchanged frame reuses the texture");
+        state.redraw.request();
+        assert!(paint(&mut state), "a requested redraw renders again");
     }
 
     #[test]

@@ -10,7 +10,8 @@ The local embedding seam and upstream attribution are documented in
 
 `PullScheduler` keeps at most one local frame request outstanding. The frontend
 retains the last complete texture while a compose cycle or rehydrate burst is
-arriving. Only visible panes request another frame after GPU submission; the
+arriving. Only visible panes request another frame, and only after a frame that
+submitted new content to the GPU (a frame reusing the texture does not); the
 host eframe loop owns surface presentation and vsync. This bounds requests but
 does not claim to acknowledge successful surface presentation. SSH remains
 push-driven to avoid adding a network round trip per frame. `RedrawScheduler`
@@ -22,6 +23,28 @@ which is now retained only under `tests/support` as a comparison fixture.
 
 See [native Metal validation and total improvements](native-rendering-validation.md)
 for the same-process initial/mesh/GPU comparison on Apple M4.
+
+## Idle wakeups (2026-10-27)
+
+Windows no longer schedule a repaint every 250 ms. They repaint when
+something asks for one: input, felis output, workspace and control events,
+completed link, picker and search jobs, cursor blink deadlines, glyph atlas
+refills, egui animations and tooltips, and a few bounded retries (a failed
+render, a full workspace command queue, and the geometry autosave after a
+move or resize). Measured in the Vitro Linux guest (Debian
+ARM64, X11/openbox, llvmpipe, 4 vCPUs, debug build) with one pane, sampling
+`/proc/<pid>/stat` CPU time and the main thread's context switches over 60 s
+with no input:
+
+| Window state | Before: CPU | Before: main-thread wakeups | After: CPU | After: main-thread wakeups |
+| --- | ---: | ---: | ---: | ---: |
+| Focused, blinking cursor | 27.4% | 111.9/s | 15.9% | 39.0/s |
+| Focused, steady cursor | 14.7% | 78.6/s | 0.0% | 0/s |
+| Minimized | 0.0% | 0/s | 0.0% | 0/s |
+
+llvmpipe renders on the CPU, so each frame costs far more here than on a GPU;
+the counts, not the percentages, carry over to other hosts. The remaining
+blinking-cursor cost is the blink itself.
 
 ## Historical CPU mesh comparison
 

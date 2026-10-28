@@ -2,19 +2,31 @@
 use felis_protocol::messages::GridMsg;
 use felis_render_core::palette::Theme;
 
-#[derive(Default)]
 pub struct Colors {
     base: Theme,
     runtime_theme: [Option<[u8; 3]>; 3],
     runtime_palette: std::collections::BTreeMap<u8, [u8; 3]>,
     revision: u64,
+    /// Derived from the fields above whenever `revision` changes; every
+    /// pane frame reads it.
+    theme: Theme,
+}
+impl Default for Colors {
+    fn default() -> Self {
+        Self::new(Theme::default())
+    }
 }
 impl Colors {
     pub fn new(base: Theme) -> Self {
-        Self {
+        let mut colors = Self {
             base,
-            ..Default::default()
-        }
+            runtime_theme: [None; 3],
+            runtime_palette: Default::default(),
+            revision: 0,
+            theme: base,
+        };
+        colors.theme = colors.effective_theme();
+        colors
     }
     pub fn apply_grid(&mut self, msg: &GridMsg) {
         use felis_client_core::renderer_effect::{RendererEffect, renderer_effect};
@@ -39,11 +51,15 @@ impl Colors {
             Some(RendererEffect::ReverseVideo(_)) | None => return,
         }
         self.revision = self.revision.wrapping_add(1);
+        self.theme = self.effective_theme();
     }
     pub fn revision(&self) -> u64 {
         self.revision
     }
-    pub fn theme(&self) -> Theme {
+    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
+    fn effective_theme(&self) -> Theme {
         let mut palette = [None; 256];
         for (&index, &rgb) in &self.runtime_palette {
             palette[usize::from(index)] = Some(rgb);

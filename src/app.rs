@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use felis_client_core::{GridPos, Selection};
@@ -182,6 +182,7 @@ pub struct App {
     palette: bool,
     palette_state: crate::command_palette::CommandPalette,
     font_size_open: bool,
+    geometry: GeometryAutosave,
 }
 
 impl App {
@@ -245,6 +246,7 @@ impl App {
             palette: false,
             palette_state: Default::default(),
             font_size_open: false,
+            geometry: GeometryAutosave::default(),
         };
         Ok(app)
     }
@@ -650,16 +652,23 @@ impl App {
         }
     }
 
-    fn save_workspace(&mut self) {
+    fn save_workspace(&mut self, ctx: &egui::Context) {
         if self.workspace_id.is_none() || self.pending_workspace.is_some() {
             return;
         }
         let snapshot = self.snapshot();
-        if self.last_snapshot.as_ref() != Some(&snapshot)
-            && let Some(client) = &self.workspace
-            && client.send(daemon::Request::Save(snapshot.clone())).is_ok()
-        {
+        if self.last_snapshot.as_ref() == Some(&snapshot) {
+            return;
+        }
+        let Some(client) = &self.workspace else {
+            return;
+        };
+        if client.send(daemon::Request::Save(snapshot.clone())).is_ok() {
             self.last_snapshot = Some(snapshot);
+        } else if !client.is_closed() {
+            // The command queue is full. A queued save completes without
+            // waking the GUI, so retry on a timer rather than on the next event.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
 
@@ -1543,8 +1552,10 @@ impl App {
                     ui.label("Connecting to destination panes…");
                 });
         }
-        self.save_workspace();
-        ctx.request_repaint_after(Duration::from_millis(250));
+        self.save_workspace(ctx);
+        let interval = eframe::App::auto_save_interval(self);
+        self.geometry
+            .schedule(ctx, std::time::Instant::now(), interval);
     }
 }
 
@@ -1571,6 +1582,51 @@ impl eframe::App for App {
             if let Err(error) = client.close(&self.runtime, snapshot) {
                 eprintln!("Could not save workspace: {error:#}");
             }
+        }
+    }
+}
+
+/// The window geometry eframe persists.
+type Geometry = (Option<Rect>, Option<Rect>, Option<bool>, Option<bool>);
+
+/// eframe autosaves window geometry only inside a frame, once its interval has
+/// passed since its last save. An idle window runs no frames, so after a move
+/// or resize keep one scheduled that is sure to find the autosave due.
+#[derive(Default)]
+struct GeometryAutosave {
+    seen: Option<Geometry>,
+    /// egui keeps only the current pass's shortest repaint delay, so an
+    /// intervening frame would drop a one-shot request; every frame re-arms it.
+    due: Option<std::time::Instant>,
+}
+
+impl GeometryAutosave {
+    fn schedule(
+        &mut self,
+        ctx: &egui::Context,
+        now: std::time::Instant,
+        interval: std::time::Duration,
+    ) {
+        let geometry = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.outer_rect,
+                viewport.inner_rect,
+                viewport.maximized,
+                viewport.fullscreen,
+            )
+        });
+        // The first geometry is where the window opened, not a move or resize.
+        if self
+            .seen
+            .replace(geometry)
+            .is_some_and(|seen| seen != geometry)
+        {
+            self.due = Some(now + interval + std::time::Duration::from_secs(1));
+        }
+        match self.due {
+            Some(due) if now < due => ctx.request_repaint_after(due - now),
+            _ => self.due = None,
         }
     }
 }
@@ -1902,16 +1958,15 @@ fn draw_pane(
             pane.search_paint_key = Some(key);
         }
     }
-    if let Err(error) = renderer.paint(
+    match renderer.paint(
         &painter,
         &mut state,
         text_rect,
         terminal_input_enabled && *focused == id && connected && ui.input(|input| input.focused),
         pane.selection,
     ) {
-        state.error = Some(format!("Terminal renderer: {error:#}"));
-    } else {
-        pane.session.frame_submitted(&mut state);
+        Ok(rendered) => pane.session.frame_submitted(&mut state, rendered),
+        Err(error) => state.error = Some(format!("Terminal renderer: {error:#}")),
     }
     let text_rect = renderer.content_rect(text_rect);
     let shadow = &state.screen;
@@ -2295,6 +2350,37 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_geometry_change_wakes_the_window_once_the_autosave_is_due() {
+        let interval = Duration::from_secs(30);
+        let start = std::time::Instant::now();
+        let ctx = egui::Context::default();
+        let mut autosave = GeometryAutosave::default();
+        let mut frame = |x: f32, elapsed: u64| {
+            let mut input = egui::RawInput::default();
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .outer_rect = Some(Rect::from_min_size(Pos2::new(x, 0.0), Vec2::splat(400.0)));
+            let output = crate::test_support::run(&ctx, input, |ui| {
+                autosave.schedule(ui.ctx(), start + Duration::from_secs(elapsed), interval)
+            });
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay
+        };
+        // egui itself repaints during its first passes.
+        assert!((0..10).any(|_| frame(0.0, 0) == Duration::MAX));
+        let moved = frame(50.0, 100);
+        assert!(moved > interval && moved < Duration::MAX, "{moved:?}");
+        // An unrelated frame before the save is due must keep the deadline.
+        let pending = frame(50.0, 110);
+        assert!(pending > interval - Duration::from_secs(10), "{pending:?}");
+        assert!(pending < interval, "{pending:?}");
+        assert_eq!(frame(50.0, 140), Duration::MAX, "the due frame saves");
+        assert_eq!(frame(50.0, 200), Duration::MAX, "a saved window stays idle");
+    }
 
     #[test]
     fn tab_drop_slot_is_the_gap_nearest_the_pointer() {
@@ -2586,6 +2672,48 @@ mod tests {
 
     #[test]
     #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
+    fn live_idle_window_schedules_no_repaint() {
+        use std::{sync::mpsc, time::Instant};
+        crate::test_support::private_runtime_dir();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let mut app = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
+        // Without a GPU host the pane renderer cannot be created, so no blink
+        // deadline is requested and, once connected, nothing remains to repaint for.
+        let deadline = Instant::now() + Duration::from_secs(25);
+        loop {
+            let output =
+                crate::test_support::run(&ctx, egui::RawInput::default(), |ui| app.show(ui));
+            let delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            // Earlier live tests may leave this workspace with panes whose
+            // sessions are gone; those settle on an error instead.
+            let settled = !app.panes.is_empty()
+                && app.panes.values().all(|pane| {
+                    let state = pane.session.state.lock().unwrap();
+                    state.connected || state.error.is_some()
+                });
+            if settled && delay == Duration::MAX {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "an idle window kept scheduling repaints every {delay:?} (panes settled: {settled})"
+            );
+            let _ = repaints.recv_timeout(delay.min(Duration::from_millis(50)));
+        }
+        eframe::App::on_exit(&mut app);
+    }
+
+    #[test]
+    #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
     fn live_gui_restart_and_switch_preserve_workspaces_and_shells() {
         use std::{sync::mpsc, time::Instant};
         crate::test_support::private_runtime_dir();
@@ -2616,7 +2744,7 @@ mod tests {
                 app.workspace_events(&ctx);
                 app.poll_workspace();
                 app.control_requests(&ctx);
-                app.save_workspace();
+                app.save_workspace(&ctx);
                 if done(app) {
                     break;
                 }
@@ -2669,7 +2797,7 @@ mod tests {
         app.font_size = 18.0;
         let mut before = app.snapshot();
         let workspace_id = app.workspace_id;
-        app.save_workspace();
+        app.save_workspace(&ctx);
         eframe::App::on_exit(&mut app);
         drop(app);
 
@@ -2936,6 +3064,7 @@ mod tests {
             palette: false,
             palette_state: Default::default(),
             font_size_open: false,
+            geometry: GeometryAutosave::default(),
         };
         app.add_tab(&ctx, None);
         let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {

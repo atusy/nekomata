@@ -293,9 +293,11 @@ impl Session {
         }
     }
 
-    /// Called only after submitting a complete visible pane to the GPU.
-    pub fn frame_submitted(&self, state: &mut State) {
-        if state.render_ready() && state.pull.after_frame(true) {
+    /// Called once per visible pane frame that painted without error; `rendered` is whether this frame
+    /// submitted new terminal content to the GPU rather than reusing the last
+    /// texture. Only a rendered frame may pull (felis `PullScheduler::after_frame`).
+    pub fn frame_submitted(&self, state: &mut State, rendered: bool) {
+        if state.render_ready() && state.pull.after_frame(rendered) {
             self.send(InputMsg::NextGridFrame);
         }
     }
@@ -661,6 +663,31 @@ mod tests {
     }
 
     #[test]
+    fn only_a_rendered_frame_pulls_the_next_grid_frame() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: requests stay queued without contacting a daemon.
+        let session = Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-pull-test.sock".into()),
+            None,
+            None,
+            vec![],
+        );
+        let mut state = session.state.lock().unwrap();
+        state.connected = true;
+        state.pull = felis_client_core::pull::PullScheduler::new(true);
+        // A frame that reused the previous texture presented nothing new.
+        session.frame_submitted(&mut state, false);
+        assert_eq!(state.pull.sent(), 0);
+        session.frame_submitted(&mut state, true);
+        assert_eq!(state.pull.sent(), 1);
+    }
+
+    #[test]
     fn rapid_scroll_steps_remain_ordered_before_the_screen_reply() {
         let state = viewport_state(felis_protocol::preface::PROTOCOL_MINOR);
         let queue = InputQueue::default();
@@ -872,7 +899,7 @@ mod tests {
             {
                 let mut state = session.state.lock().unwrap();
                 // Headless tests stand in for a completed visible GPU frame.
-                session.frame_submitted(&mut state);
+                session.frame_submitted(&mut state, true);
                 assert!(state.error.is_none(), "{:?}", state.error);
                 if predicate(&state) {
                     return;
@@ -947,8 +974,8 @@ mod tests {
         });
         let mut state = session.state.lock().unwrap();
         let sent = state.pull.sent();
-        session.frame_submitted(&mut state);
-        session.frame_submitted(&mut state);
+        session.frame_submitted(&mut state, true);
+        session.frame_submitted(&mut state, true);
         assert!(state.pull.sent() <= sent + 1, "only one outstanding pull");
     }
 
