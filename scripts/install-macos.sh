@@ -65,6 +65,9 @@ main() {
   /usr/bin/codesign --force --sign "$identity" --timestamp=none \
     --identifier io.github.atusy.nekomata "$staging/nekomata.app"
   /usr/bin/codesign --verify --deep --strict --verbose=2 "$staging/nekomata.app"
+  # Nix store timestamps are fixed; give macOS a fresh bundle modification
+  # time so the Dock refreshes its icon after an application replacement.
+  touch "$staging/nekomata.app"
   replace_application "$application"
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$application"
 
