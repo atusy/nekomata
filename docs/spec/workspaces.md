@@ -64,6 +64,9 @@ size (see [configuration](configuration.md#font-size-precedence)).
   daemon, or is still reconnecting, exits without saving.
 - After a GUI crash, the workspace restores up to the last snapshot the daemon
   received.
+- A pane opened with a partial session ID is saved without a session until
+  felis resolves the prefix, so restoring it before then, or after its attach
+  failed, starts a new shell in that pane.
 
 ## Switching
 

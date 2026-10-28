@@ -24,13 +24,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Source {
-    id: u128,
+    id: crate::session::SessionId,
     generation: u64,
 }
 
 fn source(state: &Mutex<State>) -> Option<Source> {
     let state = state.lock().unwrap();
-    state.connected.then_some(Source {
+    state.lifecycle.is_live().then_some(Source {
         id: state.session_id?,
         generation: state.reconnects,
     })
@@ -309,7 +309,7 @@ struct Ops {
     conn: CarrierConnection,
     _relay: Option<tokio::process::Child>,
 }
-async fn attached_ops(target: &Target, id: u128) -> Result<Ops> {
+async fn attached_ops(target: &Target, id: crate::session::SessionId) -> Result<Ops> {
     let mut ops = if let Target::Ssh { host, socket } = target {
         let (conn, relay) = crate::ssh::connect(host, socket.as_deref(), Offer::ops()).await?;
         Ops {
@@ -328,7 +328,7 @@ async fn attached_ops(target: &Target, id: u128) -> Result<Ops> {
         }
     };
     ops.conn
-        .attach_by_prefix(format!("{id:032x}"), AttachIntent::Automatic)
+        .attach_by_prefix(id.to_string(), AttachIntent::Automatic)
         .await?;
     Ok(ops)
 }
@@ -493,11 +493,11 @@ mod tests {
     fn superseded_search_results_cannot_replace_the_current_query() {
         let mut state = SearchState::default();
         let old = state.begin(Some(Source {
-            id: 1,
+            id: crate::session::SessionId(1),
             generation: 0,
         }));
         let current = state.begin(Some(Source {
-            id: 1,
+            id: crate::session::SessionId(1),
             generation: 0,
         }));
         assert!(!state.push(old, hit("old".into())));
@@ -569,7 +569,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         };
-        wait(&|| session.state.lock().unwrap().connected);
+        wait(&|| session.state.lock().unwrap().lifecycle.is_live());
         session.send(InputMsg::KeyBytes(
             b"printf 'NEKOMATA_SEARCH_MARKER\\n'\r".to_vec(),
         ));
@@ -590,8 +590,7 @@ mod tests {
             drop(search);
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(session.state.lock().unwrap().connected);
-        assert!(!session.state.lock().unwrap().detached);
+        assert!(session.state.lock().unwrap().lifecycle.is_live());
         session.search.search(
             "(".into(),
             SearchOptions {
@@ -601,7 +600,7 @@ mod tests {
         );
         wait(&|| !session.search.search.lock().unwrap().running);
         assert!(session.search.search.lock().unwrap().error.is_some());
-        assert!(session.state.lock().unwrap().connected);
+        assert!(session.state.lock().unwrap().lifecycle.is_live());
         session.search.cancel_search();
         assert!(!session.search.search.lock().unwrap().active);
         assert!(
@@ -639,7 +638,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         };
-        wait(&|| session.state.lock().unwrap().connected);
+        wait(&|| session.state.lock().unwrap().lifecycle.is_live());
         let quoted_socket = std::path::Path::new(&socket)
             .parent()
             .unwrap()
@@ -670,8 +669,7 @@ mod tests {
             drop(search);
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(session.state.lock().unwrap().connected);
-        assert!(!session.state.lock().unwrap().detached);
+        assert!(session.state.lock().unwrap().lifecycle.is_live());
         std::fs::remove_file(quoted_socket).unwrap();
     }
 }

@@ -14,7 +14,7 @@ use crate::{
     session::{Session, Target},
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
-    workspace::{PaneSpec, Snapshot, Tab, move_tab},
+    workspace::{PaneSpec, Snapshot, WindowLayout},
     workspace_client::{Client as WorkspaceClient, Command as WorkspaceCommand, Operation},
     workspace_switch::{self, PaneStatus, Poll, Step, Switch as WorkspaceSwitch},
 };
@@ -94,6 +94,22 @@ impl Pane {
         }
     }
 
+    fn spec(&self) -> PaneSpec {
+        let state = self.session.state.lock().unwrap();
+        PaneSpec {
+            target: self.session.target.clone(),
+            // An attach by prefix names no session until felis resolves it;
+            // recording the prefix would make the daemon reject every
+            // snapshot while it is pending or after it fails.
+            session: state.session_id.or_else(|| {
+                self.session
+                    .attachment
+                    .as_deref()
+                    .and_then(|id| id.parse().ok())
+            }),
+        }
+    }
+
     fn close_search(&mut self) {
         self.search_open = false;
         self.session.search.cancel_search();
@@ -140,13 +156,15 @@ impl Pane {
         self.search_focus = true;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn connect(
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
         window: u32,
         workspace: Option<(u64, Option<&str>)>,
         id: u64,
-        spec: PaneSpec,
+        target: Target,
+        attach: Option<String>,
         cwd: Option<String>,
     ) -> Self {
         let mut env = vec![
@@ -162,8 +180,8 @@ impl Pane {
         Self::from_session(Arc::new(Session::start(
             runtime,
             ctx.clone(),
-            spec.target,
-            spec.session,
+            target,
+            attach,
             cwd,
             env,
         )))
@@ -191,10 +209,7 @@ pub struct App {
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
     panes: BTreeMap<u64, Pane>,
-    tabs: Vec<Tab>,
-    active: usize,
-    next_id: u64,
-    font_size: f32,
+    window: WindowLayout,
     picker: SessionPicker,
     shortcuts: Shortcuts,
     palette: bool,
@@ -256,10 +271,10 @@ impl App {
             control,
             pending_attach: BTreeMap::new(),
             panes: BTreeMap::new(),
-            tabs: vec![],
-            active: 0,
-            next_id: 1,
-            font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
+            window: WindowLayout {
+                font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
+                ..Default::default()
+            },
             picker: SessionPicker::default(),
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
             palette: false,
@@ -272,27 +287,12 @@ impl App {
 
     fn snapshot(&self) -> Snapshot {
         Snapshot {
-            tabs: self.tabs.clone(),
+            window: self.window.clone(),
             panes: self
                 .panes
                 .iter()
-                .map(|(&id, pane)| {
-                    let state = pane.session.state.lock().unwrap();
-                    (
-                        id,
-                        PaneSpec {
-                            target: pane.session.target.clone(),
-                            session: state
-                                .session_id
-                                .map(|id| format!("{id:032x}"))
-                                .or_else(|| pane.session.attachment.clone()),
-                        },
-                    )
-                })
+                .map(|(&id, pane)| (id, pane.spec()))
                 .collect(),
-            active: self.active,
-            next_id: self.next_id,
-            font_size: self.font_size,
         }
     }
 
@@ -305,12 +305,12 @@ impl App {
     fn restore_workspace(&mut self, ctx: &egui::Context, snapshot: Snapshot) {
         self.panes.clear();
         self.pending_attach.clear();
-        self.tabs = snapshot.tabs;
-        self.active = snapshot.active;
-        self.next_id = snapshot.next_id;
         // Startup restores layout and shells, but terminal config owns the
         // initial font size. A saved absolute zoom must not hide config edits.
-        self.font_size = crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
+        self.window = WindowLayout {
+            font_size: crate::terminal_config::font_size(&crate::terminal_config::get(ctx)),
+            ..snapshot.window
+        };
         for (id, spec) in snapshot.panes {
             self.panes.insert(
                 id,
@@ -320,12 +320,13 @@ impl App {
                     self.control.window,
                     self.workspace(),
                     id,
-                    spec,
+                    spec.target,
+                    spec.session.map(|id| id.to_string()),
                     None,
                 ),
             );
         }
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             self.add_tab(ctx, None);
         }
     }
@@ -375,7 +376,7 @@ impl App {
                         self.cancel_workspace(error.to_string());
                         continue;
                     }
-                    if snapshot.tabs.is_empty() {
+                    if snapshot.window.tabs.is_empty() {
                         match Target::default_local() {
                             Ok(target) => workspace_switch::add_first_tab(
                                 &mut snapshot,
@@ -401,8 +402,7 @@ impl App {
                             current.values().find(|pane| {
                                 let state = pane.session.state.lock().unwrap();
                                 pane.session.target == spec.target
-                                    && state.session_id.map(|i| format!("{i:032x}")).as_ref()
-                                        == Some(session)
+                                    && state.session_id.as_ref() == Some(session)
                             })
                         });
                         if let Some(existing) = existing {
@@ -414,7 +414,8 @@ impl App {
                                 window,
                                 Some((id, instance)),
                                 pane_id,
-                                spec.clone(),
+                                spec.target.clone(),
+                                spec.session.map(|id| id.to_string()),
                                 None,
                             )
                         }
@@ -448,16 +449,14 @@ impl App {
                                         self.control.window,
                                         Some((id, self.daemon_instance.as_deref())),
                                         pane_id,
-                                        spec,
+                                        spec.target,
+                                        spec.session.map(|id| id.to_string()),
                                         None,
                                     );
                                     self.panes.insert(pane_id, pane);
                                 }
                             }
-                            self.tabs = snapshot.tabs;
-                            self.active = snapshot.active;
-                            self.next_id = snapshot.next_id;
-                            self.font_size = snapshot.font_size;
+                            self.window = snapshot.window;
                             self.last_snapshot = None;
                             self.workspace_error = None;
                             if let Some(reply) = reply {
@@ -577,11 +576,11 @@ impl App {
         let poll = pending.poll(
             |pane: &Pane| {
                 let state = pane.session.state.lock().unwrap();
-                if let Some(error) = &state.error {
-                    PaneStatus::Failed(error.clone())
-                } else if state.detached || state.exited {
+                if let Some(error) = state.error() {
+                    PaneStatus::Failed(error.to_owned())
+                } else if state.lifecycle.is_ended() {
                     PaneStatus::Ended
-                } else if state.connected {
+                } else if state.lifecycle.is_live() {
                     PaneStatus::Connected(state.session_id)
                 } else {
                     PaneStatus::Connecting
@@ -720,8 +719,7 @@ impl App {
         cwd: Option<String>,
         target: Target,
     ) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.window.allocate_pane();
         self.panes.insert(
             id,
             Pane::connect(
@@ -730,10 +728,8 @@ impl App {
                 self.control.window,
                 self.workspace(),
                 id,
-                PaneSpec {
-                    target,
-                    session: attach,
-                },
+                target,
+                attach,
                 cwd,
             ),
         );
@@ -747,19 +743,15 @@ impl App {
             None,
             Target::default_local().expect("resolve local daemon socket"),
         );
-        self.tabs.push(Tab {
-            name: format!("Terminal {id}"),
-            layout: Layout::Pane(id),
-            focused: id,
-            focus_history: vec![id],
-        });
-        self.active = self.tabs.len() - 1;
+        self.window.open_tab(id);
     }
 
     fn close_pane(&mut self, ctx: &egui::Context, id: u64) {
-        crate::workspace::remove_pane(&mut self.tabs, &mut self.active, id);
+        if !self.window.close_pane(id) {
+            return;
+        }
         self.panes.remove(&id);
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -771,7 +763,7 @@ impl App {
                     self.begin_workspace(workspace, Some(message.reply))
                 }
                 Request::List => {
-                    let active = self.tabs.get(self.active).map(|tab| tab.focused);
+                    let active = self.window.focused();
                     let mut output = format!(
                         "WINDOW {}\nPANE\tACTIVE\tDAEMON\tSESSION\n",
                         self.control.window
@@ -780,7 +772,7 @@ impl App {
                         let state = pane.session.state.lock().unwrap();
                         let session = state
                             .session_id
-                            .map(|id| format!("{id:032x}"))
+                            .map(|id| id.to_string())
                             .unwrap_or_else(|| "connecting".into());
                         output.push_str(&format!(
                             "{id}\t{}\t{}\t{session}\n",
@@ -796,7 +788,7 @@ impl App {
                     ssh,
                     session,
                 } => {
-                    let id = pane.or_else(|| self.tabs.get(self.active).map(|tab| tab.focused));
+                    let id = pane.or_else(|| self.window.focused());
                     let Some((id, pane)) =
                         id.and_then(|id| self.panes.get(&id).map(|pane| (id, pane)))
                     else {
@@ -846,37 +838,22 @@ impl App {
                 }
             }
         }
-        let ready: Vec<_> = self
-            .pending_attach
-            .iter()
-            .filter_map(|(&id, pending)| {
-                let state = pending.session.state.lock().unwrap();
-                (state.connected
-                    || state.error.is_some()
-                    || state.exited
-                    || state.detached
-                    || !self.panes.contains_key(&id)
-                    || pending.reply.is_closed())
-                .then_some(id)
-            })
-            .collect();
-        for id in ready {
-            let pending = self.pending_attach.remove(&id).unwrap();
-            let result = {
-                let state = pending.session.state.lock().unwrap();
-                if pending.reply.is_closed() {
-                    Err("request cancelled".into())
-                } else if !self.panes.contains_key(&id) {
-                    Err("pane closed during attach".into())
-                } else if state.connected {
-                    Ok(format!("Attached pane {id}"))
-                } else {
-                    Err(state
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| "session ended during attach".into()))
-                }
+        let ids: Vec<_> = self.pending_attach.keys().copied().collect();
+        for id in ids {
+            let pending = &self.pending_attach[&id];
+            let session = pending.session.clone();
+            // Hold the session state through the swap so the session task
+            // cannot end it between resolving the attach and replacing the pane.
+            let state = session.state.lock().unwrap();
+            let Some(result) = attach_result(
+                id,
+                &state,
+                self.panes.contains_key(&id),
+                pending.reply.is_closed(),
+            ) else {
+                continue;
             };
+            let pending = self.pending_attach.remove(&id).unwrap();
             if result.is_ok() {
                 let pane = self.panes.get_mut(&id).unwrap();
                 pane.session = pending.session;
@@ -889,33 +866,30 @@ impl App {
                 pane.mouse_capture = None;
                 pane.link_capture = Default::default();
             }
+            drop(state);
             let _ = pending.reply.send(result);
         }
     }
 
     fn searching(&self) -> bool {
-        self.tabs
-            .get(self.active)
-            .and_then(|tab| self.panes.get(&tab.focused))
+        self.window
+            .focused()
+            .and_then(|id| self.panes.get(&id))
             .is_some_and(|pane| pane.search_open)
     }
 
     fn open_search(&mut self) {
-        if let Some(pane) = self
-            .tabs
-            .get(self.active)
-            .and_then(|tab| self.panes.get_mut(&tab.focused))
-        {
+        if let Some(pane) = self.window.focused().and_then(|id| self.panes.get_mut(&id)) {
             pane.search_open = true;
             pane.search_focus = true;
         }
     }
 
     fn search_bar(&mut self, ui: &mut egui::Ui) {
-        let Some(tab) = self.tabs.get(self.active) else {
+        let Some(focused) = self.window.focused() else {
             return;
         };
-        let pane = self.panes.get_mut(&tab.focused).unwrap();
+        let pane = self.panes.get_mut(&focused).unwrap();
         if !pane.search_open {
             return;
         }
@@ -930,7 +904,7 @@ impl App {
             let entry = ui.add_sized(
                 [entry_width, crate::theme::ui_extent(ui.style(), 30.0)],
                 egui::TextEdit::singleline(&mut pane.search_query)
-                    .id_salt(("scrollback-query", tab.focused))
+                    .id_salt(("scrollback-query", focused))
                     .hint_text("Search scrollback")
                     .align(egui::Align2::LEFT_CENTER)
                     .desired_width(entry_width)
@@ -1013,9 +987,12 @@ impl App {
                 },
             ),
             TerminalAction::Scroll(step) => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 let state = pane.session.state.lock().unwrap();
-                if state.connected
+                if state.lifecycle.is_live()
                     && let Some(request) = state.scroll_action(step)
                 {
                     pane.selection = None;
@@ -1026,9 +1003,12 @@ impl App {
                 self.open_search()
             }
             TerminalAction::ScrollToPrompt(direction) => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 let state = pane.session.state.lock().unwrap();
-                if state.connected && !state.screen.alt_screen() {
+                if state.lifecycle.is_live() && !state.screen.alt_screen() {
                     pane.selection = None;
                     pane.session.send(InputMsg::JumpPrompt { direction });
                 }
@@ -1103,7 +1083,7 @@ impl App {
             let state = pane.session.state.lock().unwrap();
             // Sent under the lock: a reconnect bumps `reconnects` under it,
             // so the paste cannot reach a connection it was not confirmed for.
-            if pending.is_current(state.connected, state.reconnects) {
+            if pending.is_current(state.lifecycle.is_live(), state.reconnects) {
                 send_to_program(
                     &mut pane.selection,
                     &pane.session,
@@ -1137,13 +1117,13 @@ impl App {
             Action::AttachSession => self.picker.open(&self.runtime, ctx),
             Action::ChangeFontSize => self.font_size_open = true,
             Action::FontScale(scale) => {
-                self.font_size = felis_client_core::config::FontConfig::clamped_font_size(
-                    self.font_size * scale,
+                self.window.font_size = felis_client_core::config::FontConfig::clamped_font_size(
+                    self.window.font_size * scale,
                     0.0,
                 )
             }
             Action::FontReset => {
-                self.font_size =
+                self.window.font_size =
                     crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
             }
             Action::Paste => {
@@ -1152,12 +1132,15 @@ impl App {
                 // input and would make the delivered clipboard event stale.
                 self.picker.visible = false;
                 self.workspaces_open = false;
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 if pane.search_open {
                     pane.close_search();
                 }
                 let state = pane.session.state.lock().unwrap();
-                if !state.connected {
+                if !state.lifecycle.is_live() {
                     pane.session.input_lost();
                 } else if self.paste_requested.is_none() {
                     self.paste_requested = Some((
@@ -1169,7 +1152,10 @@ impl App {
                 }
             }
             Action::Copy => {
-                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 let state = pane.session.state.lock().unwrap();
                 expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
                 if let Some(selection) = pane.selection {
@@ -1177,14 +1163,14 @@ impl App {
                 }
             }
             Action::Focus(direction) => {
-                let tab = &mut self.tabs[self.active];
+                let tab = self.window.active_tab_mut();
                 if let Some(id) = tab.layout.neighbor(tab.focused, direction) {
                     tab.focus(id);
                 }
             }
             Action::NewTab => self.add_tab(ctx, None),
             Action::Split(axis) => {
-                let source = self.tabs[self.active].focused;
+                let source = self.window.active_tab().focused;
                 let cwd = self.panes[&source]
                     .session
                     .state
@@ -1196,7 +1182,7 @@ impl App {
                     .filter(|path| !path.is_empty());
                 let target = self.panes[&source].session.target.clone();
                 let id = self.add_pane(ctx, None, cwd, target);
-                let tab = &mut self.tabs[self.active];
+                let tab = self.window.active_tab_mut();
                 let split = tab.layout.split(source, id, axis);
                 // Validation keeps a tab's focused pane in its layout, so this
                 // is a broken invariant. Release builds drop the pane to keep
@@ -1208,28 +1194,24 @@ impl App {
                     self.panes.remove(&id);
                 }
             }
-            Action::ClosePane => self.close_pane(ctx, self.tabs[self.active].focused),
+            Action::ClosePane => self.close_pane(ctx, self.window.active_tab().focused),
             Action::CloseTab => {
-                let tab = self.tabs.remove(self.active);
+                let tab = self.window.close_active_tab();
                 for id in tab.layout.panes() {
                     self.panes.remove(&id);
                 }
-                if self.tabs.is_empty() {
+                if self.window.tabs.is_empty() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                } else {
-                    self.active = self.active.min(self.tabs.len() - 1);
                 }
             }
             Action::NextPane => {
-                let tab = &mut self.tabs[self.active];
+                let tab = self.window.active_tab_mut();
                 let ids = tab.layout.panes();
                 let pos = ids.iter().position(|id| *id == tab.focused).unwrap_or(0);
                 tab.focus(ids[(pos + 1) % ids.len()]);
             }
-            Action::NextTab => self.active = (self.active + 1) % self.tabs.len(),
-            Action::PreviousTab => {
-                self.active = (self.active + self.tabs.len() - 1) % self.tabs.len()
-            }
+            Action::NextTab => self.window.cycle_tab(true),
+            Action::PreviousTab => self.window.cycle_tab(false),
         }
     }
 }
@@ -1283,13 +1265,13 @@ impl App {
             .iter()
             .filter_map(|(&id, pane)| {
                 let state = pane.session.state.lock().unwrap();
-                (self.pending_workspace.is_none() && (state.detached || state.exited)).then_some(id)
+                (self.pending_workspace.is_none() && state.lifecycle.is_ended()).then_some(id)
             })
             .collect();
         for id in closed {
             self.close_pane(ctx, id);
         }
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             egui::CentralPanel::default().show(root_ui, |_| {});
             if let Some(id) = self.picker.show(&self.runtime, ctx) {
                 self.add_tab(ctx, Some(id));
@@ -1301,11 +1283,9 @@ impl App {
         for pane in self.panes.values_mut() {
             pane.links.tick(&self.runtime, ctx);
             let state = pane.session.state.lock().unwrap();
-            if pane
-                .pending_paste
-                .as_ref()
-                .is_some_and(|pending| !pending.is_current(state.connected, state.reconnects))
-            {
+            if pane.pending_paste.as_ref().is_some_and(|pending| {
+                !pending.is_current(state.lifecycle.is_live(), state.reconnects)
+            }) {
                 pane.pending_paste = None;
             }
         }
@@ -1323,7 +1303,7 @@ impl App {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
             for action in actions {
                 self.action(ctx, action);
-                if self.tabs.is_empty() {
+                if self.window.tabs.is_empty() {
                     return;
                 }
             }
@@ -1390,9 +1370,9 @@ impl App {
                                 ] {
                                     state.corner_radius = egui::CornerRadius::same(5);
                                 }
-                                let mut rects = Vec::with_capacity(self.tabs.len());
+                                let mut rects = Vec::with_capacity(self.window.tabs.len());
                                 let mut dragged = None;
-                                for (i, tab) in self.tabs.iter().enumerate() {
+                                for (i, tab) in self.window.tabs.iter().enumerate() {
                                     let title = self.panes[&tab.focused]
                                         .session
                                         .state
@@ -1402,10 +1382,10 @@ impl App {
                                         .title()
                                         .unwrap_or(&tab.name)
                                         .to_owned();
-                                    let selected = self.active == i;
+                                    let selected = self.window.active == i;
                                     let response = crate::theme::tab_button(ui, &title, selected);
                                     if response.clicked() {
-                                        self.active = i;
+                                        self.window.active = i;
                                     }
                                     if response.dragged() || response.drag_stopped() {
                                         dragged = Some((i, response.drag_stopped()));
@@ -1417,8 +1397,7 @@ impl App {
                                 {
                                     let to = tab_drop_slot(&rects, pointer.x);
                                     if released {
-                                        self.active =
-                                            move_tab(&mut self.tabs, self.active, from, to);
+                                        self.window.move_tab(from, to);
                                     } else {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                                         // Dropping beside the dragged tab changes nothing.
@@ -1461,7 +1440,7 @@ impl App {
         if let Some(action) = action {
             self.action(ctx, action);
         }
-        if self.tabs.is_empty() {
+        if self.window.tabs.is_empty() {
             return;
         }
         let modal = paste_pending
@@ -1482,21 +1461,22 @@ impl App {
                     terminal_focus_id(),
                     Sense::focusable_noninteractive(),
                 );
-                let tab = &mut self.tabs[self.active];
+                let font_size = self.window.font_size;
+                let tab = self.window.active_tab_mut();
                 let previous = tab.focused;
                 draw_layout(
                     ui,
                     &mut tab.layout,
                     &mut self.panes,
                     &mut tab.focused,
-                    self.font_size,
+                    font_size,
                     !modal,
                 );
                 if tab.focused != previous {
                     tab.focus(tab.focused);
                 }
             });
-        let focused = self.tabs[self.active].focused;
+        let focused = self.window.active_tab().focused;
         let os_focused = ctx.input(|i| i.focused);
         for (&id, pane) in &mut self.panes {
             let desired = id == focused && os_focused && !modal;
@@ -1560,12 +1540,12 @@ impl App {
         }
         if self.palette {
             let prompt_unavailable = {
-                let state = self.panes[&self.tabs[self.active].focused]
+                let state = self.panes[&self.window.active_tab().focused]
                     .session
                     .state
                     .lock()
                     .unwrap();
-                if !state.connected {
+                if !state.lifecycle.is_live() {
                     Some("Unavailable while disconnected")
                 } else if state.screen.alt_screen() {
                     Some("Unavailable in the alternate screen")
@@ -1584,7 +1564,7 @@ impl App {
             }
         }
         if self.font_size_open {
-            let (chosen, dismissed) = crate::font_size::show(ctx, self.font_size);
+            let (chosen, dismissed) = crate::font_size::show(ctx, self.window.font_size);
             self.font_size_open = !dismissed;
             if let Some(action) = chosen {
                 self.action(ctx, action);
@@ -1789,6 +1769,30 @@ fn consume_search_escape(ctx: &egui::Context) -> bool {
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
 }
 
+/// Resolves a pending pane attach, or `None` while it is still connecting.
+fn attach_result(
+    id: u64,
+    state: &crate::session::State,
+    pane_open: bool,
+    cancelled: bool,
+) -> Option<Reply> {
+    if cancelled {
+        Some(Err("request cancelled".into()))
+    } else if !pane_open {
+        Some(Err("pane closed during attach".into()))
+    } else if state.lifecycle.is_terminal() {
+        Some(Err(state
+            .lifecycle
+            .failure()
+            .unwrap_or("session ended during attach")
+            .into()))
+    } else if state.lifecycle.is_live() {
+        Some(Ok(format!("Attached pane {id}")))
+    } else {
+        None
+    }
+}
+
 /// Returns the insertion gap for a pointer at `x`: the number of tabs whose
 /// centers lie left of it.
 fn tab_drop_slot(rects: &[egui::Rect], x: f32) -> usize {
@@ -1989,7 +1993,7 @@ fn draw_pane(
     let mut state = pane.session.state.lock().unwrap();
     // Held from here through painting and selection gestures below.
     expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
-    let connected = state.connected;
+    let connected = state.lifecycle.is_live();
     let painter = painter.with_clip_rect(text_rect);
     {
         let mut search = pane.session.search.search.lock().unwrap();
@@ -2015,7 +2019,7 @@ fn draw_pane(
         pane.selection,
     ) {
         Ok(rendered) => pane.session.frame_submitted(&mut state, rendered),
-        Err(error) => state.error = Some(format!("Terminal renderer: {error:#}")),
+        Err(error) => state.renderer_error = Some(format!("Terminal renderer: {error:#}")),
     }
     let text_rect = renderer.content_rect(text_rect);
     let shadow = &state.screen;
@@ -2042,7 +2046,7 @@ fn draw_pane(
             })
         });
     }
-    if let Some(error) = &state.error {
+    if let Some(error) = state.error() {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
@@ -2050,11 +2054,11 @@ fn draw_pane(
             FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
             crate::theme::ERROR_FG,
         );
-    } else if !state.connected {
+    } else if !state.lifecycle.is_live() {
         painter.text(
             text_rect.min,
             egui::Align2::LEFT_TOP,
-            if state.reconnecting {
+            if state.lifecycle == crate::session::Lifecycle::Reconnecting {
                 "Reconnecting to felis…"
             } else {
                 "Connecting to felis…"
@@ -2325,7 +2329,7 @@ fn requested_paste_is_current(
     let state = focused.state.lock().unwrap();
     current_frame == frame + 1
         && Arc::ptr_eq(origin, focused)
-        && state.connected
+        && state.lifecycle.is_live()
         && state.reconnects == generation
 }
 
@@ -2345,7 +2349,7 @@ fn terminal_input(
             }
             TerminalInput::Paste(text) => {
                 let state = session.state.lock().unwrap();
-                if !state.connected {
+                if !state.lifecycle.is_live() {
                     session.input_lost();
                     continue;
                 }
@@ -2392,7 +2396,7 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::PaneRemoval;
+    use crate::workspace::{PaneRemoval, Tab};
     use std::time::Duration;
 
     #[test]
@@ -2467,8 +2471,8 @@ mod tests {
         ));
         {
             let mut state = session.state.lock().unwrap();
-            state.connected = true;
-            state.session_id = Some(1);
+            state.lifecycle = crate::session::Lifecycle::Connected;
+            state.session_id = Some(crate::session::SessionId(1));
         }
         let mut pane = Pane::from_session(session);
         pane.search_query = "needle".into();
@@ -2620,7 +2624,7 @@ mod tests {
                 None,
                 vec![],
             );
-            session.state.lock().unwrap().connected = true;
+            session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
             let mut selection = Some(Selection::new(GridPos { row: 0, col: 1 }));
             let mut pending = None;
             let _ = crate::test_support::run(
@@ -2672,6 +2676,93 @@ mod tests {
     }
 
     #[test]
+    fn panes_attaching_by_an_unresolved_prefix_keep_workspace_snapshots_valid() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: the attach stays unresolved.
+        let pane = |attach: &str| {
+            Pane::from_session(Arc::new(Session::start(
+                &runtime,
+                egui::Context::default(),
+                Target::Local("/unused-attach-test.sock".into()),
+                Some(attach.into()),
+                None,
+                vec![],
+            )))
+        };
+        let snapshot = |pane: &Pane| {
+            let mut window = WindowLayout::default();
+            let id = window.allocate_pane();
+            window.open_tab(id);
+            Snapshot {
+                window,
+                panes: [(1, pane.spec())].into(),
+            }
+        };
+        let prefix = pane("abc");
+        assert_eq!(prefix.spec().session, None);
+        snapshot(&prefix).validate().unwrap();
+        let resolved = crate::session::SessionId(9);
+        prefix.session.state.lock().unwrap().session_id = Some(resolved);
+        assert_eq!(prefix.spec().session, Some(resolved));
+        let full = format!("{:032x}", 7);
+        let exact = pane(&full);
+        assert_eq!(exact.spec().session, Some(crate::session::SessionId(7)));
+        snapshot(&exact).validate().unwrap();
+    }
+
+    #[test]
+    fn pending_attaches_resolve_once_their_session_settles() {
+        use crate::session::Lifecycle;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // Never drive this runtime: the test sets the session state itself.
+        let session = Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-attach-test.sock".into()),
+            Some("abc".into()),
+            None,
+            vec![],
+        );
+        let mut state = session.state.lock().unwrap();
+        let ok = || Some(Ok("Attached pane 1".to_owned()));
+        let err = |message: &str| Some(Err(message.to_owned()));
+        for (lifecycle, expected) in [
+            (Lifecycle::Connecting, None),
+            (Lifecycle::Reconnecting, None),
+            (Lifecycle::Connected, ok()),
+            (Lifecycle::Detached, err("session ended during attach")),
+            (Lifecycle::Exited, err("session ended during attach")),
+            (
+                Lifecycle::Failed("no such session".into()),
+                err("no such session"),
+            ),
+        ] {
+            state.lifecycle = lifecycle;
+            assert_eq!(
+                attach_result(1, &state, true, false),
+                expected,
+                "{:?}",
+                state.lifecycle
+            );
+        }
+        state.lifecycle = Lifecycle::Connected;
+        assert_eq!(
+            attach_result(1, &state, false, false),
+            err("pane closed during attach")
+        );
+        assert_eq!(
+            attach_result(1, &state, false, true),
+            err("request cancelled")
+        );
+    }
+
+    #[test]
     fn unsafe_paste_stops_forwarding_the_rest_of_the_input_frame() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -2688,7 +2779,7 @@ mod tests {
             vec![],
         );
         let session = Arc::new(session);
-        session.state.lock().unwrap().connected = true;
+        session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
         assert!(requested_paste_is_current((4, 0, &session), 5, &session));
         assert!(!requested_paste_is_current((4, 0, &session), 6, &session));
         assert!(!requested_paste_is_current((4, 1, &session), 5, &session));
@@ -2701,11 +2792,11 @@ mod tests {
             vec![],
         );
         let other = Arc::new(other);
-        other.state.lock().unwrap().connected = true;
+        other.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
         assert!(!requested_paste_is_current((4, 0, &session), 5, &other));
-        session.state.lock().unwrap().connected = false;
+        session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Reconnecting;
         assert!(!requested_paste_is_current((4, 0, &session), 5, &session));
-        session.state.lock().unwrap().connected = true;
+        session.state.lock().unwrap().lifecycle = crate::session::Lifecycle::Connected;
         let original = Some(Selection::new(GridPos { row: 0, col: 1 }));
         let mut selection = original;
         let mut pending = None;
@@ -2880,7 +2971,7 @@ mod tests {
             let settled = !app.panes.is_empty()
                 && app.panes.values().all(|pane| {
                     let state = pane.session.state.lock().unwrap();
-                    state.connected || state.error.is_some()
+                    state.lifecycle.is_live() || state.error().is_some()
                 });
             if settled && delay == Duration::MAX {
                 break;
@@ -2943,7 +3034,7 @@ mod tests {
                 && app
                     .panes
                     .values()
-                    .all(|p| p.session.state.lock().unwrap().connected)
+                    .all(|p| p.session.state.lock().unwrap().lifecycle.is_live())
         };
         let mut config = felis_client_core::config::EffectiveConfig::default();
         config.font.size_px = Some(21.0);
@@ -2955,10 +3046,10 @@ mod tests {
         )
         .unwrap();
         pump(&mut app, &connected);
-        assert_eq!(app.font_size, 21.0);
-        app.font_size = 30.0;
+        assert_eq!(app.window.font_size, 21.0);
+        app.window.font_size = 30.0;
         app.action(&ctx, Action::FontReset);
-        assert_eq!(app.font_size, 21.0);
+        assert_eq!(app.window.font_size, 21.0);
         // Pasting from the palette must reach the terminal, whose paste any
         // window that blocks terminal input would otherwise discard.
         app.open_search();
@@ -2971,12 +3062,12 @@ mod tests {
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
         pump(&mut app, &connected);
-        app.active = 0;
-        app.tabs[0].focus(2);
-        if let Layout::Split { ratio, .. } = &mut app.tabs[0].layout {
+        app.window.active = 0;
+        app.window.tabs[0].focus(2);
+        if let Layout::Split { ratio, .. } = &mut app.window.tabs[0].layout {
             *ratio = 0.3;
         }
-        app.font_size = 18.0;
+        app.window.font_size = 18.0;
         let mut before = app.snapshot();
         let workspace_id = app.workspace_id;
         app.save_workspace(&ctx);
@@ -2995,11 +3086,11 @@ mod tests {
         )
         .unwrap();
         pump(&mut replacement, &connected);
-        assert_eq!(replacement.font_size, 30.0);
-        before.font_size = 30.0;
+        assert_eq!(replacement.window.font_size, 30.0);
+        before.window.font_size = 30.0;
         assert_eq!(replacement.workspace_id, workspace_id);
         assert_eq!(replacement.snapshot(), before);
-        assert_eq!(replacement.tabs.len(), 2);
+        assert_eq!(replacement.window.tabs.len(), 2);
         assert_eq!(replacement.panes.len(), 3);
 
         let id = workspace_id.unwrap();
@@ -3058,7 +3149,7 @@ mod tests {
         let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
         assert_eq!(
-            replacement.font_size, 30.0,
+            replacement.window.font_size, 30.0,
             "new workspaces use terminal config"
         );
         let other = replacement.workspace_id.unwrap();
@@ -3216,7 +3307,7 @@ mod tests {
         drop(original_connection);
         {
             let state = replacement.panes[&2].session.state.lock().unwrap();
-            assert!(state.error.is_some() && !state.connected);
+            assert!(state.error().is_some() && !state.lifecycle.is_live());
         }
         assert_eq!(replacement.snapshot().panes[&2].target, missing);
         let output = command(
@@ -3285,7 +3376,7 @@ mod tests {
                 && app
                     .panes
                     .values()
-                    .all(|p| p.session.state.lock().unwrap().connected)
+                    .all(|p| p.session.state.lock().unwrap().lifecycle.is_live())
         };
         let mut app = App::connect(
             tokio::runtime::Runtime::new().unwrap(),
@@ -3300,7 +3391,7 @@ mod tests {
         pump(&mut app, &|app| {
             app.pending_workspace.is_none() && connected(app)
         });
-        assert_eq!(app.tabs.len(), 1, "{:?}", app.workspace_error);
+        assert_eq!(app.window.tabs.len(), 1, "{:?}", app.workspace_error);
         let shell = app.panes.values().next().unwrap().session.clone();
         // Nothing is in flight, so only the idle watch can notice the loss.
         pump(&mut app, &|app| {
@@ -3446,10 +3537,10 @@ mod tests {
             control,
             pending_attach: BTreeMap::new(),
             panes: BTreeMap::new(),
-            tabs: vec![],
-            active: 0,
-            next_id: 1,
-            font_size: 15.0,
+            window: WindowLayout {
+                font_size: 15.0,
+                ..Default::default()
+            },
             picker: SessionPicker::default(),
             shortcuts: Shortcuts::default(),
             palette: false,
@@ -3472,7 +3563,13 @@ mod tests {
             }
         };
         pump(&mut app, &|app| {
-            app.panes[&1].session.state.lock().unwrap().connected
+            app.panes[&1]
+                .session
+                .state
+                .lock()
+                .unwrap()
+                .lifecycle
+                .is_live()
         });
         app.action(&ctx, Action::Search);
         assert!(app.searching());
@@ -3615,7 +3712,7 @@ mod tests {
         assert!(output.status.success(), "{:?}", output);
         assert_eq!(
             app.panes[&1].session.state.lock().unwrap().session_id,
-            Some(remote)
+            Some(crate::session::SessionId(remote))
         );
         assert_eq!(
             app.panes[&1].session.target,
@@ -3628,7 +3725,7 @@ mod tests {
         assert!(!output.status.success());
         assert_eq!(
             app.panes[&1].session.state.lock().unwrap().session_id,
-            Some(remote)
+            Some(crate::session::SessionId(remote))
         );
         if std::env::var("NEKOMATA_TEST_SSH").as_deref() == Ok("1") {
             // A relative path containing spaces, an apostrophe and shell syntax
@@ -3651,7 +3748,7 @@ mod tests {
             );
             assert_eq!(
                 app.panes[&1].session.state.lock().unwrap().session_id,
-                Some(remote)
+                Some(crate::session::SessionId(remote))
             );
             let mut args = attach(
                 Some("missing remote.sock"),
@@ -3663,7 +3760,7 @@ mod tests {
             assert!(!output.status.success());
             assert_eq!(
                 app.panes[&1].session.state.lock().unwrap().session_id,
-                Some(remote)
+                Some(crate::session::SessionId(remote))
             );
             // Omitting both flags must retain the remote socket, too.
             let output = command(&mut app, attach(None, format!("{remote:032x}"), Some("1")));
@@ -3674,9 +3771,17 @@ mod tests {
         assert_eq!(app.panes[&2].session.target, target);
         pump(&mut app, &|app| {
             let state = app.panes[&2].session.state.lock().unwrap();
-            state.connected || state.error.is_some()
+            state.lifecycle.is_live() || state.lifecycle.failure().is_some()
         });
-        assert!(app.panes[&2].session.state.lock().unwrap().connected);
+        assert!(
+            app.panes[&2]
+                .session
+                .state
+                .lock()
+                .unwrap()
+                .lifecycle
+                .is_live()
+        );
         app.runtime.block_on(async {
             let mut ops = felis_client_core::connect(std::path::Path::new(&socket), Offer::ops())
                 .await
@@ -3686,7 +3791,7 @@ mod tests {
                     .await
                     .unwrap()
                     .iter()
-                    .any(|session| session.id == original),
+                    .any(|session| crate::session::SessionId(session.id) == original),
                 "switching panes killed the old shell"
             );
             ops.destroy_session(format!("{original:032x}"))

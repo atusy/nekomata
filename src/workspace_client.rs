@@ -242,7 +242,7 @@ async fn fresh(
     resume: &Resume,
     commit: Request,
 ) -> Result<u64> {
-    if retained.tabs.is_empty() {
+    if retained.window.tabs.is_empty() {
         daemon::exchange(stream, Request::Save(resume.current.clone())).await?;
         return Ok(id);
     }
@@ -708,7 +708,7 @@ mod tests {
         );
         let first = layout();
         let mut second = layout();
-        second.font_size += 1.0;
+        second.window.font_size += 1.0;
         client.send(Command::Save(first.clone())).unwrap();
         assert!(receive(&mut daemon).await.is_some());
         respond(&mut daemon, Ok(Payload::Done)).await;
@@ -716,7 +716,7 @@ mod tests {
         assert!(receive(&mut daemon).await.is_some());
         respond(&mut daemon, Err("invalid".into())).await;
         let mut third = layout();
-        third.font_size += 2.0;
+        third.window.font_size += 2.0;
         client.send(Command::Save(third.clone())).unwrap();
         assert!(receive(&mut daemon).await.is_some());
         drop(daemon);
@@ -778,7 +778,7 @@ mod tests {
     async fn a_resume_whose_answer_is_lost_may_have_saved_its_layout() {
         let before = acknowledged(layout());
         let mut current = layout();
-        current.font_size += 1.0;
+        current.window.font_size += 1.0;
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
             saved: before.clone(),
@@ -991,7 +991,7 @@ mod tests {
     async fn resuming_reclaims_the_windows_own_retained_workspace() {
         let sent = layout();
         let mut current = sent.clone();
-        current.font_size += 1.0;
+        current.window.font_size += 1.0;
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
             saved: acknowledged(sent.clone()),
@@ -1025,7 +1025,7 @@ mod tests {
         });
         receive(&mut daemon).await.unwrap();
         let mut other = layout();
-        other.font_size += 2.0;
+        other.window.font_size += 2.0;
         // Same ID, different layout: a restarted daemon's workspace.
         respond(
             &mut daemon,
@@ -1064,7 +1064,7 @@ mod tests {
     async fn resuming_finds_the_windows_workspace_behind_a_more_recent_one() {
         let sent = layout();
         let mut current = sent.clone();
-        current.font_size += 1.0;
+        current.window.font_size += 1.0;
         let (mut client, mut daemon) = resuming(Resume {
             previous: 3,
             saved: acknowledged(sent.clone()),
@@ -1072,7 +1072,7 @@ mod tests {
         });
         receive(&mut daemon).await.unwrap();
         let mut other = layout();
-        other.font_size += 2.0;
+        other.window.font_size += 2.0;
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
@@ -1130,7 +1130,7 @@ mod tests {
         ));
         // A restarted daemon's workspace 3 holds another window's layout.
         let mut other = layout();
-        other.font_size += 2.0;
+        other.window.font_size += 2.0;
         respond(
             &mut daemon,
             Ok(Payload::Workspace {

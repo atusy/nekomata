@@ -69,7 +69,8 @@ nekomata panes attach [PANE_ID] [--window WINDOW_ID] [--ssh HOST] [--daemon SOCK
 - The target daemon must be running and the session must exist.
 - The pane switches only after connecting and attaching succeed. The previous
   session is detached and keeps running. On failure the pane keeps its
-  session and the CLI exits with an error.
+  session and the CLI exits with an error. An attach whose session felis
+  evicts or ends before the pane switches fails.
 - A second attach to a pane while one is in progress fails, as does any
   attach while the window is switching workspaces.
 - There is no CLI command that only detaches.
