@@ -210,7 +210,7 @@ impl Registry {
     fn unlease(&mut self, id: u64) {
         let record = self.workspaces.get_mut(&id).unwrap();
         record.owner = None;
-        if record.snapshot.tabs.is_empty() {
+        if record.snapshot.window.tabs.is_empty() {
             self.workspaces.remove(&id);
         }
     }
@@ -739,15 +739,15 @@ mod tests {
     fn one_pane(font_size: f32) -> Snapshot {
         Snapshot {
             window: crate::workspace::WindowLayout {
-            tabs: vec![crate::workspace::Tab {
-                name: "shell".into(),
-                layout: crate::layout::Layout::Pane(1),
-                focused: 1,
-                focus_history: vec![1],
-            }],
-            next_id: 2,
-            font_size,
-            ..Default::default()
+                tabs: vec![crate::workspace::Tab {
+                    name: "shell".into(),
+                    layout: crate::layout::Layout::Pane(1),
+                    focused: 1,
+                    focus_history: vec![1],
+                }],
+                next_id: 2,
+                font_size,
+                ..Default::default()
             },
             panes: [(
                 1,
@@ -757,7 +757,6 @@ mod tests {
                 },
             )]
             .into(),
-            ..Default::default()
         }
     }
 
