@@ -1,5 +1,14 @@
 # Troubleshooting
 
+## Diagnose the frontend
+
+Run `nekomata doctor` to check the GPU, clipboard backend and terminal fonts,
+or add `--json` for machine-readable output. The check does not start a
+daemon or access clipboard contents. A Wayland clipboard may be reported as
+unverified because it needs a window. The probe does not replace checking
+rendering, input or clipboard transfer in the GUI. See the
+[diagnostic specification](../spec/cli.md#frontend-diagnostics).
+
 ## nekomata reports an incompatible daemon
 
 After an update, a nekomata daemon from an older version may still be
