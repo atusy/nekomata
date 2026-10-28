@@ -116,6 +116,7 @@ fn test_app(runtime: tokio::runtime::Runtime, ctx: &egui::Context) -> App {
     App {
         workspace: None,
         workspace_id: None,
+        daemon_instance: None,
         workspace_error: None,
         last_snapshot: None,
         pending_workspace: None,
