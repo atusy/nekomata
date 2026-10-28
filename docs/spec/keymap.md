@@ -32,17 +32,7 @@ to the terminal program.
 
 ## Default bindings
 
-Application keymap:
-
-| Sequence | Action |
-| --- | --- |
-| `alt+c` | `tab:create` |
-| `alt+t` / `alt+shift+t` | `tab:switch_next` / `tab:switch_previous` |
-| `alt+w alt+s` | `pane:split_below` |
-| `alt+w alt+v` | `pane:split_right` |
-| `alt+w c` | `pane:close` |
-| `alt+w h` / `j` / `k` / `l` | `pane:focus_left` / `pane:focus_down` / `pane:focus_up` / `pane:focus_right` |
-| `alt+shift+p` | `command_palette:open` |
+The application keymap has no default bindings.
 
 Terminal keymap defaults are felis's, except that nekomata unbinds unmodified
 `End` so that shells and editors receive it; binding it in felis's keymap
@@ -130,11 +120,9 @@ configuration should use the canonical kinds above.
 
 ## Rules
 
-- A user entry replaces the default binding for the same sequence.
 - A sequence that starts with a shorter bound sequence can never complete and
-  is removed: silently for a default, with a warning for a user entry. For
-  example, binding `alt+w` removes every default `alt+w …` sequence, and a
-  user entry `alt+t x` is dropped unless `alt+t` is unbound.
+  is removed with a warning. For example, if `alt+t` is bound, a user entry
+  `alt+t x` is dropped.
 - `unbind` removes the sequence and every sequence that starts with it.
 - One sequence can be spelled several ways: modifier names ignore case and
   order, and an uppercase letter implies Shift (`alt+T` is `alt+shift+t`).

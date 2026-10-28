@@ -3,7 +3,7 @@
 ## The window
 
 The top row holds the command palette button (the cat icon) followed by the
-tabs. The button opens the command palette, as does Alt+Shift+P. The palette
+tabs. The button opens the command palette. The palette
 creates and switches workspaces, adds tabs, splits, focuses and closes panes
 and tabs, attaches sessions, searches and scrolls the scrollback, copies and
 pastes and changes the font size. Type any words
@@ -12,17 +12,11 @@ with the arrow keys and Enter.
 
 ## Keys
 
-Default keys are below. `→` means "then press".
+nekomata has no application key bindings by default. The following terminal
+defaults come from felis.
 
 | Action | Keys |
 | --- | --- |
-| New tab | Alt+C |
-| Next / previous tab | Alt+T / Alt+Shift+T |
-| Split below | Alt+W → Alt+S |
-| Split right | Alt+W → Alt+V |
-| Close pane | Alt+W → C |
-| Focus left / down / up / right pane | Alt+W → H / J / K / L |
-| Command palette | Alt+Shift+P |
 | Search scrollback | Ctrl+Shift+F, or Cmd+F (with or without Shift) on macOS |
 | Copy selection | Ctrl+Shift+C, or Cmd+C on macOS |
 | Paste | Ctrl+Shift+V, or Cmd+V on macOS |

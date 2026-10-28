@@ -56,14 +56,13 @@ size_px = 15                # default: 14, felis's default terminal size
 
 [keymap]
 "alt+n"    = { kind = "tab:create" }
-"alt+c"    = { kind = "unbind" }
 "ctrl+a s" = { kind = "pane:split_below" }
 "ctrl+a v" = { kind = "pane:split_right" }
 ```
 
 Keys are written the same way as in felis's `[keymap]`. Separate keystrokes
-with spaces for a sequence: `"alt+w c"` is Alt+W, then C. Your entries
-replace the defaults for the same keys. Escape cancels a sequence in
+with spaces for a sequence: `"alt+w c"` is Alt+W, then C. The application
+keymap has no default bindings. Escape cancels a sequence in
 progress; any other key that does not continue it is sent to the terminal
 program.
 

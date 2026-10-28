@@ -746,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_sequences_replace_and_unbind_defaults() {
+    fn configured_sequences_execute() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
             "alt+c" = { kind = "unbind" }
@@ -774,7 +774,6 @@ mod tests {
                 Action::Split(Axis::Vertical),
                 Action::ClosePane,
                 Action::NewTab,
-                Action::PreviousTab,
             ]
         );
     }
@@ -997,16 +996,17 @@ mod tests {
     fn a_sequence_behind_a_bound_chord_is_dropped_with_a_warning() {
         let (config, warnings) = parse(
             r#"[keymap]
+            "alt+c" = { kind = "new_tab" }
             "alt+c x" = { kind = "close_tab" }
         "#,
         )
         .unwrap();
-        assert_eq!(config.keymap, AppKeymap::default());
+        assert_eq!(config.keymap.hints().get(&Action::NewTab), "Alt+C");
         assert_eq!(warnings.len(), 1, "{warnings:#?}");
     }
 
     #[test]
-    fn binding_a_default_prefix_on_its_own_replaces_its_sequences_silently() {
+    fn binding_a_chord_on_its_own_executes() {
         use eframe::egui::{Key, Modifiers};
         let text = "[keymap]\n\"alt+w\" = { kind = \"close_tab\" }";
         assert_eq!(
