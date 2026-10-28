@@ -1154,7 +1154,10 @@ impl App {
             }
             Action::Paste => {
                 // The palette closes before acting; close search before requesting paste.
-                let pane = self.panes.get_mut(&self.window.active_tab().focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 if pane.search_open {
                     pane.close_search();
                 }
