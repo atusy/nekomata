@@ -1338,7 +1338,7 @@ impl App {
                                 let mut rects = Vec::with_capacity(self.tabs.len());
                                 let mut dragged = None;
                                 for (i, tab) in self.tabs.iter().enumerate() {
-                                    let title = self.panes[&tab.focused]
+                                    let mut title = self.panes[&tab.focused]
                                         .session
                                         .state
                                         .lock()
@@ -1347,6 +1347,10 @@ impl App {
                                         .title()
                                         .unwrap_or(&tab.name)
                                         .to_owned();
+                                    let attention = layout_has_attention(&tab.layout, &self.panes);
+                                    if attention {
+                                        title.insert_str(0, "● ");
+                                    }
                                     let selected = self.active == i;
                                     let response = crate::theme::tab_button(ui, &title, selected);
                                     if response.clicked() {
@@ -1445,6 +1449,13 @@ impl App {
         let os_focused = ctx.input(|i| i.focused);
         for (&id, pane) in &mut self.panes {
             let desired = id == focused && os_focused && !modal;
+            if desired {
+                let mut state = pane.session.state.lock().unwrap();
+                if state.attention {
+                    state.attention = false;
+                    ctx.request_repaint();
+                }
+            }
             if pane.reported_focus != Some(desired) {
                 pane.session
                     .send(InputMsg::FocusChange { focused: desired });
@@ -1709,6 +1720,17 @@ fn tab_drop_indicator_x(
     x.clamp(visible.min + 1.0, visible.max - 1.0)
 }
 
+fn layout_has_attention(layout: &Layout, panes: &BTreeMap<u64, Pane>) -> bool {
+    match layout {
+        Layout::Pane(id) => panes
+            .get(id)
+            .is_some_and(|pane| pane.session.state.lock().unwrap().attention),
+        Layout::Split { first, second, .. } => {
+            layout_has_attention(first, panes) || layout_has_attention(second, panes)
+        }
+    }
+}
+
 fn draw_layout(
     ui: &mut egui::Ui,
     layout: &mut Layout,
@@ -1914,6 +1936,9 @@ fn draw_pane(
         pane.session.frame_submitted(&mut state);
     }
     let text_rect = renderer.content_rect(text_rect);
+    if state.attention {
+        painter.rect_stroke(rect, 0, Stroke::new(1.5, ACCENT), egui::StrokeKind::Inside);
+    }
     let shadow = &state.screen;
     let screen = shadow.screen();
     let cursor = screen.cursor();

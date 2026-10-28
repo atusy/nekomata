@@ -3,6 +3,10 @@
 Each pane shows one felis session, a single shell running in a felis daemon.
 Closing the pane leaves the session running, so you can attach to it later.
 
+A bell or other attention event marks the pane border and its tab with `●`.
+Focus the pane in the active window to clear it. Past events are not replayed
+when reconnecting. See the [pane specification](../spec/panes.md#attention).
+
 ## Reattaching a session
 
 `Session: Attach…` in the command palette lists the sessions of the local

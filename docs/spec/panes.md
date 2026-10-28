@@ -3,6 +3,13 @@
 Each pane presents one felis session from one felis daemon: the local daemon
 at startup, another local daemon by socket path, or a daemon reached over SSH.
 
+## Attention
+
+Live felis attention events mark the pane border and add `●` to its tab.
+The mark clears when the pane is focused in the active window with no modal
+overlay. Rehydration clears attention and does not replay historical events.
+These are in-app indicators, not desktop notifications.
+
 ## Pane IDs
 
 A pane ID identifies a pane within its workspace and survives GUI restarts. It
