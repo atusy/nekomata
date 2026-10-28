@@ -630,6 +630,7 @@ mod tests {
             detached: false,
             exited: false,
             clipboard: None,
+            selection_epoch: 0,
         };
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(40.0, 48.0));
         let mut paint = |state: &mut crate::session::State| {
