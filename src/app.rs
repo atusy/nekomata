@@ -676,7 +676,10 @@ impl App {
         let Some(client) = &self.workspace else {
             return;
         };
-        if client.send(WorkspaceCommand::Save(snapshot.clone())).is_ok() {
+        if client
+            .send(WorkspaceCommand::Save(snapshot.clone()))
+            .is_ok()
+        {
             self.last_snapshot = Some(snapshot);
         } else if !client.is_closed() {
             // The command queue is full. A queued save completes without
@@ -3101,7 +3104,7 @@ mod tests {
                 app.poll_workspace();
                 app.resume_workspace(&ctx);
                 app.control_requests(&ctx);
-                app.save_workspace();
+                app.save_workspace(&ctx);
                 assert!(
                     Instant::now() < deadline,
                     "daemon recovery test timed out: {:?}",
