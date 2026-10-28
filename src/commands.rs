@@ -36,6 +36,7 @@ impl Category {
 #[derive(Clone)]
 pub(crate) struct Command {
     pub kind: &'static str,
+    pub argument: Option<(&'static str, &'static str)>,
     pub visible: bool,
     category: Category,
     phrase: &'static str,
@@ -54,6 +55,7 @@ impl Command {
     ) -> Self {
         Self {
             kind,
+            argument: None,
             visible: true,
             category,
             phrase,
@@ -61,6 +63,11 @@ impl Command {
             detail: None,
             keywords: &[],
         }
+    }
+
+    const fn argument(mut self, name: &'static str, value: &'static str) -> Self {
+        self.argument = Some((name, value));
+        self
     }
 
     const fn hidden(mut self) -> Self {
@@ -108,55 +115,53 @@ pub(crate) fn commands() -> &'static [Command] {
         )
         .keywords(&["open", "list"]),
         Command::new("tab:create", Tab, "Create", Action::NewTab).keywords(&["new"]),
-        Command::new("tab:switch_next", Tab, "Switch to next", Action::NextTab),
-        Command::new(
-            "tab:switch_previous",
-            Tab,
-            "Switch to previous",
-            Action::PreviousTab,
-        ),
+        Command::new("tab:switch", Tab, "Switch to next", Action::NextTab)
+            .argument("target", "next"),
+        Command::new("tab:switch", Tab, "Switch to previous", Action::PreviousTab)
+            .argument("target", "previous"),
         Command::new("tab:close", Tab, "Close", Action::CloseTab)
             .detail("Detaches its sessions; the shells keep running")
             .keywords(&["detach"]),
         Command::new(
-            "pane:split_right",
+            "pane:split",
             Pane,
             "Split right",
             Action::Split(Axis::Horizontal),
         )
+        .argument("direction", "right")
         .keywords(&["side by side"]),
         Command::new(
-            "pane:split_below",
+            "pane:split",
             Pane,
             "Split below",
             Action::Split(Axis::Vertical),
         )
+        .argument("direction", "below")
         .keywords(&["down"]),
-        Command::new("pane:focus_next", Pane, "Focus next", Action::NextPane),
+        Command::new("pane:focus", Pane, "Focus next", Action::NextPane).argument("target", "next"),
         Command::new(
-            "pane:focus_left",
+            "pane:focus",
             Pane,
             "Focus left",
             Action::Focus(Direction::Left),
-        ),
+        )
+        .argument("target", "left"),
         Command::new(
-            "pane:focus_down",
+            "pane:focus",
             Pane,
             "Focus down",
             Action::Focus(Direction::Down),
-        ),
+        )
+        .argument("target", "down"),
+        Command::new("pane:focus", Pane, "Focus up", Action::Focus(Direction::Up))
+            .argument("target", "up"),
         Command::new(
-            "pane:focus_up",
-            Pane,
-            "Focus up",
-            Action::Focus(Direction::Up),
-        ),
-        Command::new(
-            "pane:focus_right",
+            "pane:focus",
             Pane,
             "Focus right",
             Action::Focus(Direction::Right),
-        ),
+        )
+        .argument("target", "right"),
         Command::new("pane:close", Pane, "Close", Action::ClosePane)
             .detail("Detaches its session; the shell keeps running")
             .keywords(&["detach"]),

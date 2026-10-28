@@ -56,8 +56,8 @@ size_px = 15                # default: 14, felis's default terminal size
 
 [keymap]
 "alt+n"    = { kind = "tab:create" }
-"ctrl+a s" = { kind = "pane:split_below" }
-"ctrl+a v" = { kind = "pane:split_right" }
+"ctrl+a s" = { kind = "pane:split", direction = "below" }
+"ctrl+a v" = { kind = "pane:split", direction = "right" }
 ```
 
 Keys are written the same way as in felis's `[keymap]`. Separate keystrokes
