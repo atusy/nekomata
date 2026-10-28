@@ -52,26 +52,26 @@ A single keystroke is written as in felis (`alt+shift+t`, `f5`,
 `ctrl+shift++`). Keystrokes separated by spaces form a sequence: `"alt+w c"`
 means Alt+W followed by C.
 
-Every public command has a stable, case-sensitive `category:operation` kind.
-The palette and application bindings use the same command definitions. All
-canonical kinds below take no arguments; extra fields cause that entry to be
-dropped with a warning. Labels may change without changing the kind.
+Every public command has a stable, case-sensitive `category:operation` kind
+and, where specified, an argument. The palette and application bindings use
+the same command definitions. Missing, invalid or extra fields cause an entry
+to be dropped with a warning. Labels may change without changing the identity.
 
-| `kind` | Command |
+| `kind` and argument | Command |
 | --- | --- |
 | `workspace:create` | Workspace: Create |
 | `workspace:switch` | Workspace: Switch… |
 | `tab:create` | Tab: Create |
-| `tab:switch_next` | Tab: Switch to next |
-| `tab:switch_previous` | Tab: Switch to previous |
+| `tab:switch`, `target = "next"` | Tab: Switch to next |
+| `tab:switch`, `target = "previous"` | Tab: Switch to previous |
 | `tab:close` | Tab: Close |
-| `pane:split_right` | Pane: Split right |
-| `pane:split_below` | Pane: Split below |
-| `pane:focus_next` | Pane: Focus next |
-| `pane:focus_left` | Pane: Focus left |
-| `pane:focus_down` | Pane: Focus down |
-| `pane:focus_up` | Pane: Focus up |
-| `pane:focus_right` | Pane: Focus right |
+| `pane:split`, `direction = "right"` | Pane: Split right |
+| `pane:split`, `direction = "below"` | Pane: Split below |
+| `pane:focus`, `target = "next"` | Pane: Focus next |
+| `pane:focus`, `target = "left"` | Pane: Focus left |
+| `pane:focus`, `target = "down"` | Pane: Focus down |
+| `pane:focus`, `target = "up"` | Pane: Focus up |
+| `pane:focus`, `target = "right"` | Pane: Focus right |
 | `pane:close` | Pane: Close |
 | `session:attach` | Session: Attach… |
 | `scrollback:find` | Scrollback: Find… |

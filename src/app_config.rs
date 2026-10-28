@@ -257,13 +257,40 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
         .get("kind")
         .and_then(toml::Value::as_str)
         .ok_or("a binding needs a string `kind`")?;
-    if let Some(command) = crate::commands::commands()
+    let commands: Vec<_> = crate::commands::commands()
         .iter()
-        .find(|command| command.kind == kind)
-    {
-        if let Some(unknown) = binding.keys().find(|name| *name != "kind") {
+        .filter(|command| command.kind == kind)
+        .collect();
+    if let Some(first) = commands.first() {
+        let argument = first.argument.map(|(name, _)| name);
+        if let Some(unknown) = binding
+            .keys()
+            .find(|name| *name != "kind" && Some(name.as_str()) != argument)
+        {
             return Err(format!("`{kind}` has no field `{unknown}`"));
         }
+        let command = if let Some(name) = argument {
+            let value = binding
+                .get(name)
+                .ok_or_else(|| format!("`{kind}` needs `{name}`"))?
+                .as_str()
+                .ok_or_else(|| format!("`{name}` must be a string"))?;
+            commands
+                .iter()
+                .find(|command| command.argument == Some((name, value)))
+                .ok_or_else(|| {
+                    let values = commands
+                        .iter()
+                        .filter_map(|command| {
+                            command.argument.map(|(_, value)| format!("`{value}`"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("invalid `{name}` for `{kind}`: `{value}`; use {values}")
+                })?
+        } else {
+            first
+        };
         return Ok(Some(command.action.clone()));
     }
     if kind != "unbind" {
@@ -538,13 +565,42 @@ mod tests {
     }
 
     #[test]
+    fn pane_focus_target_selects_the_operation() {
+        use eframe::egui::{Key, Modifiers};
+        assert_eq!(
+            press(
+                "[keymap]\n\"f1\" = { kind = \"pane:focus\", target = \"left\" }",
+                &[(Key::F1, Modifiers::NONE)]
+            ),
+            [Action::Focus(Direction::Left)]
+        );
+    }
+
+    #[test]
+    fn parameterized_commands_reject_missing_invalid_and_unknown_arguments() {
+        for binding in [
+            r#"{ kind = "pane:focus" }"#,
+            r#"{ kind = "pane:focus", target = "previous" }"#,
+            r#"{ kind = "pane:focus", target = 1 }"#,
+            r#"{ kind = "pane:split", direction = "up" }"#,
+            r#"{ kind = "tab:switch", target = "left" }"#,
+            r#"{ kind = "pane:focus", target = "left", extra = true }"#,
+            r#"{ kind = "pane:focus_left" }"#,
+        ] {
+            let (config, warnings) = parse(&format!("[keymap]\n\"f1\" = {binding}")).unwrap();
+            assert_eq!(config.keymap, AppKeymap::default(), "{binding}");
+            assert_eq!(warnings.len(), 1, "{binding}");
+        }
+    }
+
+    #[test]
     fn every_public_command_is_bindable_without_a_separate_kind_list() {
         use eframe::egui::{Key, Modifiers};
         let mut kinds = std::collections::BTreeSet::new();
         for command in crate::commands::commands() {
             assert!(
-                kinds.insert(command.kind),
-                "duplicate kind {}",
+                kinds.insert((command.kind, command.argument)),
+                "duplicate command identity {}",
                 command.kind
             );
             let text = format!(
@@ -554,8 +610,12 @@ mod tests {
 "alt+shift+t" = {{ kind = "unbind" }}
 "alt+shift+p" = {{ kind = "unbind" }}
 "alt+w" = {{ kind = "unbind" }}
-"alt+q" = {{ kind = {:?} }}"#,
-                command.kind
+"alt+q" = {{ kind = {:?}{} }}"#,
+                command.kind,
+                command
+                    .argument
+                    .map(|(name, value)| format!(", {name} = {value:?}"))
+                    .unwrap_or_default()
             );
             assert_eq!(
                 press(&text, &[(Key::Q, Modifiers::ALT)]),
@@ -577,8 +637,12 @@ mod tests {
     fn canonical_commands_reject_arguments_instead_of_ignoring_them() {
         for command in crate::commands::commands() {
             let text = format!(
-                "[keymap]\n\"alt+q\" = {{ kind = {:?}, unexpected = true }}",
-                command.kind
+                "[keymap]\n\"alt+q\" = {{ kind = {:?}{}, unexpected = true }}",
+                command.kind,
+                command
+                    .argument
+                    .map(|(name, value)| format!(", {name} = {value:?}"))
+                    .unwrap_or_default()
             );
             let (config, warnings) = parse(&text).unwrap();
             assert_eq!(config.keymap, AppKeymap::default());
@@ -603,13 +667,13 @@ mod tests {
         let text = r#"[keymap]
             "f1" = { kind = "tab:create" }
             "f2" = { kind = "tab:close" }
-            "f3" = { kind = "tab:switch_next" }
-            "f4" = { kind = "tab:switch_previous" }
-            "f5" = { kind = "pane:split_below" }
-            "f6" = { kind = "pane:split_right" }
+            "f3" = { kind = "tab:switch", target = "next" }
+            "f4" = { kind = "tab:switch", target = "previous" }
+            "f5" = { kind = "pane:split", direction = "below" }
+            "f6" = { kind = "pane:split", direction = "right" }
             "f7" = { kind = "pane:close" }
-            "f8" = { kind = "pane:focus_left" }
-            "f9" = { kind = "pane:focus_next" }
+            "f8" = { kind = "pane:focus", target = "left" }
+            "f9" = { kind = "pane:focus", target = "next" }
             "f10" = { kind = "command_palette:open" }
             "f11" = { kind = "workspace:create" }
             "f12" = { kind = "workspace:switch" }
@@ -652,11 +716,11 @@ mod tests {
     fn focus_pane_moves_in_every_direction_or_to_the_next_pane() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
-            "f1" = { kind = "pane:focus_left" }
-            "f2" = { kind = "pane:focus_down" }
-            "f3" = { kind = "pane:focus_up" }
-            "f4" = { kind = "pane:focus_right" }
-            "f5" = { kind = "pane:focus_next" }
+            "f1" = { kind = "pane:focus", target = "left" }
+            "f2" = { kind = "pane:focus", target = "down" }
+            "f3" = { kind = "pane:focus", target = "up" }
+            "f4" = { kind = "pane:focus", target = "right" }
+            "f5" = { kind = "pane:focus", target = "next" }
         "#;
         let keys = [Key::F1, Key::F2, Key::F3, Key::F4, Key::F5].map(|key| (key, Modifiers::NONE));
         assert_eq!(
@@ -677,7 +741,7 @@ mod tests {
         let text = r#"[keymap]
             "alt+c" = { kind = "unbind" }
             "alt+w" = { kind = "unbind" }
-            "ctrl+a s" = { kind = "pane:split_below" }
+            "ctrl+a s" = { kind = "pane:split", direction = "below" }
             "ctrl+a ctrl+a" = { kind = "pane:close" }
             "alt+t" = { kind = "tab:create" }
         "#;
@@ -735,7 +799,7 @@ mod tests {
             "ctrl+ctrl+a" = { kind = "tab:create" }
             "alt+q" = "new_tab"
             "alt+f" = { kind = "copy", what = "system" }
-            "alt+g" = { kind = "pane:focus_left", to = "next" }
+            "alt+g" = { kind = "pane:focus", target = "left", to = "next" }
             "alt+h" = { kind = "switch_tab" }
             "   " = { kind = "tab:create" }
         "#,
@@ -953,7 +1017,7 @@ mod tests {
     fn an_unbind_that_removes_a_configured_binding_warns() {
         let (config, warnings) = parse(
             r#"[keymap]
-            "Alt+w v" = { kind = "pane:split_right" }
+            "Alt+w v" = { kind = "pane:split", direction = "right" }
             "alt+w" = { kind = "unbind" }
         "#,
         )
