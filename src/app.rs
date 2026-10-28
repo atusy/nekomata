@@ -402,8 +402,7 @@ impl App {
                             current.values().find(|pane| {
                                 let state = pane.session.state.lock().unwrap();
                                 pane.session.target == spec.target
-                                    && state.session_id.as_ref()
-                                        == Some(session)
+                                    && state.session_id.as_ref() == Some(session)
                             })
                         });
                         if let Some(existing) = existing {
@@ -415,7 +414,8 @@ impl App {
                                 window,
                                 Some((id, instance)),
                                 pane_id,
-                                spec.clone(),
+                                spec.target.clone(),
+                                spec.session.map(|id| id.to_string()),
                                 None,
                             )
                         }
@@ -449,7 +449,8 @@ impl App {
                                         self.control.window,
                                         Some((id, self.daemon_instance.as_deref())),
                                         pane_id,
-                                        spec,
+                                        spec.target,
+                                        spec.session.map(|id| id.to_string()),
                                         None,
                                     );
                                     self.panes.insert(pane_id, pane);
@@ -1151,7 +1152,10 @@ impl App {
                 }
             }
             Action::Copy => {
-                let pane = self.panes.get_mut(&self.window.active_tab().focused).unwrap();
+                let pane = self
+                    .panes
+                    .get_mut(&self.window.active_tab().focused)
+                    .unwrap();
                 let state = pane.session.state.lock().unwrap();
                 expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
                 if let Some(selection) = pane.selection {
@@ -2967,7 +2971,7 @@ mod tests {
             let settled = !app.panes.is_empty()
                 && app.panes.values().all(|pane| {
                     let state = pane.session.state.lock().unwrap();
-                    state.connected || state.error.is_some()
+                    state.lifecycle.is_live() || state.error().is_some()
                 });
             if settled && delay == Duration::MAX {
                 break;
@@ -3303,7 +3307,7 @@ mod tests {
         drop(original_connection);
         {
             let state = replacement.panes[&2].session.state.lock().unwrap();
-            assert!(state.error.is_some() && !state.connected);
+            assert!(state.error().is_some() && !state.lifecycle.is_live());
         }
         assert_eq!(replacement.snapshot().panes[&2].target, missing);
         let output = command(
@@ -3372,7 +3376,7 @@ mod tests {
                 && app
                     .panes
                     .values()
-                    .all(|p| p.session.state.lock().unwrap().connected)
+                    .all(|p| p.session.state.lock().unwrap().lifecycle.is_live())
         };
         let mut app = App::connect(
             tokio::runtime::Runtime::new().unwrap(),
@@ -3387,7 +3391,7 @@ mod tests {
         pump(&mut app, &|app| {
             app.pending_workspace.is_none() && connected(app)
         });
-        assert_eq!(app.tabs.len(), 1, "{:?}", app.workspace_error);
+        assert_eq!(app.window.tabs.len(), 1, "{:?}", app.workspace_error);
         let shell = app.panes.values().next().unwrap().session.clone();
         // Nothing is in flight, so only the idle watch can notice the loss.
         pump(&mut app, &|app| {

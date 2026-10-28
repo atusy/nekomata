@@ -7,9 +7,8 @@ use std::collections::BTreeMap;
 
 use crate::{
     control::Reply,
-    layout::Layout,
     session::Target,
-    workspace::{PaneSpec, Snapshot, Tab},
+    workspace::{PaneSpec, Snapshot},
 };
 
 pub type ReplySender = tokio::sync::oneshot::Sender<Reply>;
@@ -142,11 +141,7 @@ impl<P> Switch<P> {
                         for id in ended {
                             panes.remove(&id);
                             snapshot.panes.remove(&id);
-                            crate::workspace::remove_pane(
-                                &mut snapshot.tabs,
-                                &mut snapshot.active,
-                                id,
-                            );
+                            snapshot.window.close_pane(id);
                         }
                         for (id, session) in sessions {
                             if let Some(spec) = snapshot.panes.get_mut(&id) {
@@ -239,15 +234,10 @@ impl<P> Switch<P> {
 
 /// Gives a destination without tabs, such as a new workspace, its first pane.
 pub fn add_first_tab(snapshot: &mut Snapshot, font_size: f32, target: Target) {
-    snapshot.font_size = font_size;
-    let pane = snapshot.next_id;
-    snapshot.next_id += 1;
-    snapshot.tabs.push(Tab {
-        name: format!("Terminal {pane}"),
-        layout: Layout::Pane(pane),
-        focused: pane,
-        focus_history: vec![pane],
-    });
+    snapshot.window.font_size = font_size;
+    let pane = snapshot.window.next_id;
+    snapshot.window.next_id += 1;
+    snapshot.window.open_tab(pane);
     snapshot.panes.insert(
         pane,
         PaneSpec {
@@ -260,6 +250,7 @@ pub fn add_first_tab(snapshot: &mut Snapshot, font_size: f32, target: Target) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{layout::Layout, workspace::Tab};
 
     fn target() -> Target {
         Target::Local("/felis.sock".into())
@@ -269,7 +260,7 @@ mod tests {
         let mut snapshot = Snapshot::default();
         for (index, session) in sessions.iter().enumerate() {
             let id = index as u64 + 1;
-            snapshot.tabs.push(Tab {
+            snapshot.window.tabs.push(Tab {
                 name: format!("Terminal {id}"),
                 layout: Layout::Pane(id),
                 focused: id,
@@ -279,11 +270,12 @@ mod tests {
                 id,
                 PaneSpec {
                     target: target(),
-                    session: session.map(str::to_owned),
+                    session: session
+                        .map(|id| crate::session::SessionId(u128::from_str_radix(id, 16).unwrap())),
                 },
             );
         }
-        snapshot.next_id = sessions.len() as u64 + 1;
+        snapshot.window.next_id = sessions.len() as u64 + 1;
         snapshot
     }
 
@@ -338,13 +330,13 @@ mod tests {
     #[test]
     fn the_switch_commits_once_every_destination_pane_connects() {
         let (mut switch, panes) = connecting(&[Some(A), Some(B)]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(0xa)));
         assert_eq!(switch.poll(status, false), Poll::Wait);
-        *panes[&2].borrow_mut() = PaneStatus::Connected(Some(0xc));
+        *panes[&2].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(0xc)));
         let snapshot = finish(&mut switch);
         assert_eq!(
-            snapshot.panes[&2].session.as_deref(),
-            Some(format!("{:032x}", 0xc).as_str()),
+            snapshot.panes[&2].session,
+            Some(crate::session::SessionId(0xc)),
             "the commit records the sessions the panes reached"
         );
         assert_eq!(switch.poll(status, false), Poll::Wait);
@@ -358,7 +350,7 @@ mod tests {
     #[test]
     fn an_unsent_commit_is_retried() {
         let (mut switch, panes) = connecting(&[Some(A)]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(1));
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(1)));
         assert!(matches!(switch.poll(status, false), Poll::Finish(Some(_))));
         assert!(matches!(switch.poll(status, false), Poll::Finish(Some(_))));
     }
@@ -366,13 +358,13 @@ mod tests {
     #[test]
     fn an_unreachable_destination_pane_stays_as_an_error_pane() {
         let (mut switch, panes) = connecting(&[Some(A), Some(B)]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(0xa)));
         *panes[&2].borrow_mut() = PaneStatus::Failed("no such session".into());
         let snapshot = finish(&mut switch);
-        assert_eq!(snapshot.tabs.len(), 2);
+        assert_eq!(snapshot.window.tabs.len(), 2);
         assert_eq!(
-            snapshot.panes[&2].session.as_deref(),
-            Some(B),
+            snapshot.panes[&2].session.map(|id| id.to_string()),
+            Some(B.to_owned()),
             "the failed pane keeps its session reference"
         );
         let Step::Committed { panes, .. } = switch.finished(Ok(())) else {
@@ -392,15 +384,15 @@ mod tests {
     fn ended_destination_sessions_leave_the_layout() {
         let mut snapshot = destination(&[Some(A), Some(B), Some(A)]);
         // Pane 3 shares the first tab with pane 1.
-        snapshot.tabs.pop();
-        snapshot.tabs[0].layout = Layout::Split {
+        snapshot.window.tabs.pop();
+        snapshot.window.tabs[0].layout = Layout::Split {
             axis: crate::layout::Axis::Horizontal,
             ratio: 0.5,
             first: Box::new(Layout::Pane(1)),
             second: Box::new(Layout::Pane(3)),
         };
-        snapshot.tabs[0].focus(3);
-        snapshot.active = 1;
+        snapshot.window.tabs[0].focus(3);
+        snapshot.window.active = 1;
         let mut panes = BTreeMap::new();
         let mut switch = Switch::new(None);
         switch.prepared(9, snapshot, |id, _| {
@@ -408,13 +400,13 @@ mod tests {
             panes.insert(id, pane.clone());
             pane
         });
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(0xa)));
         let snapshot = finish(&mut switch);
         assert_eq!(snapshot.panes.keys().copied().collect::<Vec<_>>(), [1]);
-        assert_eq!(snapshot.tabs.len(), 1);
-        assert_eq!(snapshot.tabs[0].layout, Layout::Pane(1));
-        assert_eq!(snapshot.tabs[0].focused, 1);
-        assert_eq!(snapshot.active, 0);
+        assert_eq!(snapshot.window.tabs.len(), 1);
+        assert_eq!(snapshot.window.tabs[0].layout, Layout::Pane(1));
+        assert_eq!(snapshot.window.tabs[0].focused, 1);
+        assert_eq!(snapshot.window.active, 0);
         let Step::Committed { panes, .. } = switch.finished(Ok(())) else {
             panic!("expected a committed switch")
         };
@@ -445,7 +437,7 @@ mod tests {
     fn fresh_shells_are_not_started_before_the_commit() {
         let (mut switch, panes) = connecting(&[Some(A), None]);
         assert_eq!(panes.keys().copied().collect::<Vec<_>>(), [1]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(0xa));
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(0xa)));
         let snapshot = finish(&mut switch);
         assert_eq!(snapshot.panes[&2].session, None);
         let Step::Committed { panes, .. } = switch.finished(Ok(())) else {
@@ -470,7 +462,7 @@ mod tests {
     #[test]
     fn a_rejected_commit_releases_the_reservation() {
         let (mut switch, panes) = connecting(&[Some(A)]);
-        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(1));
+        *panes[&1].borrow_mut() = PaneStatus::Connected(Some(crate::session::SessionId(1)));
         finish(&mut switch);
         let Step::Pending(mut switch) = switch.finished(Err("invalid".into())) else {
             panic!("expected the switch to keep cancelling")
@@ -504,9 +496,9 @@ mod tests {
         let mut snapshot = Snapshot::default();
         add_first_tab(&mut snapshot, 13.0, target());
         snapshot.validate().unwrap();
-        assert_eq!(snapshot.font_size, 13.0);
-        assert_eq!(snapshot.tabs.len(), 1);
+        assert_eq!(snapshot.window.font_size, 13.0);
+        assert_eq!(snapshot.window.tabs.len(), 1);
         assert_eq!(snapshot.panes[&1].session, None);
-        assert_eq!(snapshot.next_id, 2);
+        assert_eq!(snapshot.window.next_id, 2);
     }
 }

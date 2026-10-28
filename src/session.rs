@@ -1016,7 +1016,7 @@ mod tests {
             vec![],
         );
         let mut state = session.state.lock().unwrap();
-        state.connected = true;
+        state.lifecycle = Lifecycle::Connected;
         state.pull = felis_client_core::pull::PullScheduler::new(true);
         // A frame that reused the previous texture presented nothing new.
         session.frame_submitted(&mut state, false);
