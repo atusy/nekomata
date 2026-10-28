@@ -35,6 +35,21 @@ impl Tab {
     }
 }
 
+/// Removes pane `id` from whichever tab holds it, dropping a tab left empty
+/// and keeping `active` on a remaining tab.
+pub fn remove_pane(tabs: &mut Vec<Tab>, active: &mut usize, id: u64) {
+    let Some(index) = tabs.iter().position(|tab| tab.layout.panes().contains(&id)) else {
+        return;
+    };
+    if !tabs[index].remove_pane(id) {
+        tabs.remove(index);
+        if index < *active {
+            *active -= 1;
+        }
+        *active = (*active).min(tabs.len().saturating_sub(1));
+    }
+}
+
 /// Moves `tabs[from]` into the gap before `tabs[to]` (`to == tabs.len()` means
 /// the end) and returns the index of the tab that was at `active`.
 pub fn move_tab(tabs: &mut Vec<Tab>, active: usize, from: usize, to: usize) -> usize {
@@ -170,6 +185,18 @@ mod tests {
 
     fn names(tabs: &[Tab]) -> Vec<&str> {
         tabs.iter().map(|tab| tab.name.as_str()).collect()
+    }
+
+    #[test]
+    fn removing_a_tabs_last_pane_drops_the_tab_and_keeps_the_active_tab() {
+        let mut list = tabs(&["a", "b", "c"]);
+        let mut active = 2;
+        remove_pane(&mut list, &mut active, 0);
+        assert_eq!(names(&list), ["b", "c"]);
+        assert_eq!(active, 1);
+        remove_pane(&mut list, &mut active, 2);
+        assert_eq!(names(&list), ["b"]);
+        assert_eq!(active, 0);
     }
 
     #[test]

@@ -23,8 +23,11 @@ In the command palette (the cat button or Alt+Shift+P):
 - `Workspace: Create` switches to a fresh workspace.
 - `Workspace: Switch…` picks an existing one.
 
-If nekomata cannot connect the panes of
-the workspace you switch to, you stay in the current one.
+nekomata switches once the panes of the workspace you switch to have
+connected. A pane whose shell has ended is dropped; a pane that cannot
+connect, for example because its felis session is gone, shows its error and
+you can close it. If no pane connects, you stay in the current workspace; a new workspace,
+whose shell starts after the switch, switches regardless.
 
 ## From the command line
 
@@ -52,8 +55,11 @@ window closes. It holds workspaces in memory only.
   the daemon protocol requires
   [retiring the old daemon](troubleshooting.md#nekomata-reports-an-incompatible-daemon),
   which loses layouts.
-- nekomata daemon stop or crash: **layouts are lost**. felis shells survive,
-  so you can [attach to them again](sessions.md).
+- nekomata daemon stop or crash: **layouts of workspaces no window shows
+  are lost**. felis shells survive, so you can
+  [attach to them again](sessions.md). An open window keeps its tabs and
+  panes, reconnects on its own (or with `Reconnect now`) and stores its
+  layout in the new daemon, possibly under a new workspace ID.
 - OS restart: **layouts and local shells are both lost**; felis keeps
   sessions in memory too. Sessions on an SSH host survive while that host's
   felis daemon keeps running.

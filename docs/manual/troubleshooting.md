@@ -85,7 +85,8 @@ Dock so that nekomata starts the daemon.
 ## Layouts are gone
 
 Workspaces live in the nekomata daemon's memory, so stopping or crashing that
-daemon loses them. Your felis shells survive that; list them with
+daemon loses them, except those of windows still open: those reconnect and
+store their layout again. Your felis shells survive that; list them with
 `nekomata felis sessions list` and [attach to them again](sessions.md). After
 an OS restart, local shells are gone as well; sessions on an SSH host remain
 while that host's felis daemon keeps running.

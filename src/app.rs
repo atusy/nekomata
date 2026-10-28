@@ -15,7 +15,8 @@ use crate::{
     shortcuts::{Action, Shortcuts},
     theme::{ACCENT, BG, FG, TAB_BAR_BG, TAB_HOVER_BG, TAB_INACTIVE_FG},
     workspace::{PaneSpec, Snapshot, Tab, move_tab},
-    workspace_client::{Client as WorkspaceClient, Operation},
+    workspace_client::{Client as WorkspaceClient, Command as WorkspaceCommand, Operation},
+    workspace_switch::{self, PaneStatus, Poll, Step, Switch as WorkspaceSwitch},
 };
 
 struct Pane {
@@ -149,15 +150,6 @@ struct PendingAttach {
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
-struct WorkspaceSwitch {
-    id: Option<u64>,
-    snapshot: Option<Snapshot>,
-    panes: BTreeMap<u64, Pane>,
-    committing: bool,
-    cancellation: Option<String>,
-    reply: Option<tokio::sync::oneshot::Sender<Reply>>,
-}
-
 pub struct App {
     workspace: Option<WorkspaceClient>,
     workspace_id: Option<u64>,
@@ -165,7 +157,8 @@ pub struct App {
     daemon_instance: Option<String>,
     workspace_error: Option<String>,
     last_snapshot: Option<Snapshot>,
-    pending_workspace: Option<WorkspaceSwitch>,
+    pending_workspace: Option<WorkspaceSwitch<Pane>>,
+    reconnect: crate::workspace_client::Reconnect,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
@@ -230,6 +223,7 @@ impl App {
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
+            reconnect: Default::default(),
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,
@@ -318,6 +312,13 @@ impl App {
                 .as_mut()
                 .and_then(|client| client.events.try_recv().ok());
             let Some(event) = event else { break };
+            if self.workspace_id.is_some() {
+                self.reconnect.observe(
+                    event.operation,
+                    event.result.is_ok(),
+                    std::time::Instant::now(),
+                );
+            }
             match (event.operation, event.result) {
                 (
                     Operation::Open,
@@ -350,115 +351,133 @@ impl App {
                         continue;
                     }
                     if snapshot.tabs.is_empty() {
-                        snapshot.font_size =
-                            crate::terminal_config::font_size(&crate::terminal_config::get(ctx));
-                        let pane = snapshot.next_id;
-                        snapshot.next_id += 1;
-                        snapshot.tabs.push(Tab {
-                            name: format!("Terminal {pane}"),
-                            layout: Layout::Pane(pane),
-                            focused: pane,
-                            focus_history: vec![pane],
-                        });
                         match Target::default_local() {
-                            Ok(target) => {
-                                snapshot.panes.insert(
-                                    pane,
-                                    PaneSpec {
-                                        target,
-                                        session: None,
-                                    },
-                                );
-                            }
+                            Ok(target) => workspace_switch::add_first_tab(
+                                &mut snapshot,
+                                crate::terminal_config::font_size(&crate::terminal_config::get(
+                                    ctx,
+                                )),
+                                target,
+                            ),
                             Err(error) => {
                                 self.cancel_workspace(error.to_string());
                                 continue;
                             }
                         }
                     }
-                    let panes = snapshot
-                        .panes
-                        .iter()
-                        .map(|(&pane_id, spec)| {
-                            let existing = spec.session.as_ref().and_then(|id| {
-                                self.panes.values().find(|pane| {
-                                    let state = pane.session.state.lock().unwrap();
-                                    pane.session.target == spec.target
-                                        && state.session_id.map(|i| format!("{i:032x}")).as_ref()
-                                            == Some(id)
-                                })
-                            });
-                            let pane = if let Some(existing) = existing {
-                                Pane::from_session(existing.session.clone())
-                            } else {
-                                Pane::connect(
-                                    &self.runtime,
-                                    ctx,
-                                    self.control.window,
-                                    Some((id, self.daemon_instance.as_deref())),
-                                    pane_id,
-                                    spec.clone(),
-                                    None,
-                                )
-                            };
-                            (pane_id, pane)
-                        })
-                        .collect();
-                    if let Some(pending) = &mut self.pending_workspace {
-                        pending.id = Some(id);
-                        pending.snapshot = Some(snapshot);
-                        pending.panes = panes;
-                    }
+                    let instance = self.daemon_instance.as_deref();
+                    let Some(pending) = &mut self.pending_workspace else {
+                        continue;
+                    };
+                    let current = &self.panes;
+                    let (runtime, window) = (&self.runtime, self.control.window);
+                    pending.prepared(id, snapshot, |pane_id, spec| {
+                        let existing = spec.session.as_ref().and_then(|session| {
+                            current.values().find(|pane| {
+                                let state = pane.session.state.lock().unwrap();
+                                pane.session.target == spec.target
+                                    && state.session_id.map(|i| format!("{i:032x}")).as_ref()
+                                        == Some(session)
+                            })
+                        });
+                        if let Some(existing) = existing {
+                            Pane::from_session(existing.session.clone())
+                        } else {
+                            Pane::connect(
+                                runtime,
+                                ctx,
+                                window,
+                                Some((id, instance)),
+                                pane_id,
+                                spec.clone(),
+                                None,
+                            )
+                        }
+                    });
                 }
-                (Operation::Finish, Ok(Payload::Done)) => {
-                    if let Some(pending) = self.pending_workspace.take() {
-                        if let Some(error) = pending.cancellation {
-                            if let Some(reply) = pending.reply {
-                                let _ = reply.send(Err(error.clone()));
-                            }
+                (Operation::Finish, result) => {
+                    let Some(pending) = self.pending_workspace.take() else {
+                        if let Err(error) = result {
                             self.workspace_error = Some(error);
-                        } else if pending.committing {
-                            let snapshot = pending.snapshot.unwrap();
-                            self.panes = pending.panes;
+                        }
+                        continue;
+                    };
+                    match pending.finished(result.map(|_| ())) {
+                        Step::Pending(pending) => {
+                            self.workspace_error = pending.error().map(str::to_owned);
+                            self.pending_workspace = Some(pending);
+                        }
+                        Step::Committed {
+                            id,
+                            snapshot,
+                            panes,
+                            reply,
+                        } => {
+                            self.panes = panes;
+                            self.workspace_id = Some(id);
+                            for (pane_id, spec) in snapshot.panes {
+                                if !self.panes.contains_key(&pane_id) {
+                                    let pane = Pane::connect(
+                                        &self.runtime,
+                                        ctx,
+                                        self.control.window,
+                                        Some((id, self.daemon_instance.as_deref())),
+                                        pane_id,
+                                        spec,
+                                        None,
+                                    );
+                                    self.panes.insert(pane_id, pane);
+                                }
+                            }
                             self.tabs = snapshot.tabs;
                             self.active = snapshot.active;
                             self.next_id = snapshot.next_id;
                             self.font_size = snapshot.font_size;
-                            self.workspace_id = pending.id;
                             self.last_snapshot = None;
                             self.workspace_error = None;
-                            if let Some(reply) = pending.reply {
-                                let _ = reply.send(Ok(format!(
-                                    "Attached workspace {}",
-                                    pending.id.unwrap()
-                                )));
+                            if let Some(reply) = reply {
+                                let _ = reply.send(Ok(format!("Attached workspace {id}")));
                             }
+                        }
+                        Step::Failed { error, reply } => {
+                            if let Some(reply) = reply {
+                                let _ = reply.send(Err(error.clone()));
+                            }
+                            self.workspace_error = Some(error);
                         }
                     }
                 }
-                (Operation::Prepare | Operation::Disconnected, Err(error)) => {
-                    if let Some(pending) = self.pending_workspace.take()
-                        && let Some(reply) = pending.reply
+                (operation @ (Operation::Prepare | Operation::Disconnected), Err(error)) => {
+                    if let Some(reply) = self
+                        .pending_workspace
+                        .take()
+                        .and_then(WorkspaceSwitch::abort)
                     {
                         let _ = reply.send(Err(error.clone()));
                     }
-                    self.workspace_error = Some(error);
-                }
-                (Operation::Finish, Err(error)) => {
-                    if self
-                        .pending_workspace
-                        .as_ref()
-                        .is_some_and(|pending| pending.cancellation.is_some())
-                    {
-                        if let Some(pending) = self.pending_workspace.take()
-                            && let Some(reply) = pending.reply
-                        {
-                            let _ = reply.send(Err(error.clone()));
-                        }
-                        self.workspace_error = Some(error);
+                    if operation == Operation::Disconnected && self.workspace_id.is_some() {
+                        // No countdown: it would go stale between repaints.
+                        self.workspace_error =
+                            Some(format!("{error}. Reconnecting automatically…"));
                     } else {
-                        self.cancel_workspace(error);
+                        self.workspace_error = Some(error);
                     }
+                }
+                (
+                    Operation::Resume,
+                    Ok(Payload::Workspace {
+                        id,
+                        snapshot,
+                        instance,
+                    }),
+                ) => {
+                    self.workspace_id = Some(id);
+                    self.daemon_instance = Some(instance).filter(|instance| !instance.is_empty());
+                    self.last_snapshot = Some(snapshot);
+                    self.workspace_error = None;
+                }
+                (Operation::Resume, Err(error)) => {
+                    self.workspace_error = Some(format!("Could not resume the workspace: {error}"));
                 }
                 (_, Err(error)) => self.workspace_error = Some(error),
                 _ => {}
@@ -477,6 +496,12 @@ impl App {
                 "another attach is in progress"
             );
             anyhow::ensure!(self.workspace_id.is_some(), "workspace is not ready");
+            // A switch queued behind a resume would never be answered if the
+            // daemon refused the resume.
+            anyhow::ensure!(
+                !self.reconnect.resuming() && !self.daemon_lost(),
+                "the nekomata daemon is reconnecting"
+            );
             anyhow::ensure!(
                 workspace != self.workspace_id,
                 "workspace is already attached to this window"
@@ -500,14 +525,7 @@ impl App {
                 self.picker.visible = false;
                 self.palette = false;
                 self.font_size_open = false;
-                self.pending_workspace = Some(WorkspaceSwitch {
-                    id: None,
-                    snapshot: None,
-                    panes: BTreeMap::new(),
-                    committing: false,
-                    cancellation: None,
-                    reply,
-                });
+                self.pending_workspace = Some(WorkspaceSwitch::new(reply));
             }
             Err(error) => {
                 let error = error.to_string();
@@ -521,9 +539,7 @@ impl App {
 
     fn cancel_workspace(&mut self, error: String) {
         if let Some(pending) = &mut self.pending_workspace {
-            pending.panes.clear();
-            pending.cancellation = Some(error.clone());
-            pending.committing = false;
+            pending.cancel(error.clone());
         }
         self.workspace_error = Some(error);
     }
@@ -532,73 +548,33 @@ impl App {
         let Some(pending) = &mut self.pending_workspace else {
             return;
         };
-        if pending.committing {
+        let reply_closed = pending.reply_closed();
+        let poll = pending.poll(
+            |pane: &Pane| {
+                let state = pane.session.state.lock().unwrap();
+                if let Some(error) = &state.error {
+                    PaneStatus::Failed(error.clone())
+                } else if state.detached || state.exited {
+                    PaneStatus::Ended
+                } else if state.connected {
+                    PaneStatus::Connected(state.session_id)
+                } else {
+                    PaneStatus::Connecting
+                }
+            },
+            reply_closed,
+        );
+        let Poll::Finish(snapshot) = poll else {
             return;
+        };
+        if snapshot.is_none() {
+            self.workspace_error = pending.error().map(str::to_owned);
         }
-        if pending.cancellation.is_some() {
-            if self
-                .workspace
-                .as_ref()
-                .unwrap()
-                .send(daemon::Request::Finish { snapshot: None })
-                .is_ok()
-            {
-                pending.committing = true;
-            }
-            return;
-        }
-        if pending.snapshot.is_none() {
-            return;
-        }
-        let mut ready = true;
-        let mut error = None;
-        for pane in pending.panes.values() {
-            let state = pane.session.state.lock().unwrap();
-            if state.error.is_some() || state.detached || state.exited {
-                error = Some(
-                    state
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| "destination session ended".into()),
-                );
-                break;
-            }
-            ready &= state.connected;
-        }
-        if pending
-            .reply
-            .as_ref()
-            .is_some_and(|reply| reply.is_closed())
+        if let Some(client) = &self.workspace
+            && client.send(WorkspaceCommand::Finish { snapshot }).is_ok()
+            && let Some(pending) = &mut self.pending_workspace
         {
-            error = Some("workspace switch cancelled".into());
-        }
-        if let Some(error) = error {
-            self.cancel_workspace(error);
-            return;
-        }
-        if ready {
-            let mut snapshot = pending.snapshot.clone().unwrap();
-            for (&id, pane) in &pending.panes {
-                snapshot.panes.get_mut(&id).unwrap().session = pane
-                    .session
-                    .state
-                    .lock()
-                    .unwrap()
-                    .session_id
-                    .map(|id| format!("{id:032x}"));
-            }
-            if self
-                .workspace
-                .as_ref()
-                .unwrap()
-                .send(daemon::Request::Finish {
-                    snapshot: Some(snapshot.clone()),
-                })
-                .is_ok()
-            {
-                pending.snapshot = Some(snapshot);
-                pending.committing = true;
-            }
+            pending.finish_sent();
         }
     }
 
@@ -645,11 +621,48 @@ impl App {
             });
         self.workspaces_open = open;
         if refresh && let Some(client) = &self.workspace {
-            let _ = client.send(daemon::Request::List);
+            let _ = client.send(WorkspaceCommand::List);
         }
         if let Some(workspace) = selected {
             self.begin_workspace(workspace, None);
         }
+    }
+
+    /// Whether the window holds a workspace but no daemon connection.
+    fn daemon_lost(&self) -> bool {
+        self.workspace_id.is_some()
+            && self
+                .workspace
+                .as_ref()
+                .is_none_or(WorkspaceClient::is_closed)
+    }
+
+    /// Re-leases a workspace with the current layout once the reconnect
+    /// delay after losing the daemon has passed.
+    fn resume_workspace(&mut self, ctx: &egui::Context) {
+        if !self.daemon_lost()
+            || self.pending_workspace.is_some()
+            || !self.reconnect.start(std::time::Instant::now())
+        {
+            return;
+        }
+        let Some(previous) = self.workspace_id else {
+            return;
+        };
+        self.workspace = Some(WorkspaceClient::resume(
+            &self.runtime,
+            ctx.clone(),
+            self.control.window,
+            crate::workspace_client::Resume {
+                previous,
+                saved: self
+                    .workspace
+                    .as_ref()
+                    .map(WorkspaceClient::saved)
+                    .unwrap_or_default(),
+                current: self.snapshot(),
+            },
+        ));
     }
 
     fn save_workspace(&mut self, ctx: &egui::Context) {
@@ -663,7 +676,10 @@ impl App {
         let Some(client) = &self.workspace else {
             return;
         };
-        if client.send(daemon::Request::Save(snapshot.clone())).is_ok() {
+        if client
+            .send(WorkspaceCommand::Save(snapshot.clone()))
+            .is_ok()
+        {
             self.last_snapshot = Some(snapshot);
         } else if !client.is_closed() {
             // The command queue is full. A queued save completes without
@@ -716,20 +732,7 @@ impl App {
     }
 
     fn close_pane(&mut self, ctx: &egui::Context, id: u64) {
-        let Some(index) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.layout.panes().contains(&id))
-        else {
-            return;
-        };
-        if !self.tabs[index].remove_pane(id) {
-            self.tabs.remove(index);
-            if index < self.active {
-                self.active -= 1;
-            }
-            self.active = self.active.min(self.tabs.len().saturating_sub(1));
-        }
+        crate::workspace::remove_pane(&mut self.tabs, &mut self.active, id);
         self.panes.remove(&id);
         if self.tabs.is_empty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1099,7 +1102,7 @@ impl App {
                 self.workspaces_open = true;
                 self.workspace_roster = None;
                 if let Some(client) = &self.workspace {
-                    let _ = client.send(daemon::Request::List);
+                    let _ = client.send(WorkspaceCommand::List);
                 }
             }
             Action::Palette => {
@@ -1201,6 +1204,7 @@ impl App {
         let ctx = &context;
         self.workspace_events(ctx);
         self.poll_workspace();
+        self.resume_workspace(ctx);
         if self.workspace.is_some() && self.workspace_id.is_none() {
             egui::CentralPanel::default().show(root_ui, |ui| {
                 if let Some(error) = &self.workspace_error {
@@ -1222,8 +1226,14 @@ impl App {
         }
         self.control_requests(ctx);
         if let Some(error) = &self.workspace_error {
+            let lost = self.daemon_lost();
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
-                ui.colored_label(egui::Color32::LIGHT_RED, error);
+                ui.horizontal_wrapped(|ui| {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    if lost && ui.button("Reconnect now").clicked() {
+                        self.reconnect.retry_now();
+                    }
+                });
             });
         }
         for pane in self.panes.values() {
@@ -1570,9 +1580,14 @@ impl eframe::App for App {
     fn persist_egui_memory(&self) -> bool {
         false
     }
+    // Blocks the GUI thread: eframe tears the window down as soon as this
+    // returns, so the final save must finish here. `close` bounds the wait
+    // by `CLOSE_DEADLINE`, after which the lease ends with the connection.
     fn on_exit(&mut self) {
         if let Some(client) = &self.workspace {
-            if client.is_closed() {
+            // An unanswered resume would hold the close behind up to four
+            // daemon exchanges; the window has no lease to save into yet.
+            if client.is_closed() || self.reconnect.resuming() {
                 return;
             }
             let snapshot = self
@@ -2882,6 +2897,8 @@ mod tests {
         let other = replacement.workspace_id.unwrap();
         assert_ne!(Some(other), workspace_id);
         assert_eq!(replacement.panes.len(), 1);
+        // A new workspace's shell starts only once the switch has committed.
+        pump(&mut replacement, &connected);
         let other_shell = replacement
             .panes
             .values()
@@ -2904,11 +2921,14 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         assert_eq!(replacement.snapshot(), before);
 
-        // The destination shares two live shells with the source, but its other
-        // pane is unavailable. Preparing it must not steal those source connections.
-        let mut broken = before.clone();
-        broken.panes.get_mut(&2).unwrap().target =
+        // No pane of the destination can connect, so the switch is cancelled
+        // and the window keeps its workspace and its source connections.
+        let missing =
             Target::Local(crate::test_support::private_runtime_dir().join("missing-felis.sock"));
+        let mut broken = before.clone();
+        for pane in broken.panes.values_mut() {
+            pane.target = missing.clone();
+        }
         replacement.runtime.block_on(async {
             let mut client = daemon::connect().await.unwrap();
             let Payload::Workspace { id, .. } =
@@ -2964,6 +2984,7 @@ mod tests {
         // cancellation acknowledgement as its own commit.
         let output = command(&mut replacement, vec!["workspaces".into(), "new".into()]);
         assert!(output.status.success(), "{output:?}");
+        pump(&mut replacement, &connected);
         let third_shell = replacement
             .panes
             .values()
@@ -2986,6 +3007,62 @@ mod tests {
         assert!(output.status.success(), "{output:?}");
         assert_eq!(replacement.snapshot(), before);
 
+        // The destination shares two live shells with the source and its
+        // other pane is unavailable. The switch still commits: the live panes
+        // reuse the source connections and the unavailable one shows its error.
+        let mut partly = before.clone();
+        partly.panes.get_mut(&2).unwrap().target = missing.clone();
+        replacement.runtime.block_on(async {
+            let mut client = daemon::connect().await.unwrap();
+            daemon::exchange(&mut client, daemon::Request::Open { window: u32::MAX })
+                .await
+                .unwrap();
+            daemon::exchange(
+                &mut client,
+                daemon::Request::Prepare(daemon::Selection::Id(other)),
+            )
+            .await
+            .unwrap();
+            daemon::exchange(
+                &mut client,
+                daemon::Request::Finish {
+                    snapshot: Some(partly),
+                },
+            )
+            .await
+            .unwrap();
+            daemon::exchange(&mut client, daemon::Request::Detach)
+                .await
+                .unwrap();
+        });
+        let original_connection = replacement.panes[&1].session.clone();
+        let output = command(
+            &mut replacement,
+            vec!["workspaces".into(), "attach".into(), other.to_string()],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(replacement.workspace_id, Some(other));
+        assert!(Arc::ptr_eq(
+            &replacement.panes[&1].session,
+            &original_connection
+        ));
+        drop(original_connection);
+        {
+            let state = replacement.panes[&2].session.state.lock().unwrap();
+            assert!(state.error.is_some() && !state.connected);
+        }
+        assert_eq!(replacement.snapshot().panes[&2].target, missing);
+        let output = command(
+            &mut replacement,
+            vec![
+                "workspaces".into(),
+                "attach".into(),
+                workspace_id.unwrap().to_string(),
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(replacement.snapshot(), before);
+
         let ids: Vec<_> = replacement
             .panes
             .values()
@@ -2994,6 +3071,152 @@ mod tests {
             .collect();
         eframe::App::on_exit(&mut replacement);
         drop(replacement);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let mut ops = felis_client_core::connect(
+                std::path::PathBuf::from(crate::test_support::private_felis_socket()),
+                felis_client_core::Offer::ops(),
+            )
+            .await
+            .unwrap();
+            for id in ids {
+                ops.destroy_session(format!("{id:032x}")).await.unwrap();
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires isolated nekomata and felis daemons; run scripts/test-live.sh via nix develop"]
+    fn live_window_recovers_its_layout_after_the_nekomata_daemon_dies() {
+        use std::{sync::mpsc, time::Instant};
+        crate::test_support::private_runtime_dir();
+        crate::test_support::private_felis_socket();
+        let ctx = egui::Context::default();
+        let (tx, repaints) = mpsc::channel();
+        ctx.set_request_repaint_callback(move |_| {
+            let _ = tx.send(());
+        });
+        let pump = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(25);
+            while !done(app) {
+                let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |_| {});
+                app.workspace_events(&ctx);
+                app.poll_workspace();
+                app.resume_workspace(&ctx);
+                app.control_requests(&ctx);
+                app.save_workspace(&ctx);
+                assert!(
+                    Instant::now() < deadline,
+                    "daemon recovery test timed out: {:?}",
+                    app.workspace_error
+                );
+                let _ = repaints.recv_timeout(Duration::from_millis(50));
+            }
+        };
+        let connected = |app: &App| {
+            !app.panes.is_empty()
+                && app
+                    .panes
+                    .values()
+                    .all(|p| p.session.state.lock().unwrap().connected)
+        };
+        let mut app = App::connect(
+            tokio::runtime::Runtime::new().unwrap(),
+            &ctx,
+            Default::default(),
+        )
+        .unwrap();
+        // Start from a workspace of one fresh pane, whatever earlier tests
+        // left in the daemon.
+        pump(&mut app, &|app| app.workspace_id.is_some());
+        app.begin_workspace(None, None);
+        pump(&mut app, &|app| {
+            app.pending_workspace.is_none() && connected(app)
+        });
+        assert_eq!(app.tabs.len(), 1, "{:?}", app.workspace_error);
+        let shell = app.panes.values().next().unwrap().session.clone();
+        // Nothing is in flight, so only the idle watch can notice the loss.
+        pump(&mut app, &|app| {
+            app.workspace.as_ref().map(WorkspaceClient::saved)
+                == Some(crate::workspace_client::Saved {
+                    acknowledged: Some(app.snapshot()),
+                    unconfirmed: vec![],
+                })
+        });
+        // The test binary cannot start a daemon itself; the real one can.
+        let executable = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("nekomata");
+        // Only the isolated daemon behind NEKOMATA_RUNTIME_DIR is killed.
+        let pid = app.runtime.block_on(async {
+            let stream = tokio::net::UnixStream::connect(daemon::socket().unwrap())
+                .await
+                .unwrap();
+            stream.peer_cred().unwrap().pid().unwrap()
+        });
+        let killed = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        // The window notices while idle and reports it.
+        pump(&mut app, &|app| {
+            app.daemon_lost() && app.workspace_error.is_some()
+        });
+        app.action(&ctx, Action::NewTab);
+        let started = std::process::Command::new(&executable)
+            .args(["workspaces", "list"])
+            .output()
+            .unwrap();
+        assert!(started.status.success(), "{started:?}");
+        app.reconnect.retry_now();
+        pump(&mut app, &|app| {
+            !app.daemon_lost() && app.workspace_error.is_none() && connected(app)
+        });
+        assert!(
+            Arc::ptr_eq(&app.panes.values().next().unwrap().session, &shell),
+            "recovery keeps the window's shells"
+        );
+        let id = app.workspace_id.unwrap();
+        let summary = |app: &App| {
+            app.runtime.block_on(async {
+                let mut client = daemon::connect().await.unwrap();
+                let Payload::Workspaces(workspaces) =
+                    daemon::exchange(&mut client, daemon::Request::List)
+                        .await
+                        .unwrap()
+                else {
+                    panic!("expected workspaces")
+                };
+                workspaces.into_iter().find(|w| w.id == id).unwrap()
+            })
+        };
+        let resumed = summary(&app);
+        assert_eq!(resumed.window, Some(app.control.window));
+        assert_eq!(resumed.tabs, 2, "the layout made while disconnected");
+        // Later layout changes keep reaching the new daemon.
+        app.action(&ctx, Action::NewTab);
+        pump(&mut app, &connected);
+        pump(&mut app, &|app| {
+            app.last_snapshot.as_ref() == Some(&app.snapshot())
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while summary(&app).tabs != 3 {
+            assert!(Instant::now() < deadline, "later layout was not saved");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let ids: Vec<_> = app
+            .panes
+            .values()
+            .map(|p| p.session.state.lock().unwrap().session_id.unwrap())
+            .collect();
+        drop(shell);
+        eframe::App::on_exit(&mut app);
+        drop(app);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let mut ops = felis_client_core::connect(
@@ -3048,6 +3271,7 @@ mod tests {
             workspace_error: None,
             last_snapshot: None,
             pending_workspace: None,
+            reconnect: Default::default(),
             paste_requested: None,
             workspaces_open: false,
             workspace_roster: None,

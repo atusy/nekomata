@@ -22,8 +22,9 @@ felis daemon.
   would start the daemon then report that path instead of starting it.
 - Running out of file descriptors or memory while accepting a client does not
   stop the daemon; it retries shortly after.
-- Workspaces are held in memory only. Stopping or crashing the daemon, or
-  restarting the OS, loses every layout.
+- Workspaces are held in memory only. Restarting the OS loses every layout.
+  Stopping or crashing the daemon loses every layout except those of open
+  windows, which [reconnect](#losing-the-nekomata-daemon).
 - Client and daemon speak a versioned protocol. On an incompatible version the
   client reports an error and does not replace the running daemon. The daemon
   checks the version before decoding the request, so any request other than a
@@ -56,9 +57,11 @@ size (see [configuration](configuration.md#font-size-precedence)).
 
 - The GUI sends layout snapshots to the daemon as the layout changes.
 - Closing a window saves its layout and detaches the workspace, waiting up to
-  6 seconds for the daemon to acknowledge. If saving fails or times out, the
+  6 seconds in total for the daemon to acknowledge, including layout changes
+  still queued ahead of it; the window stops responding meanwhile. If saving fails or times out, the
   GUI reports it on standard error and exits anyway. A window closed during a
-  workspace switch detaches without saving.
+  workspace switch detaches without saving; one closed while it has lost the
+  daemon, or is still reconnecting, exits without saving.
 - After a GUI crash, the workspace restores up to the last snapshot the daemon
   received.
 
@@ -68,13 +71,21 @@ size (see [configuration](configuration.md#font-size-precedence)).
 
 1. The daemon must first accept the current workspace's snapshot.
 2. The destination is reserved while the source lease is still held.
-3. The GUI connects every pane of the destination. A pane already open in
-   this window with the same target and session is reused.
-4. Only then does the switch commit and the source lease end.
+3. The GUI connects every pane of the destination that refers to a felis
+   session and waits until each has connected, failed or ended. A pane
+   already open in this window with the same target and session is reused.
+   A pane without a session, such as the first pane of a new workspace,
+   starts its shell only after the switch commits, so a cancelled switch
+   never leaves a shell behind.
+4. Only then does the switch commit and the source lease end. A pane whose
+   session ended or was detached leaves the destination layout. A pane that
+   failed to connect, for example because its felis session no longer exists
+   or its felis daemon is unreachable, stays in the layout and shows its
+   error, as it would at startup; closing it removes it.
 
-If any step fails — including a destination session that errors, ends or
-detaches — the reservation is cancelled and the window keeps its current
-workspace. Interrupting a CLI that requested the switch does not cancel it.
+If the daemon refuses a step, or no destination pane connects and none is
+waiting to start a shell, the reservation is cancelled and the window keeps its current workspace.
+Interrupting a CLI that requested the switch does not cancel it.
 
 ## Closing panes and tabs
 
@@ -91,8 +102,30 @@ saved like any other layout change.
 ## Losing the nekomata daemon
 
 If the window cannot attach a workspace at startup, it shows the error and a
-button to retry. Once attached, a window does not reconnect after losing its
-connection to the nekomata daemon.
+button to retry.
+
+A window that loses its connection to the nekomata daemon after attaching
+notices even while idle, keeps its tabs, panes and shells, and shows the
+error with a button to reconnect at once. Until it reconnects, layout changes
+reach no daemon and the window refuses to switch workspaces. It reconnects on its own after 1 second, doubling the delay
+after each failed attempt up to 30 seconds, and starts the daemon if none is
+running. It does not reconnect on its own after the daemon refuses it, for
+example for an incompatible protocol version.
+
+On reconnecting, the window attaches a workspace and saves its current layout
+there, never into another window's retained layout:
+
+1. Its own workspace, if the daemon still holds it under the previous ID with
+   exactly a layout this window saved there: the last one the daemon
+   acknowledged, or one of the last few sent after it whose answers were
+   lost, including by an earlier reconnect attempt.
+2. Otherwise the workspace the daemon offers at startup, if it has no tabs.
+3. Otherwise a new workspace.
+
+The workspace ID may therefore change. Shells started before the change keep
+exporting the old ID in `NEKOMATA_WORKSPACE_ID`, so CLI commands run from
+them may fail or, on a restarted daemon that reused the ID, reach another
+window; pass `--window` there. Shells started afterwards carry the new ID.
 
 ## CLI
 
