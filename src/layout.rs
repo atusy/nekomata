@@ -102,6 +102,7 @@ impl Layout {
         }
     }
 
+    #[must_use]
     pub fn split(&mut self, target: u64, new: u64, axis: Axis) -> bool {
         match self {
             Self::Pane(id) if *id == target => {
@@ -149,8 +150,8 @@ mod tests {
     #[test]
     fn neighbors_follow_geometry_in_nested_splits() {
         let mut layout = Layout::Pane(1);
-        layout.split(1, 2, Axis::Horizontal);
-        layout.split(2, 3, Axis::Vertical);
+        assert!(layout.split(1, 2, Axis::Horizontal));
+        assert!(layout.split(2, 3, Axis::Vertical));
         assert_eq!(layout.neighbor(1, Direction::Right), Some(2));
         assert_eq!(layout.neighbor(2, Direction::Down), Some(3));
         assert_eq!(layout.neighbor(3, Direction::Up), Some(2));

@@ -815,11 +815,11 @@ impl App {
                             .send(Err("pane already has an attach in progress".into()));
                         continue;
                     }
-                    if session.is_empty()
-                        || ssh
-                            .as_ref()
-                            .is_some_and(|s| s.is_empty() || s.starts_with('-'))
-                    {
+                    let Ok(ssh) = ssh.map(|host| host.parse()).transpose() else {
+                        let _ = message.reply.send(Err("invalid attach target".into()));
+                        continue;
+                    };
+                    if session.is_empty() {
                         let _ = message.reply.send(Err("invalid attach target".into()));
                         continue;
                     }
@@ -967,7 +967,7 @@ impl App {
                         crate::theme::ui_extent(ui.style(), 30.0),
                     ],
                     egui::Label::new(if search.error.is_some() {
-                        egui::RichText::new("!").color(egui::Color32::LIGHT_RED)
+                        egui::RichText::new("!").color(crate::theme::ERROR_FG)
                     } else if search.running {
                         egui::RichText::new("…")
                     } else {
@@ -1195,8 +1195,16 @@ impl App {
                 let target = self.panes[&source].session.target.clone();
                 let id = self.add_pane(ctx, None, cwd, target);
                 let tab = &mut self.tabs[self.active];
-                tab.layout.split(tab.focused, id, axis);
-                tab.focus(id);
+                let split = tab.layout.split(source, id, axis);
+                // Validation keeps a tab's focused pane in its layout, so this
+                // is a broken invariant. Release builds drop the pane to keep
+                // the workspace valid; its shell stays detached and attachable.
+                debug_assert!(split, "the focused pane is missing from its layout");
+                if split {
+                    tab.focus(id);
+                } else {
+                    self.panes.remove(&id);
+                }
             }
             Action::ClosePane => self.close_pane(ctx, self.tabs[self.active].focused),
             Action::CloseTab => {
@@ -1234,7 +1242,7 @@ impl App {
         if self.workspace.is_some() && self.workspace_id.is_none() {
             egui::CentralPanel::default().show(root_ui, |ui| {
                 if let Some(error) = &self.workspace_error {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(crate::theme::ERROR_FG, error);
                     if ui.button("Retry connecting to nekomata daemon").clicked() {
                         self.workspace = Some(WorkspaceClient::start(
                             &self.runtime,
@@ -1255,7 +1263,7 @@ impl App {
             let lost = self.daemon_lost();
             egui::Panel::bottom("workspace-error").show(root_ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                    ui.colored_label(crate::theme::ERROR_FG, error);
                     if lost && ui.button("Reconnect now").clicked() {
                         self.reconnect.retry_now();
                     }
@@ -1889,7 +1897,7 @@ fn draw_layout(
                 })
                 .inner;
             let painter = ui.painter();
-            painter.rect_filled(divider, 0, Color32::from_gray(45));
+            painter.rect_filled(divider, 0, crate::theme::PANE_DIVIDER);
             let focus_rect = first_focus.or(second_focus);
             if let Some(focus_rect) = focus_rect {
                 let touches = if horizontal {
@@ -1955,7 +1963,7 @@ fn draw_pane(
                     egui::Align2::LEFT_TOP,
                     format!("Terminal font: {error}"),
                     FontId::monospace(font_size),
-                    Color32::LIGHT_RED,
+                    crate::theme::ERROR_FG,
                 );
                 return;
             }
@@ -2050,7 +2058,7 @@ fn draw_pane(
             egui::Align2::LEFT_TOP,
             error,
             FontId::proportional(crate::theme::ui_size(ui.style(), 14.0)),
-            Color32::LIGHT_RED,
+            crate::theme::ERROR_FG,
         );
     } else if !state.connected {
         painter.text(
@@ -2077,7 +2085,7 @@ fn draw_pane(
             egui::Align2::LEFT_CENTER,
             error,
             FontId::proportional(crate::theme::ui_size(ui.style(), 12.0)),
-            Color32::LIGHT_RED,
+            crate::theme::ERROR_FG,
         );
     }
     let modifiers = ui.input(|input| input.modifiers);
@@ -2342,16 +2350,18 @@ fn terminal_input(
                 if !state.connected {
                     continue;
                 }
-                match crate::paste::PendingPaste::new(
+                match crate::paste::Paste::new(
                     text,
                     state.screen.bracketed_paste(),
                     state.reconnects,
                 ) {
-                    Ok(pending) => {
+                    crate::paste::Paste::Confirm(pending) => {
                         *pending_paste = Some(pending);
                         break;
                     }
-                    Err(bytes) => send_to_program(selection, session, InputMsg::Paste(bytes)),
+                    crate::paste::Paste::Send(bytes) => {
+                        send_to_program(selection, session, InputMsg::Paste(bytes))
+                    }
                 }
             }
             TerminalInput::Copy => {
@@ -2382,6 +2392,7 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::PaneRemoval;
     use std::time::Duration;
 
     #[test]
@@ -3602,7 +3613,7 @@ mod tests {
             assert_eq!(
                 app.panes[&1].session.target,
                 Target::Ssh {
-                    host: "nekomata-test-host".into(),
+                    host: "nekomata-test-host".parse().unwrap(),
                     socket: Some(remote_socket),
                 }
             );
@@ -3726,8 +3737,8 @@ mod tests {
 
     fn split_tab() -> Tab {
         let mut layout = Layout::Pane(1);
-        layout.split(1, 2, Axis::Horizontal);
-        layout.split(2, 3, Axis::Vertical);
+        assert!(layout.split(1, 2, Axis::Horizontal));
+        assert!(layout.split(2, 3, Axis::Vertical));
         Tab {
             name: "test".into(),
             layout,
@@ -3742,11 +3753,20 @@ mod tests {
         tab.focus(3);
         tab.focus(2);
         tab.focus(3);
-        assert!(tab.remove_pane(3));
+        assert_eq!(tab.remove_pane(3), PaneRemoval::Removed);
         assert_eq!(tab.focused, 2);
-        assert!(tab.remove_pane(2));
+        assert_eq!(tab.remove_pane(2), PaneRemoval::Removed);
         assert_eq!(tab.focused, 1);
-        assert!(!tab.remove_pane(1));
+        assert_eq!(tab.remove_pane(1), PaneRemoval::LastPane);
+    }
+
+    #[test]
+    fn removing_a_pane_outside_the_tab_reports_it_missing() {
+        let mut tab = split_tab();
+        tab.focus(2);
+        let before = tab.clone();
+        assert_eq!(tab.remove_pane(9), PaneRemoval::Missing);
+        assert_eq!(tab, before);
     }
 
     #[test]
@@ -3756,9 +3776,9 @@ mod tests {
         tab.focus(2);
         tab.focus(3);
         other.focus(2);
-        assert!(tab.remove_pane(2));
+        assert_eq!(tab.remove_pane(2), PaneRemoval::Removed);
         assert_eq!(tab.focused, 3);
-        assert!(tab.remove_pane(3));
+        assert_eq!(tab.remove_pane(3), PaneRemoval::Removed);
         assert_eq!(tab.focused, 1);
         assert_eq!(other.focused, 2);
         assert_eq!(other.focus_history, vec![1, 2]);

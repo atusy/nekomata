@@ -131,7 +131,9 @@ accepts connections.
 ## SSH
 
 - SSH commands run on the machine running the GUI. Hosts may be
-  `~/.ssh/config` names or `user@host`.
+  `~/.ssh/config` names or `user@host`. A host that is empty or starts with
+  `-` is rejected, and `ssh` receives the host after `--`, so a host is never
+  read as an `ssh` option.
 - The remote host needs a compatible `felis-daemon` on `PATH`, already
   running: nekomata relays to it and never starts it, even for new shells.
 - Authentication must be non-interactive (public keys, SSH agent). Passwords

@@ -37,23 +37,23 @@ fn source(state: &Mutex<State>) -> Option<Source> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Hit {
-    pub line: i64,
-    pub spans: Vec<ColSpan>,
-    pub anchor: Option<ViewportAnchor>,
+pub(crate) struct Hit {
+    pub(crate) line: i64,
+    pub(crate) spans: Vec<ColSpan>,
+    pub(crate) anchor: Option<ViewportAnchor>,
 }
 
 #[derive(Default)]
-pub struct SearchState {
-    pub revision: u64,
+pub(crate) struct SearchState {
+    pub(crate) revision: u64,
     generation: u64,
     source: Option<Source>,
-    pub active: bool,
-    pub running: bool,
-    pub hits: Vec<Hit>,
-    pub current: Option<usize>,
-    pub error: Option<String>,
-    pub limited: bool,
+    pub(crate) active: bool,
+    pub(crate) running: bool,
+    pub(crate) hits: Vec<Hit>,
+    pub(crate) current: Option<usize>,
+    pub(crate) error: Option<String>,
+    pub(crate) limited: bool,
     bytes: usize,
     jump_pending: bool,
 }
@@ -113,12 +113,12 @@ impl SearchState {
         true
     }
 
-    pub fn current_number(&self) -> usize {
+    pub(crate) fn current_number(&self) -> usize {
         // Felis streams hits newest-first; label them in top-to-bottom order.
         self.current.map_or(0, |index| self.hits.len() - index)
     }
 
-    pub fn advance(&mut self, older: bool) {
+    pub(crate) fn advance(&mut self, older: bool) {
         if self.hits.is_empty() {
             return;
         }
@@ -131,7 +131,7 @@ impl SearchState {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub fn take_jump(&mut self, shadow: &ShadowScreen) -> Option<InputMsg> {
+    pub(crate) fn take_jump(&mut self, shadow: &ShadowScreen) -> Option<InputMsg> {
         if !std::mem::take(&mut self.jump_pending) {
             return None;
         }
@@ -162,7 +162,7 @@ impl SearchState {
         })
     }
 
-    pub fn overlay(&self, shadow: &ShadowScreen) -> Option<SearchOverlay> {
+    pub(crate) fn overlay(&self, shadow: &ShadowScreen) -> Option<SearchOverlay> {
         if !self.active {
             return None;
         }
@@ -209,8 +209,8 @@ impl Drop for Job {
     }
 }
 
-pub struct Tools {
-    pub search: Arc<Mutex<SearchState>>,
+pub(crate) struct Tools {
+    pub(crate) search: Arc<Mutex<SearchState>>,
     task: Mutex<Option<Job>>,
 
     runtime: tokio::runtime::Handle,
@@ -220,7 +220,7 @@ pub struct Tools {
 }
 
 impl Tools {
-    pub fn new(
+    pub(crate) fn new(
         runtime: &tokio::runtime::Runtime,
         ctx: egui::Context,
         target: Target,
@@ -237,7 +237,7 @@ impl Tools {
         }
     }
 
-    pub fn cancel_search(&self) {
+    pub(crate) fn cancel_search(&self) {
         self.task.lock().unwrap().take();
         let mut state = self.search.lock().unwrap();
         state.begin(None);
@@ -246,7 +246,7 @@ impl Tools {
         self.ctx.request_repaint();
     }
 
-    pub fn search(&self, query: String, options: SearchOptions) {
+    pub(crate) fn search(&self, query: String, options: SearchOptions) {
         self.task.lock().unwrap().take();
         let from = source(&self.session);
         let generation = self.search.lock().unwrap().begin(from);
@@ -293,7 +293,7 @@ impl Tools {
         });
     }
 
-    pub fn invalidate_changed_session(&self) {
+    pub(crate) fn invalidate_changed_session(&self) {
         let live = source(&self.session);
         let stale = {
             let search = self.search.lock().unwrap();
@@ -649,7 +649,7 @@ mod tests {
             &runtime,
             ctx,
             Target::Ssh {
-                host: "nekomata-test-host".into(),
+                host: "nekomata-test-host".parse().unwrap(),
                 socket: Some(quoted_socket.to_str().unwrap().into()),
             },
             session.state.clone(),

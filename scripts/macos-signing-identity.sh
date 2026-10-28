@@ -53,12 +53,11 @@ CONFIG
 fi
 
 identity=$(/usr/bin/openssl x509 -in "$certificate" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')
-if ! /usr/bin/security find-identity -v -p codesigning "$keychain" | grep -F "$identity" >/dev/null; then
-  # Trust this certificate only for code signing, in the current user's domain.
-  # Do not grant TLS trust or modify the system keychain.
-  /usr/bin/security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$certificate"
-fi
-if ! /usr/bin/security find-identity -v -p codesigning "$keychain" | grep -F "$identity" >/dev/null; then
+# The certificate stays untrusted, so list identities without -v, which hides
+# untrusted ones. codesign signs with it by fingerprint, and the designated
+# requirement pins the certificate's hash, which needs no trust. Trust would
+# only make anything signed with this key pass code-signing trust checks.
+if ! /usr/bin/security find-identity -p codesigning "$keychain" | grep -F "$identity" >/dev/null; then
   echo "No usable private key for the signing certificate in $keychain" >&2
   exit 1
 fi

@@ -61,8 +61,11 @@ The installer signs the app so macOS privacy permissions survive updates.
   `nekomata Local Code Signing` and reuses it afterwards.
 - The private key is stored non-exportable in your default keychain, and only
   `codesign` may use it without asking you.
-- The certificate is trusted for your code signing only. TLS trust settings
-  and the system keychain are left alone.
+- The certificate is not marked as trusted. macOS recognizes the app by the
+  certificate's fingerprint, which needs no trust, so trust settings and the
+  system keychain are left alone. Earlier versions of the installer trusted the
+  certificate for code signing; to drop that setting, run
+  `security remove-trusted-cert` on the certificate file named below.
 - The public certificate is saved at
   `~/.local/share/nekomata/signing/certificate.pem` (under `XDG_DATA_HOME`
   when set).
