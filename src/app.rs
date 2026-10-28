@@ -2392,6 +2392,7 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::PaneRemoval;
     use std::time::Duration;
 
     #[test]
