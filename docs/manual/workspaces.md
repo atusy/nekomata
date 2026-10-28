@@ -18,7 +18,7 @@ away from another window.
 
 ## Switching
 
-In the command palette (the cat button or Alt+Shift+P):
+In the command palette (the cat button):
 
 - `Workspace: Create` switches to a fresh workspace.
 - `Workspace: Switch…` picks an existing one.

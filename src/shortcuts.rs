@@ -33,7 +33,7 @@ pub enum Action {
 
 /// nekomata's own bindings, keyed by chord sequence: felis binds single
 /// chords only, and splits need a prefix key.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AppKeymap {
     bindings: BTreeMap<Vec<Chord>, Action>,
 }
@@ -42,30 +42,6 @@ enum Lookup {
     Action(Action),
     Prefix,
     Miss,
-}
-
-impl Default for AppKeymap {
-    fn default() -> Self {
-        let bindings = [
-            ("alt+c", Action::NewTab),
-            ("alt+t", Action::NextTab),
-            ("alt+shift+t", Action::PreviousTab),
-            ("alt+shift+p", Action::Palette),
-            ("alt+w alt+s", Action::Split(Axis::Vertical)),
-            ("alt+w alt+v", Action::Split(Axis::Horizontal)),
-            ("alt+w c", Action::ClosePane),
-            ("alt+w h", Action::Focus(Direction::Left)),
-            ("alt+w j", Action::Focus(Direction::Down)),
-            ("alt+w k", Action::Focus(Direction::Up)),
-            ("alt+w l", Action::Focus(Direction::Right)),
-        ];
-        Self {
-            bindings: bindings
-                .into_iter()
-                .map(|(keys, action)| (parse_sequence(keys).unwrap(), action))
-                .collect(),
-        }
-    }
 }
 
 /// Whitespace separates the chords of a sequence; each chord is spelled
@@ -124,7 +100,7 @@ fn is_clipboard_chord(chord: &Chord) -> bool {
 }
 
 impl AppKeymap {
-    /// Applies user entries over the defaults. `None` unbinds a sequence and
+    /// Applies user entries to the keymap. `None` unbinds a sequence and
     /// every longer one it begins. A sequence whose leading chords are bound
     /// on their own could never complete, so it is dropped.
     pub fn apply(
@@ -163,7 +139,6 @@ impl AppKeymap {
             .collect();
         for keys in unreachable {
             self.bindings.remove(&keys);
-            // Defaults yield silently to a chord the user bound on its own.
             if let Some(spelling) = configured.get(&keys) {
                 warnings.push(format!(
                     "`keymap.\"{spelling}\"` is dropped because its leading keys are bound on their own"
@@ -447,6 +422,11 @@ impl Shortcuts {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn application_keymap_has_no_default_bindings() {
+        assert!(super::AppKeymap::default().bindings.is_empty());
+    }
+
     use super::*;
     use eframe::egui::Modifiers;
 
@@ -525,9 +505,34 @@ mod tests {
         }
     }
 
+    fn configured_keymap() -> AppKeymap {
+        let mut keymap = AppKeymap::default();
+        keymap.apply(
+            [
+                ("alt+c", Action::NewTab),
+                ("alt+shift+t", Action::PreviousTab),
+                ("alt+w alt+s", Action::Split(Axis::Vertical)),
+                ("alt+w alt+v", Action::Split(Axis::Horizontal)),
+                ("alt+w c", Action::ClosePane),
+                ("alt+w h", Action::Focus(Direction::Left)),
+                ("alt+w j", Action::Focus(Direction::Down)),
+                ("alt+w k", Action::Focus(Direction::Up)),
+                ("alt+w l", Action::Focus(Direction::Right)),
+            ]
+            .into_iter()
+            .map(|(s, a)| (s.into(), parse_sequence(s).unwrap(), Some(a)))
+            .collect(),
+            &mut vec![],
+        );
+        keymap
+    }
+
     fn consume_events(events: Vec<Event>) -> (Vec<Action>, Vec<Event>) {
         let ctx = eframe::egui::Context::default();
-        let mut shortcuts = Shortcuts::default();
+        let mut shortcuts = Shortcuts {
+            keymap: configured_keymap(),
+            ..Default::default()
+        };
         let mut result = (vec![], vec![]);
         let _ = crate::test_support::run(
             &ctx,
@@ -785,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn default_alt_w_sequences_split_close_and_focus() {
+    fn configured_alt_w_sequences_split_close_and_focus() {
         let mut events = vec![];
         for (key, modifiers) in [
             (Key::S, Modifiers::ALT),
@@ -816,7 +821,7 @@ mod tests {
 
     #[test]
     fn hints_name_the_active_bindings() {
-        let hints = AppKeymap::default().hints();
+        let hints = configured_keymap().hints();
         assert_eq!(hints.get(&Action::NewTab), "Alt+C");
         assert_eq!(hints.get(&Action::PreviousTab), "Alt+Shift+T");
         assert_eq!(hints.get(&Action::Split(Axis::Horizontal)), "Alt+W  Alt+V");
@@ -847,7 +852,7 @@ mod tests {
 
     #[test]
     fn a_hint_prefers_the_shortest_binding() {
-        let mut keymap = AppKeymap::default();
+        let mut keymap = configured_keymap();
         keymap.apply(
             vec![(
                 "alt+w n".into(),
@@ -862,7 +867,10 @@ mod tests {
     #[test]
     fn prefix_survives_frames_and_consumes_option_text() {
         let ctx = eframe::egui::Context::default();
-        let mut shortcuts = Shortcuts::default();
+        let mut shortcuts = Shortcuts {
+            keymap: configured_keymap(),
+            ..Default::default()
+        };
         for (events, expected) in [
             (
                 vec![press(Key::W, Modifiers::ALT), Event::Text("∑".into())],
@@ -899,7 +907,10 @@ mod tests {
     #[test]
     fn shortcuts_preserve_unrelated_text_and_match_font_and_paste_keys() {
         let ctx = eframe::egui::Context::default();
-        let mut shortcuts = Shortcuts::default();
+        let mut shortcuts = Shortcuts {
+            keymap: configured_keymap(),
+            ..Default::default()
+        };
         for (key, step) in [
             ("0", felis_client_core::FontSizeStep::Reset),
             ("=", felis_client_core::FontSizeStep::Increase),
