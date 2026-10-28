@@ -2,10 +2,12 @@ mod app;
 mod app_config;
 mod cli;
 mod colors;
+mod command_output;
 mod command_palette;
 mod commands;
 mod control;
 mod daemon;
+mod editor_output;
 mod font_size;
 mod input;
 mod layout;
@@ -40,6 +42,14 @@ fn main() -> eframe::Result {
         std::process::exit(2);
     });
     match command {
+        cli::Command::EditOutput { file, argv } => {
+            let code =
+                editor_output::run(std::path::Path::new(&file), &argv).unwrap_or_else(|error| {
+                    eprintln!("{error:#}");
+                    1
+                });
+            std::process::exit(code);
+        }
         cli::Command::Gui => {}
         cli::Command::DaemonRun => {
             if let Err(error) = daemon::run() {

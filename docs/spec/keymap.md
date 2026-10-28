@@ -170,3 +170,7 @@ presses, so neither keymap ever sees them and binding them has no effect.
 - Elsewhere, Ctrl+C and Ctrl+X are sent to the terminal program as the
   control bytes 0x03 and 0x18. Ctrl+V sends 0x16 only when the clipboard holds
   text; otherwise it does nothing.
+
+The command palette also exposes `scrollback:copy_command_output`,
+`scrollback:edit_command_output`, and `scrollback:edit`, without default
+bindings. See [terminal output export](terminal.md#command-output-and-scrollback-export).
