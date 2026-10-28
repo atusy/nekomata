@@ -203,7 +203,6 @@ pub struct App {
     pending_workspace: Option<WorkspaceSwitch<Pane>>,
     reconnect: crate::workspace_client::Reconnect,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
-    workspaces_open: bool,
     workspace_roster: Option<Vec<daemon::Summary>>,
     runtime: tokio::runtime::Runtime,
     control: control::Server,
@@ -212,10 +211,17 @@ pub struct App {
     window: WindowLayout,
     picker: SessionPicker,
     shortcuts: Shortcuts,
-    palette: bool,
-    palette_state: crate::command_palette::CommandPalette,
-    font_size_open: bool,
+    overlay: Option<Overlay>,
     geometry: GeometryAutosave,
+}
+
+/// A window-level overlay. The window shows at most one, so opening one
+/// closes the one already open.
+enum Overlay {
+    Palette(crate::command_palette::CommandPalette),
+    FontSize,
+    Workspaces,
+    SessionPicker,
 }
 
 impl App {
@@ -265,7 +271,6 @@ impl App {
             pending_workspace: None,
             reconnect: Default::default(),
             paste_requested: None,
-            workspaces_open: false,
             workspace_roster: None,
             runtime,
             control,
@@ -277,9 +282,7 @@ impl App {
             },
             picker: SessionPicker::default(),
             shortcuts: Shortcuts::from_config(&crate::terminal_config::get(ctx), keymap),
-            palette: false,
-            palette_state: Default::default(),
-            font_size_open: false,
+            overlay: None,
             geometry: GeometryAutosave::default(),
         };
         Ok(app)
@@ -545,10 +548,7 @@ impl App {
         match result {
             Ok(()) => {
                 self.workspace_error = None;
-                self.workspaces_open = false;
-                self.picker.visible = false;
-                self.palette = false;
-                self.font_size_open = false;
+                self.overlay = None;
                 self.pending_workspace = Some(WorkspaceSwitch::new(reply));
             }
             Err(error) => {
@@ -603,7 +603,7 @@ impl App {
     }
 
     fn workspace_picker(&mut self, ctx: &egui::Context) {
-        if !self.workspaces_open {
+        if !matches!(self.overlay, Some(Overlay::Workspaces)) {
             return;
         }
         let mut open = true;
@@ -643,7 +643,9 @@ impl App {
                     ui.label("Loading workspaces…");
                 }
             });
-        self.workspaces_open = open;
+        if !open {
+            self.overlay = None;
+        }
         if refresh && let Some(client) = &self.workspace {
             let _ = client.send(WorkspaceCommand::List);
         }
@@ -687,6 +689,18 @@ impl App {
                 current: self.snapshot(),
             },
         ));
+    }
+
+    fn session_picker(&mut self, ctx: &egui::Context) -> Option<String> {
+        if !matches!(self.overlay, Some(Overlay::SessionPicker)) {
+            return None;
+        }
+        let mut open = true;
+        let selected = self.picker.show(&self.runtime, ctx, &mut open);
+        if !open {
+            self.overlay = None;
+        }
+        selected
     }
 
     fn save_workspace(&mut self, ctx: &egui::Context) {
@@ -869,6 +883,16 @@ impl App {
             drop(state);
             let _ = pending.reply.send(result);
         }
+    }
+
+    fn input_blocked(&self) -> bool {
+        InputBlockers {
+            overlay: self.overlay.is_some(),
+            searching: self.searching(),
+            paste_pending: self.panes.values().any(|pane| pane.pending_paste.is_some()),
+            switching: self.pending_workspace.is_some(),
+        }
+        .any()
     }
 
     fn searching(&self) -> bool {
@@ -1104,18 +1128,20 @@ impl App {
             Action::Terminal(action) => self.terminal_action(ctx, action),
             Action::NewWorkspace => self.begin_workspace(None, None),
             Action::OpenWorkspaces => {
-                self.workspaces_open = true;
+                self.overlay = Some(Overlay::Workspaces);
                 self.workspace_roster = None;
                 if let Some(client) = &self.workspace {
                     let _ = client.send(WorkspaceCommand::List);
                 }
             }
             Action::Palette => {
-                self.palette = true;
-                self.palette_state = Default::default();
+                self.overlay = Some(Overlay::Palette(Default::default()));
             }
-            Action::AttachSession => self.picker.open(&self.runtime, ctx),
-            Action::ChangeFontSize => self.font_size_open = true,
+            Action::AttachSession => {
+                self.overlay = Some(Overlay::SessionPicker);
+                self.picker.open(&self.runtime, ctx);
+            }
+            Action::ChangeFontSize => self.overlay = Some(Overlay::FontSize),
             Action::FontScale(scale) => {
                 self.window.font_size = felis_client_core::config::FontConfig::clamped_font_size(
                     self.window.font_size * scale,
@@ -1127,11 +1153,7 @@ impl App {
                     crate::terminal_config::font_size(&crate::terminal_config::get(ctx))
             }
             Action::Paste => {
-                // Keys cannot paste while these are open, so only the palette
-                // gets here, and it means the terminal. Each one blocks terminal
-                // input and would make the delivered clipboard event stale.
-                self.picker.visible = false;
-                self.workspaces_open = false;
+                // The palette closes before acting; close search before requesting paste.
                 let pane = self
                     .panes
                     .get_mut(&self.window.active_tab().focused)
@@ -1273,9 +1295,9 @@ impl App {
         }
         if self.window.tabs.is_empty() {
             egui::CentralPanel::default().show(root_ui, |_| {});
-            if let Some(id) = self.picker.show(&self.runtime, ctx) {
+            if let Some(id) = self.session_picker(ctx) {
                 self.add_tab(ctx, Some(id));
-            } else if !self.picker.visible {
+            } else if !matches!(self.overlay, Some(Overlay::SessionPicker)) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             return;
@@ -1292,14 +1314,7 @@ impl App {
         let paste_pending = self.panes.values().any(|pane| pane.pending_paste.is_some());
         let mut action = None;
         // Consume application shortcuts before forwarding terminal events.
-        if !paste_pending
-            && !self.picker.visible
-            && !self.palette
-            && !self.font_size_open
-            && !self.workspaces_open
-            && !self.searching()
-            && self.pending_workspace.is_none()
-        {
+        if !self.input_blocked() {
             let actions = ctx.input_mut(|input| self.shortcuts.consume(input));
             for action in actions {
                 self.action(ctx, action);
@@ -1308,15 +1323,11 @@ impl App {
                 }
             }
         }
-        if !paste_pending
-            && !self.picker.visible
-            && !self.palette
-            && !self.font_size_open
-            && !self.workspaces_open
-            && !self.searching()
-            && self.pending_workspace.is_none()
-            && !egui::Popup::is_any_open(ctx)
-        {
+        // Requesting terminal focus would take it from an open menu. Only this
+        // request waits for menus: one left by a search field that vanished
+        // with its pane or tab lingers a frame, and keys then belong to the
+        // terminal.
+        if !self.input_blocked() && !egui::Popup::is_any_open(ctx) {
             focus_terminal(ctx);
         }
         let tabs = egui::Panel::top("tabs")
@@ -1337,7 +1348,10 @@ impl App {
                         + 2.0 * ui.spacing().button_padding.y,
                 );
                 ui.horizontal(|ui| {
-                    let palette_button = crate::theme::palette_button(ui, self.palette);
+                    let palette_button = crate::theme::palette_button(
+                        ui,
+                        matches!(self.overlay, Some(Overlay::Palette(_))),
+                    );
                     let search_width = if self.searching() {
                         ui.available_width()
                             .min(crate::theme::ui_extent(ui.style(), 360.0))
@@ -1443,13 +1457,7 @@ impl App {
         if self.window.tabs.is_empty() {
             return;
         }
-        let modal = paste_pending
-            || self.searching()
-            || self.picker.visible
-            || self.palette
-            || self.font_size_open
-            || self.workspaces_open
-            || self.pending_workspace.is_some();
+        let modal = self.input_blocked();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(BG))
             .show(root_ui, |ui| {
@@ -1535,10 +1543,10 @@ impl App {
             });
         }
         self.paste_confirmation(ctx);
-        if let Some(id) = self.picker.show(&self.runtime, ctx) {
+        if let Some(id) = self.session_picker(ctx) {
             self.add_tab(ctx, Some(id));
         }
-        if self.palette {
+        if let Some(Overlay::Palette(palette)) = &mut self.overlay {
             let prompt_unavailable = {
                 let state = self.panes[&self.window.active_tab().focused]
                     .session
@@ -1553,19 +1561,20 @@ impl App {
                     None
                 }
             };
-            let (chosen, dismissed) =
-                self.palette_state
-                    .show(ctx, self.shortcuts.hints(), prompt_unavailable);
+            let (chosen, dismissed) = palette.show(ctx, self.shortcuts.hints(), prompt_unavailable);
+            // Close before acting, so a chosen command can open another overlay.
             if dismissed || chosen.is_some() {
-                self.palette = false;
+                self.overlay = None;
             }
             if let Some(action) = chosen {
                 self.action(ctx, action);
             }
         }
-        if self.font_size_open {
+        if matches!(self.overlay, Some(Overlay::FontSize)) {
             let (chosen, dismissed) = crate::font_size::show(ctx, self.window.font_size);
-            self.font_size_open = !dismissed;
+            if dismissed {
+                self.overlay = None;
+            }
             if let Some(action) = chosen {
                 self.action(ctx, action);
             }
@@ -1759,6 +1768,30 @@ fn search_icon_button(ui: &mut egui::Ui, icon: SearchIcon) -> egui::Response {
         }
     }
     response.on_hover_text(label)
+}
+
+/// What keeps keys from both keymaps, and keyboard input and focus reports
+/// from the terminal.
+#[derive(Clone, Copy, Default)]
+struct InputBlockers {
+    /// Any open [`Overlay`].
+    overlay: bool,
+    /// The focused pane's search field.
+    searching: bool,
+    paste_pending: bool,
+    switching: bool,
+}
+
+impl InputBlockers {
+    fn any(self) -> bool {
+        let Self {
+            overlay,
+            searching,
+            paste_pending,
+            switching,
+        } = self;
+        overlay || searching || paste_pending || switching
+    }
 }
 
 /// The search field draws before the palette and the font size control, so
@@ -3050,14 +3083,18 @@ mod tests {
         app.window.font_size = 30.0;
         app.action(&ctx, Action::FontReset);
         assert_eq!(app.window.font_size, 21.0);
-        // Pasting from the palette must reach the terminal, whose paste any
-        // window that blocks terminal input would otherwise discard.
+        app.action(&ctx, Action::OpenWorkspaces);
+        app.action(&ctx, Action::AttachSession);
+        assert!(
+            matches!(app.overlay, Some(Overlay::SessionPicker)),
+            "opening an overlay replaces the open one"
+        );
+        app.overlay = None;
+        // Pasting from the palette must reach the terminal, whose paste the
+        // search field would otherwise discard by blocking terminal input.
         app.open_search();
-        app.picker.visible = true;
-        app.workspaces_open = true;
         app.action(&ctx, Action::Paste);
         assert!(!app.searching());
-        assert!(!app.picker.visible && !app.workspaces_open);
         assert!(app.paste_requested.take().is_some());
         app.action(&ctx, Action::Split(Axis::Horizontal));
         app.action(&ctx, Action::NewTab);
@@ -3531,7 +3568,6 @@ mod tests {
             pending_workspace: None,
             reconnect: Default::default(),
             paste_requested: None,
-            workspaces_open: false,
             workspace_roster: None,
             runtime,
             control,
@@ -3543,9 +3579,7 @@ mod tests {
             },
             picker: SessionPicker::default(),
             shortcuts: Shortcuts::default(),
-            palette: false,
-            palette_state: Default::default(),
-            font_size_open: false,
+            overlay: None,
             geometry: GeometryAutosave::default(),
         };
         app.add_tab(&ctx, None);
@@ -3798,6 +3832,31 @@ mod tests {
                 .await
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn input_is_blocked_by_any_blocker() {
+        assert!(!InputBlockers::default().any());
+        for blockers in [
+            InputBlockers {
+                overlay: true,
+                ..Default::default()
+            },
+            InputBlockers {
+                searching: true,
+                ..Default::default()
+            },
+            InputBlockers {
+                paste_pending: true,
+                ..Default::default()
+            },
+            InputBlockers {
+                switching: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(blockers.any());
+        }
     }
 
     #[test]

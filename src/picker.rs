@@ -9,15 +9,14 @@ type Roster = Arc<Mutex<Option<Result<Vec<SessionInfo>, String>>>>;
 
 #[derive(Default)]
 pub struct SessionPicker {
-    pub visible: bool,
     query: String,
     roster: Roster,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SessionPicker {
+    /// Starts loading the roster the picker shows next.
     pub fn open(&mut self, runtime: &tokio::runtime::Runtime, ctx: &egui::Context) {
-        self.visible = true;
         self.refresh(runtime, ctx);
     }
 
@@ -45,19 +44,17 @@ impl SessionPicker {
         }));
     }
 
+    /// Clears `open` when the picker closes, including after a selection.
     pub fn show(
         &mut self,
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
+        open: &mut bool,
     ) -> Option<String> {
-        if !self.visible {
-            return None;
-        }
-        let mut open = true;
         let mut refresh = false;
         let mut selected = None;
         egui::Window::new("Attach a felis session")
-            .open(&mut open)
+            .open(open)
             .collapsible(false)
             .default_width(480.0)
             .show(ctx, |ui| {
@@ -106,7 +103,7 @@ impl SessionPicker {
                     }
                 }
             });
-        self.visible = open && selected.is_none();
+        *open &= selected.is_none();
         if refresh {
             self.refresh(runtime, ctx);
         }
@@ -122,5 +119,64 @@ impl Drop for SessionPicker {
         if let Some(task) = &self.task {
             task.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attaching_closes_the_picker() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        let mut picker = SessionPicker::default();
+        picker.query = "0123".into();
+        *picker.roster.lock().unwrap() = Some(Ok(vec![]));
+        let mut open = true;
+        let mut frame = || {
+            crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                assert_eq!(picker.show(&runtime, ui.ctx(), &mut open), None);
+            })
+        };
+        // A window lays itself out invisibly in its first frame.
+        drop(frame());
+        let output = frame();
+        assert!(open, "showing alone keeps the picker open");
+        let button = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Attach" => {
+                    Some(text.pos + egui::vec2(5.0, 5.0))
+                }
+                _ => None,
+            })
+            .expect("the picker must show its Attach button");
+        let mut selected = None;
+        for pressed in [true, false] {
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(button),
+                        egui::Event::PointerButton {
+                            pos: button,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    selected = selected
+                        .take()
+                        .or(picker.show(&runtime, ui.ctx(), &mut open))
+                },
+            );
+        }
+        assert_eq!(selected.as_deref(), Some("0123"));
+        assert!(!open, "a selection must close the picker");
     }
 }
