@@ -164,6 +164,8 @@ pub struct App {
     /// The daemon instance that issued `workspace_id`, when it reports one.
     daemon_instance: Option<String>,
     workspace_error: Option<String>,
+    /// Shown until dismissed; cleared as a whole.
+    config_problems: Vec<crate::config_report::Problem>,
     last_snapshot: Option<Snapshot>,
     pending_workspace: Option<WorkspaceSwitch>,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
@@ -186,12 +188,21 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
-        crate::terminal_config::load(&cc.egui_ctx)?;
-        let crate::app_config::Settings {
-            ui_size,
-            ui_face,
-            keymap,
-        } = crate::app_config::load()?;
+        // Configuration problems never stop startup: a window launched from
+        // the Finder or Dock has nowhere else to show them.
+        let (
+            terminal,
+            crate::app_config::Settings {
+                ui_size,
+                ui_face,
+                keymap,
+            },
+            config_problems,
+        ) = crate::config_report::load_both(crate::terminal_config::load, crate::app_config::load);
+        crate::terminal_config::install(&cc.egui_ctx, terminal);
+        for problem in &config_problems {
+            eprintln!("nekomata: {problem}");
+        }
 
         leave_zoom_keys_to_the_terminal(&cc.egui_ctx);
         cc.egui_ctx.set_theme(egui::Theme::Dark);
@@ -212,7 +223,9 @@ impl App {
         cc.egui_ctx.set_style_of(egui::Theme::Dark, style);
         cc.egui_ctx.set_fonts(crate::theme::chrome_fonts(ui_face));
         crate::render::initialize(cc)?;
-        Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, keymap)
+        let mut app = Self::connect(tokio::runtime::Runtime::new()?, &cc.egui_ctx, keymap)?;
+        app.config_problems = config_problems;
+        Ok(app)
     }
 
     fn connect(
@@ -227,6 +240,7 @@ impl App {
             workspace_id: None,
             daemon_instance: None,
             workspace_error: None,
+            config_problems: vec![],
             last_snapshot: None,
             pending_workspace: None,
             paste_requested: None,
@@ -1186,10 +1200,63 @@ impl App {
     }
 }
 
+/// Startup's configuration problems, above everything else and until
+/// dismissed: stderr is invisible when the Finder or Dock launched the GUI.
+fn config_problems_banner(
+    root_ui: &mut egui::Ui,
+    problems: &mut Vec<crate::config_report::Problem>,
+) {
+    use crate::config_report::Severity;
+    if problems.is_empty() {
+        return;
+    }
+    let mut dismissed = false;
+    egui::Panel::top("config-problems").show(root_ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.strong("Configuration problems");
+            dismissed = ui.button("Dismiss").clicked();
+        });
+        // The configured UI size applies to the body style only; the
+        // monospace style would keep egui's default.
+        let size = egui::TextStyle::Body.resolve(ui.style()).size;
+        let cap = crate::theme::ui_extent(ui.style(), CONFIG_PROBLEMS_MAX_HEIGHT);
+        // A top panel offers only its current height, so the scroll area
+        // would settle at egui's 64 px minimum without its own.
+        egui::ScrollArea::vertical()
+            .max_height(cap)
+            .min_scrolled_height(cap)
+            .show(ui, |ui| {
+                for problem in problems.iter() {
+                    let color = match problem.severity {
+                        // egui's error red falls just short of WCAG AA on
+                        // the panel background; the workspace error's does not.
+                        Severity::Error => egui::Color32::LIGHT_RED,
+                        Severity::Warning => ui.visuals().warn_fg_color,
+                    };
+                    // Monospace keeps the caret of toml's source excerpt
+                    // under the offending column.
+                    ui.label(
+                        egui::RichText::new(problem.to_string())
+                            .font(egui::FontId::monospace(size))
+                            .color(color),
+                    );
+                }
+            });
+    });
+    if dismissed {
+        problems.clear();
+    }
+}
+
+/// Room for a few problems at a 14 px body, so a long list cannot push the
+/// terminals away.
+const CONFIG_PROBLEMS_MAX_HEIGHT: f32 = 160.0;
+
 impl App {
     fn show(&mut self, root_ui: &mut egui::Ui) {
         let context = root_ui.ctx().clone();
         let ctx = &context;
+        config_problems_banner(root_ui, &mut self.config_problems);
         self.workspace_events(ctx);
         self.poll_workspace();
         if self.workspace.is_some() && self.workspace_id.is_none() {
@@ -2244,7 +2311,9 @@ fn terminal_input(
     explicit_paste: bool,
 ) {
     use crate::input::TerminalInput;
-    let (events, mods) = ctx.input(|i| (i.events.clone(), i.modifiers));
+    let (mut events, mods) = ctx.input(|i| (i.events.clone(), i.modifiers));
+    let ui_selected = ui_text_selected(ctx);
+    events.retain(|event| !ui_owns_clipboard_event(event, ui_selected));
     for input in crate::input::translate(&events, mods, explicit_paste, cfg!(target_os = "macos")) {
         match input {
             TerminalInput::Control(bytes) => {
@@ -2290,6 +2359,20 @@ fn send_to_program(selection: &mut Option<Selection>, session: &Session, msg: In
         anchor: None,
     });
     session.send(msg);
+}
+
+/// Whether text in nekomata's own widgets, such as a configuration problem,
+/// is selected for copying.
+fn ui_text_selected(ctx: &egui::Context) -> bool {
+    ctx.plugin::<egui::text_selection::LabelSelectionState>()
+        .lock()
+        .has_selection()
+}
+
+/// egui copies selected UI text itself; the terminal must not also take the
+/// event, which off macOS would send the shell an interrupt.
+fn ui_owns_clipboard_event(event: &egui::Event, ui_text_selected: bool) -> bool {
+    ui_text_selected && matches!(event, egui::Event::Copy | egui::Event::Cut)
 }
 
 #[cfg(test)]
@@ -2918,6 +3001,7 @@ mod tests {
             workspace_id: None,
             daemon_instance: None,
             workspace_error: None,
+            config_problems: vec![],
             last_snapshot: None,
             pending_workspace: None,
             paste_requested: None,
@@ -3175,6 +3259,183 @@ mod tests {
         });
     }
 
+    /// Each banner entry's text with its font family and color.
+    fn banner_entries(
+        problems: &mut Vec<crate::config_report::Problem>,
+    ) -> Vec<(String, egui::FontFamily, egui::Color32)> {
+        let ctx = egui::Context::default();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, problems)
+        });
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, problems)
+        });
+        frame
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => {
+                    let section = &text.galley.job.sections[0];
+                    Some((
+                        text.galley.text().to_owned(),
+                        section.format.font_id.family.clone(),
+                        section.format.color,
+                    ))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn configuration_problems_keep_toml_excerpts_aligned_in_monospace() {
+        use crate::config_report::Problem;
+        let mut problems = vec![Problem::error(
+            "/c.toml",
+            "TOML parse error at line 1, column 8\n  |\n1 | [font\n  |      ^",
+        )];
+        let shown = problems[0].to_string();
+        let entries = banner_entries(&mut problems);
+        let (_, family, _) = entries
+            .iter()
+            .find(|(text, ..)| *text == shown)
+            .expect("the problem is listed");
+        assert_eq!(*family, egui::FontFamily::Monospace);
+    }
+
+    #[test]
+    fn configuration_errors_use_the_window_error_red_and_warnings_another_color() {
+        use crate::config_report::Problem;
+        let mut problems = vec![
+            Problem::error("/a.toml", "broken"),
+            Problem::warning("/b.toml", "unknown key `x`"),
+        ];
+        let shown: Vec<String> = problems.iter().map(ToString::to_string).collect();
+        let entries = banner_entries(&mut problems);
+        let color = |shown: &str| {
+            entries
+                .iter()
+                .find(|(text, ..)| text == shown)
+                .map(|(.., color)| *color)
+                .expect("the problem is listed")
+        };
+        // The workspace error's red, which reads on the panel background.
+        assert_eq!(color(&shown[0]), egui::Color32::LIGHT_RED);
+        assert_ne!(color(&shown[1]), egui::Color32::LIGHT_RED);
+    }
+
+    #[test]
+    fn the_problems_banner_follows_the_configured_ui_size() {
+        use crate::config_report::Problem;
+        // (entry font size, height the list is clipped to) at a body size.
+        let measure = |body: f32| {
+            let ctx = egui::Context::default();
+            ctx.style_mut_of(ctx.theme(), |style| {
+                style
+                    .text_styles
+                    .insert(egui::TextStyle::Body, egui::FontId::proportional(body));
+            });
+            let mut problems: Vec<_> = (0..40)
+                .map(|n| Problem::warning("/c.toml", format!("unknown key `k{n}`")))
+                .collect();
+            let mut found = None;
+            let input = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 2000.0),
+                )),
+                ..Default::default()
+            };
+            // The panel grows toward its content over a few frames.
+            for _ in 0..10 {
+                let frame = crate::test_support::run(&ctx, input(), |ui| {
+                    config_problems_banner(ui, &mut problems)
+                });
+                found = frame.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().contains("k0") => Some((
+                        text.galley.job.sections[0].format.font_id.size,
+                        shape.clip_rect.height(),
+                    )),
+                    _ => None,
+                });
+            }
+            found.expect("the first entry is listed")
+        };
+        let (size, height) = measure(14.0);
+        let (large_size, large_height) = measure(28.0);
+        assert_eq!((size, large_size), (14.0, 28.0));
+        // A long list fills the cap rather than egui's 64 px scroll minimum.
+        assert!(height >= CONFIG_PROBLEMS_MAX_HEIGHT - 1.0, "{height}");
+        assert!(
+            large_height >= 2.0 * height - 1.0,
+            "{height} -> {large_height}"
+        );
+    }
+
+    #[test]
+    fn configuration_problems_stay_listed_until_dismissed() {
+        use crate::config_report::Problem;
+        let texts = |frame: &crate::test_support::CpuFrame| -> Vec<(String, egui::Pos2)> {
+            frame
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some((text.galley.text().to_owned(), text.pos)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let ctx = egui::Context::default();
+        let mut problems = vec![
+            Problem::error("/felis/config.toml", "TOML parse error"),
+            Problem::warning("/nekomata/config.toml", "unknown key `x`"),
+        ];
+        let shown: Vec<String> = problems.iter().map(ToString::to_string).collect();
+        // The scroll area learns its content's height in the first frame.
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, &mut problems)
+        });
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, &mut problems)
+        });
+        let found = texts(&frame);
+        for problem in &shown {
+            assert!(
+                found.iter().any(|(text, _)| text == problem),
+                "{problem} not in {found:?}"
+            );
+        }
+        let dismiss = found
+            .iter()
+            .find(|(text, _)| text == "Dismiss")
+            .map(|(_, pos)| *pos + egui::vec2(3.0, 3.0))
+            .expect("the banner offers to dismiss it");
+        drop(frame);
+        for pressed in [true, false] {
+            let _ = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(dismiss),
+                        egui::Event::PointerButton {
+                            pos: dismiss,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| config_problems_banner(ui, &mut problems),
+            );
+        }
+        assert!(problems.is_empty());
+        let frame = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            config_problems_banner(ui, &mut problems)
+        });
+        assert!(texts(&frame).is_empty());
+    }
+
     #[test]
     fn search_leaves_escape_to_a_modal_above_it() {
         let escape = || egui::RawInput {
@@ -3285,5 +3546,45 @@ mod tests {
         assert_eq!(tab.focused, 1);
         assert_eq!(other.focused, 2);
         assert_eq!(other.focus_history, vec![1, 2]);
+    }
+
+    #[test]
+    fn copying_selected_ui_text_stays_out_of_the_terminal() {
+        let ctx = egui::Context::default();
+        let label = |ui: &mut egui::Ui| ui.label("/c.toml is ignored: broken").rect;
+        let mut rect = egui::Rect::NOTHING;
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            rect = label(ui);
+        });
+        assert!(!ui_text_selected(&ctx));
+        let pointer = |events| egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (start, end) = (rect.left_center(), rect.right_center());
+        for events in [
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+            vec![egui::Event::PointerMoved(end)],
+            vec![button(end, false)],
+            vec![],
+        ] {
+            let _ = crate::test_support::run(&ctx, pointer(events), |ui| {
+                label(ui);
+            });
+        }
+        assert!(ui_text_selected(&ctx));
+        assert!(ui_owns_clipboard_event(&egui::Event::Copy, true));
+        assert!(ui_owns_clipboard_event(&egui::Event::Cut, true));
+        assert!(!ui_owns_clipboard_event(&egui::Event::Copy, false));
+        assert!(!ui_owns_clipboard_event(
+            &egui::Event::Paste("x".into()),
+            true
+        ));
     }
 }
