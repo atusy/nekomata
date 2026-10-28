@@ -421,7 +421,7 @@ impl App {
                                         &self.runtime,
                                         ctx,
                                         self.control.window,
-                                        Some(id),
+                                        Some((id, self.daemon_instance.as_deref())),
                                         pane_id,
                                         spec,
                                         None,
@@ -463,8 +463,16 @@ impl App {
                         self.workspace_error = Some(error);
                     }
                 }
-                (Operation::Resume, Ok(Payload::Workspace { id, snapshot })) => {
+                (
+                    Operation::Resume,
+                    Ok(Payload::Workspace {
+                        id,
+                        snapshot,
+                        instance,
+                    }),
+                ) => {
                     self.workspace_id = Some(id);
+                    self.daemon_instance = Some(instance).filter(|instance| !instance.is_empty());
                     self.last_snapshot = Some(snapshot);
                     self.workspace_error = None;
                 }

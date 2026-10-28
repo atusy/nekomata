@@ -202,7 +202,12 @@ async fn resume(
     let own = |id: u64, retained: &Snapshot| id == resume.previous && resume.saved.holds(retained);
     // Every write below may land even if its answer is lost.
     saved.lock().unwrap().sending(&resume.current);
-    let (id, retained) = workspace(daemon::exchange(stream, Request::Open { window }).await?)?;
+    let opened = daemon::exchange(stream, Request::Open { window }).await?;
+    let instance = match &opened {
+        Payload::Workspace { instance, .. } => instance.clone(),
+        _ => anyhow::bail!("unexpected nekomata daemon reply"),
+    };
+    let (id, retained) = workspace(opened)?;
     let commit = Request::Finish {
         snapshot: Some(resume.current.clone()),
     };
@@ -224,6 +229,7 @@ async fn resume(
     };
     Ok(Payload::Workspace {
         id,
+        instance,
         snapshot: resume.current,
     })
 }
@@ -261,7 +267,7 @@ async fn reserve(
 
 fn workspace(payload: Payload) -> Result<(u64, Snapshot)> {
     match payload {
-        Payload::Workspace { id, snapshot } => Ok((id, snapshot)),
+        Payload::Workspace { id, snapshot, .. } => Ok((id, snapshot)),
         _ => anyhow::bail!("unexpected nekomata daemon reply"),
     }
 }
@@ -596,6 +602,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 1,
                 snapshot: Snapshot::default(),
             }),
@@ -781,6 +788,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 3,
                 snapshot: before.acknowledged.clone().unwrap(),
             }),
@@ -934,9 +942,10 @@ mod tests {
     async fn resumed(client: &mut Client) -> u64 {
         let event = client.events.recv().await.unwrap();
         assert_eq!(event.operation, Operation::Resume);
-        let Ok(Payload::Workspace { id, .. }) = event.result else {
+        let Ok(Payload::Workspace { id, instance, .. }) = event.result else {
             panic!("expected a resumed workspace: {:?}", event.result.err())
         };
+        assert_eq!(instance, "test-daemon");
         id
     }
 
@@ -955,6 +964,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 1,
                 snapshot: Snapshot::default(),
             }),
@@ -991,6 +1001,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 3,
                 snapshot: sent,
             }),
@@ -1019,6 +1030,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 3,
                 snapshot: other,
             }),
@@ -1031,6 +1043,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 4,
                 snapshot: Snapshot::default(),
             }),
@@ -1063,6 +1076,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 5,
                 snapshot: other,
             }),
@@ -1075,6 +1089,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 3,
                 snapshot: sent,
             }),
@@ -1103,6 +1118,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 4,
                 snapshot: current.clone(),
             }),
@@ -1118,6 +1134,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 3,
                 snapshot: other,
             }),
@@ -1135,6 +1152,7 @@ mod tests {
         respond(
             &mut daemon,
             Ok(Payload::Workspace {
+                instance: "test-daemon".into(),
                 id: 6,
                 snapshot: Snapshot::default(),
             }),
