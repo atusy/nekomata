@@ -99,25 +99,6 @@ the same execution and confirmation rules as their felis bindings.
 `unbind` is a configuration directive, not a command. It takes no arguments
 and removes bindings as described below.
 
-### Compatibility aliases
-
-The following existing spellings remain accepted with their existing
-arguments. They execute the same operations as the canonical kinds. New
-configuration should use the canonical kinds above.
-
-| `kind` | Arguments | Action |
-| --- | --- | --- |
-| `new_tab` | — | Open a tab |
-| `close_tab` | — | Close the active tab |
-| `switch_tab` | `to = "next" \| "previous"` | Activate the next / previous tab |
-| `split` | `direction = "below" \| "right"` | Open a pane below / right of the active pane |
-| `close_pane` | — | Close the active pane (detaches its session) |
-| `focus_pane` | `direction = "left" \| "down" \| "up" \| "right"` or `to = "next"` | Focus a neighboring / the next pane |
-| `command_palette` | — | Open the command palette |
-| `new_workspace` | — | Switch to a new workspace |
-| `open_workspaces` | — | Open the workspace list |
-| `unbind` | — | Remove bindings (see below) |
-
 ## Rules
 
 - A sequence that starts with a shorter bound sequence can never complete and

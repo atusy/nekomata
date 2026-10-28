@@ -79,7 +79,6 @@ For example, bind the session picker and font size controls directly:
 ```
 
 See the [complete kind catalog](../spec/keymap.md#application-keymap-entries).
-The old application kind names remain supported as compatibility aliases.
 `unbind` removes bindings and is not an executable command. Shared terminal
 bindings can still be configured in felis's `[keymap]` using felis's syntax.
 

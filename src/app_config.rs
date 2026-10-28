@@ -1,7 +1,6 @@
 //! The application-layer document nekomata owns, beside felis's shared one.
 use std::path::{Path, PathBuf};
 
-use crate::layout::{Axis, Direction};
 use crate::shortcuts::{Action, AppKeymap};
 use felis_client_core::Chord;
 use felis_client_core::config::{MAX_FONT_SIZE_LOGICAL_PX, MIN_FONT_SIZE_LOGICAL_PX};
@@ -267,89 +266,15 @@ fn parse_binding(value: &toml::Value) -> Result<Option<Action>, String> {
         }
         return Ok(Some(command.action.clone()));
     }
-    let field = |name: &str| -> Result<&str, String> {
-        binding
-            .get(name)
-            .ok_or_else(|| format!("`{kind}` needs `{name}`"))?
-            .as_str()
-            .ok_or_else(|| format!("`{name}` must be a string"))
-    };
-    let invalid = |name: &str, value: &str, accepted: &[&str]| {
-        let quoted: Vec<_> = accepted.iter().map(|value| format!("`{value}`")).collect();
-        let (last, rest) = quoted.split_last().expect("every field accepts a value");
-        let choices = match rest {
-            [] => last.clone(),
-            rest => format!("{} or {last}", rest.join(", ")),
-        };
-        format!("`{value}` is not a `{name}` for `{kind}`; use {choices}")
-    };
-    let (action, fields): (_, &[&str]) = match kind {
-        "unbind" => (None, &[]),
-        "new_tab" => (Some(Action::NewTab), &[]),
-        "close_tab" => (Some(Action::CloseTab), &[]),
-        "switch_tab" => (
-            Some(match field("to")? {
-                "next" => Action::NextTab,
-                "previous" => Action::PreviousTab,
-                other => return Err(invalid("to", other, &["next", "previous"])),
-            }),
-            &["to"],
-        ),
-        "split" => (
-            Some(match field("direction")? {
-                "below" => Action::Split(Axis::Vertical),
-                "right" => Action::Split(Axis::Horizontal),
-                other => return Err(invalid("direction", other, &["below", "right"])),
-            }),
-            &["direction"],
-        ),
-        "close_pane" => (Some(Action::ClosePane), &[]),
-        "focus_pane" => (
-            Some(
-                match (
-                    binding.contains_key("direction"),
-                    binding.contains_key("to"),
-                ) {
-                    (true, true) => {
-                        return Err("`focus_pane` takes `direction` or `to`, not both".into());
-                    }
-                    (false, true) => match field("to")? {
-                        "next" => Action::NextPane,
-                        other => return Err(invalid("to", other, &["next"])),
-                    },
-                    _ => Action::Focus(match field("direction")? {
-                        "left" => Direction::Left,
-                        "down" => Direction::Down,
-                        "up" => Direction::Up,
-                        "right" => Direction::Right,
-                        other => {
-                            return Err(invalid(
-                                "direction",
-                                other,
-                                &["left", "down", "up", "right"],
-                            ));
-                        }
-                    }),
-                },
-            ),
-            &["direction", "to"],
-        ),
-        "command_palette" => (Some(Action::Palette), &[]),
-        "new_workspace" => (Some(Action::NewWorkspace), &[]),
-        "open_workspaces" => (Some(Action::OpenWorkspaces), &[]),
-        _ => {
-            return Err(format!(
-                "unknown kind `{kind}`; terminal bindings may belong in felis's config.toml"
-            ));
-        }
-    };
-    if let Some(unknown) = binding
-        .keys()
-        .find(|name| *name != "kind" && !fields.contains(&name.as_str()))
-    {
+    if kind != "unbind" {
+        return Err(format!(
+            "unknown kind `{kind}`; terminal bindings may belong in felis's config.toml"
+        ));
+    }
+    if let Some(unknown) = binding.keys().find(|name| *name != "kind") {
         return Err(format!("`{kind}` has no field `{unknown}`"));
     }
-    Ok(action)
+    Ok(None)
 }
 
 fn table<'a>(value: &'a toml::Value, path: &str) -> Result<&'a toml::Table, String> {
@@ -361,6 +286,7 @@ fn table<'a>(value: &'a toml::Value, path: &str) -> Result<&'a toml::Table, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::{Axis, Direction};
 
     /// The document with the warnings it produced.
     fn parse(text: &str) -> Result<(AppConfig, Warnings), String> {
@@ -675,18 +601,18 @@ mod tests {
     fn every_kind_binds_its_action() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
-            "f1" = { kind = "new_tab" }
-            "f2" = { kind = "close_tab" }
-            "f3" = { kind = "switch_tab", to = "next" }
-            "f4" = { kind = "switch_tab", to = "previous" }
-            "f5" = { kind = "split", direction = "below" }
-            "f6" = { kind = "split", direction = "right" }
-            "f7" = { kind = "close_pane" }
-            "f8" = { kind = "focus_pane", direction = "left" }
-            "f9" = { kind = "focus_pane", to = "next" }
-            "f10" = { kind = "command_palette" }
-            "f11" = { kind = "new_workspace" }
-            "f12" = { kind = "open_workspaces" }
+            "f1" = { kind = "tab:create" }
+            "f2" = { kind = "tab:close" }
+            "f3" = { kind = "tab:switch_next" }
+            "f4" = { kind = "tab:switch_previous" }
+            "f5" = { kind = "pane:split_below" }
+            "f6" = { kind = "pane:split_right" }
+            "f7" = { kind = "pane:close" }
+            "f8" = { kind = "pane:focus_left" }
+            "f9" = { kind = "pane:focus_next" }
+            "f10" = { kind = "command_palette:open" }
+            "f11" = { kind = "workspace:create" }
+            "f12" = { kind = "workspace:switch" }
         "#;
         let keys = [
             Key::F1,
@@ -726,11 +652,11 @@ mod tests {
     fn focus_pane_moves_in_every_direction_or_to_the_next_pane() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
-            "f1" = { kind = "focus_pane", direction = "left" }
-            "f2" = { kind = "focus_pane", direction = "down" }
-            "f3" = { kind = "focus_pane", direction = "up" }
-            "f4" = { kind = "focus_pane", direction = "right" }
-            "f5" = { kind = "focus_pane", to = "next" }
+            "f1" = { kind = "pane:focus_left" }
+            "f2" = { kind = "pane:focus_down" }
+            "f3" = { kind = "pane:focus_up" }
+            "f4" = { kind = "pane:focus_right" }
+            "f5" = { kind = "pane:focus_next" }
         "#;
         let keys = [Key::F1, Key::F2, Key::F3, Key::F4, Key::F5].map(|key| (key, Modifiers::NONE));
         assert_eq!(
@@ -751,9 +677,9 @@ mod tests {
         let text = r#"[keymap]
             "alt+c" = { kind = "unbind" }
             "alt+w" = { kind = "unbind" }
-            "ctrl+a s" = { kind = "split", direction = "below" }
-            "ctrl+a ctrl+a" = { kind = "close_pane" }
-            "alt+t" = { kind = "new_tab" }
+            "ctrl+a s" = { kind = "pane:split_below" }
+            "ctrl+a ctrl+a" = { kind = "pane:close" }
+            "alt+t" = { kind = "tab:create" }
         "#;
         assert_eq!(
             press(
@@ -781,7 +707,7 @@ mod tests {
     #[test]
     fn a_three_chord_sequence_fires_only_when_complete() {
         use eframe::egui::{Key, Modifiers};
-        let text = "[keymap]\n\"ctrl+a b c\" = { kind = \"close_tab\" }";
+        let text = "[keymap]\n\"ctrl+a b c\" = { kind = \"tab:close\" }";
         let none = Modifiers::NONE;
         assert_eq!(
             press(
@@ -805,13 +731,13 @@ mod tests {
             r#"[keymap]
             "alt+x" = { kind = "nope" }
             "alt+y" = { kind = "split", direction = "vertical" }
-            "alt+z" = { kind = "new_tab", extra = 1 }
-            "ctrl+ctrl+a" = { kind = "new_tab" }
+            "alt+z" = { kind = "tab:create", extra = 1 }
+            "ctrl+ctrl+a" = { kind = "tab:create" }
             "alt+q" = "new_tab"
             "alt+f" = { kind = "copy", what = "system" }
-            "alt+g" = { kind = "focus_pane", direction = "left", to = "next" }
+            "alt+g" = { kind = "pane:focus_left", to = "next" }
             "alt+h" = { kind = "switch_tab" }
-            "   " = { kind = "new_tab" }
+            "   " = { kind = "tab:create" }
         "#,
         )
         .unwrap();
@@ -822,23 +748,6 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("felis's config.toml")),
             "{warnings:#?}"
-        );
-    }
-
-    #[test]
-    fn an_unknown_value_is_reported_with_the_accepted_ones() {
-        let (config, warnings) = parse(
-            r#"[keymap]
-            "alt+y" = { kind = "split", direction = "down" }
-        "#,
-        )
-        .unwrap();
-        assert_eq!(config.keymap, AppKeymap::default());
-        assert_eq!(
-            warnings,
-            [
-                "`keymap.\"alt+y\"` is dropped: `down` is not a `direction` for `split`; use `below` or `right`"
-            ]
         );
     }
 
@@ -881,6 +790,31 @@ mod tests {
     }
 
     #[test]
+    fn legacy_application_kinds_are_rejected() {
+        for kind in [
+            "new_tab",
+            "close_tab",
+            "switch_tab",
+            "split",
+            "close_pane",
+            "focus_pane",
+            "command_palette",
+            "new_workspace",
+            "open_workspaces",
+        ] {
+            let (config, warnings) =
+                parse(&format!("[keymap]\n\"f1\" = {{ kind = \"{kind}\" }}")).unwrap();
+            assert_eq!(config.keymap, AppKeymap::default(), "{kind}");
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("unknown kind")),
+                "{kind}: {warnings:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_kinds_suggest_the_terminal_document_without_claiming_support() {
         for kind in ["copy", "run", "new_tba", "future_terminal_action"] {
             let (config, warnings) =
@@ -899,9 +833,9 @@ mod tests {
     fn escape_cannot_continue_a_sequence() {
         let (config, warnings) = parse(
             r#"[keymap]
-            "ctrl+a escape" = { kind = "close_tab" }
-            "ctrl+a shift+escape" = { kind = "close_tab" }
-            "escape" = { kind = "new_tab" }
+            "ctrl+a escape" = { kind = "tab:close" }
+            "ctrl+a shift+escape" = { kind = "tab:close" }
+            "escape" = { kind = "tab:create" }
         "#,
         )
         .unwrap();
@@ -931,10 +865,10 @@ mod tests {
         };
         let (config, warnings) = parse(&format!(
             r#"[keymap]
-            "{command}+c" = {{ kind = "new_tab" }}
-            "{command}+x" = {{ kind = "new_tab" }}
-            "alt+w {command}+v" = {{ kind = "close_tab" }}
-            "{command}+shift+c" = {{ kind = "close_tab" }}
+            "{command}+c" = {{ kind = "tab:create" }}
+            "{command}+x" = {{ kind = "tab:create" }}
+            "alt+w {command}+v" = {{ kind = "tab:close" }}
+            "{command}+shift+c" = {{ kind = "tab:close" }}
         "#
         ))
         .unwrap();
@@ -960,10 +894,10 @@ mod tests {
     fn chords_the_window_cannot_deliver_are_dropped() {
         let (config, warnings) = parse(
             r#"[keymap]
-            "alt+é" = { kind = "new_tab" }
-            "alt+w ctrl+¥" = { kind = "close_tab" }
-            "super+n" = { kind = "close_tab" }
-            "ctrl+'" = { kind = "command_palette" }
+            "alt+é" = { kind = "tab:create" }
+            "alt+w ctrl+¥" = { kind = "tab:close" }
+            "super+n" = { kind = "tab:close" }
+            "ctrl+'" = { kind = "command_palette:open" }
         "#,
         )
         .unwrap();
@@ -996,8 +930,8 @@ mod tests {
     fn a_sequence_behind_a_bound_chord_is_dropped_with_a_warning() {
         let (config, warnings) = parse(
             r#"[keymap]
-            "alt+c" = { kind = "new_tab" }
-            "alt+c x" = { kind = "close_tab" }
+            "alt+c" = { kind = "tab:create" }
+            "alt+c x" = { kind = "tab:close" }
         "#,
         )
         .unwrap();
@@ -1008,7 +942,7 @@ mod tests {
     #[test]
     fn binding_a_chord_on_its_own_executes() {
         use eframe::egui::{Key, Modifiers};
-        let text = "[keymap]\n\"alt+w\" = { kind = \"close_tab\" }";
+        let text = "[keymap]\n\"alt+w\" = { kind = \"tab:close\" }";
         assert_eq!(
             press(text, &[(Key::W, Modifiers::ALT), (Key::C, Modifiers::NONE)]),
             [Action::CloseTab]
@@ -1019,7 +953,7 @@ mod tests {
     fn an_unbind_that_removes_a_configured_binding_warns() {
         let (config, warnings) = parse(
             r#"[keymap]
-            "Alt+w v" = { kind = "split", direction = "right" }
+            "Alt+w v" = { kind = "pane:split_right" }
             "alt+w" = { kind = "unbind" }
         "#,
         )
@@ -1044,8 +978,8 @@ mod tests {
     fn later_sorting_spellings_of_one_chord_win() {
         use eframe::egui::{Key, Modifiers};
         let text = r#"[keymap]
-            "shift+alt+n" = { kind = "close_tab" }
-            "alt+shift+n" = { kind = "new_tab" }
+            "shift+alt+n" = { kind = "tab:close" }
+            "alt+shift+n" = { kind = "tab:create" }
         "#;
         assert_eq!(
             press(text, &[(Key::N, Modifiers::ALT | Modifiers::SHIFT)]),
