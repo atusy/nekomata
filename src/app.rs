@@ -21,8 +21,11 @@ use crate::{
 
 struct Pane {
     session: Arc<Session>,
-    dims: (u16, u16),
+    /// The size last sent to felis; `None` until one is, or after reconnecting.
+    requested: Option<RequestedDims>,
     selection: Option<Selection>,
+    /// The session's `selection_epoch` that `selection` was made against.
+    selection_epoch: u64,
     reported_focus: Option<bool>,
     scroll_remainder: f32,
     mouse_capture: Option<felis_protocol::messages::MouseButton>,
@@ -45,12 +48,34 @@ struct Pane {
     pending_paste: Option<crate::paste::PendingPaste>,
 }
 
+/// Drops a selection made before the screen switched, resized or the view
+/// moved. Drawing and `Action::Copy` hold `state` until they have used or
+/// replaced the selection, so the session thread cannot advance the epoch in
+/// between; `Pane::expire_selection` releases it before `terminal_input`
+/// copies, which leaves that path a window of one lock hand-off.
+fn expire_selection(
+    selection: &mut Option<Selection>,
+    seen_epoch: &mut u64,
+    state: &crate::session::State,
+) {
+    if *seen_epoch != state.selection_epoch {
+        *seen_epoch = state.selection_epoch;
+        *selection = None;
+    }
+}
+
 impl Pane {
+    fn expire_selection(&mut self) {
+        let state = self.session.state.lock().unwrap();
+        expire_selection(&mut self.selection, &mut self.selection_epoch, &state);
+    }
+
     fn from_session(session: Arc<Session>) -> Self {
         Self {
             session,
-            dims: (0, 0),
+            requested: None,
             selection: None,
+            selection_epoch: 0,
             reported_focus: None,
             scroll_remainder: 0.0,
             mouse_capture: None,
@@ -857,7 +882,7 @@ impl App {
                 pane.session = pending.session;
                 pane.links = Default::default();
                 pane.pending_paste = None;
-                pane.dims = (0, 0);
+                pane.requested = None;
                 pane.selection = None;
                 pane.reported_focus = None;
                 pane.scroll_remainder = 0.0;
@@ -1142,9 +1167,10 @@ impl App {
                 }
             }
             Action::Copy => {
-                let pane = &self.panes[&self.tabs[self.active].focused];
+                let pane = self.panes.get_mut(&self.tabs[self.active].focused).unwrap();
+                let state = pane.session.state.lock().unwrap();
+                expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
                 if let Some(selection) = pane.selection {
-                    let state = pane.session.state.lock().unwrap();
                     ctx.copy_text(selection.extract_text(state.screen.screen()));
                 }
             }
@@ -1499,6 +1525,7 @@ impl App {
         }
         if !modal {
             let pane = self.panes.get_mut(&focused).unwrap();
+            pane.expire_selection();
             terminal_input(
                 ctx,
                 &mut pane.selection,
@@ -1897,15 +1924,15 @@ fn draw_pane(
 ) {
     let (generation, background) = {
         let state = pane.session.state.lock().unwrap();
-        let [r, g, b, _] =
-            felis_render_core::palette::linear_rgba_to_srgb8(state.colors.theme().bg);
-        (state.reconnects, Color32::from_rgb(r, g, b))
+        let background =
+            crate::render::margin_color(state.colors.theme(), state.screen.reverse_video());
+        (state.reconnects, background)
     };
     if generation != pane.connection_generation {
         pane.connection_generation = generation;
         pane.links = Default::default();
         pane.pending_paste = None;
-        pane.dims = (0, 0);
+        pane.requested = None;
         pane.reported_focus = None;
         pane.selection = None;
         pane.mouse_capture = None;
@@ -1938,23 +1965,20 @@ fn draw_pane(
     let renderer = pane.renderer.as_mut().unwrap();
     renderer.set_font(font_size, ppp);
     let Vec2 { x: cw, y: ch } = renderer.cell_size();
-    let cols = (rect.width() / cw).floor().clamp(1.0, 1000.0) as u16;
-    let rows = (rect.height() / ch).floor().clamp(1.0, 500.0) as u16;
+    let requested = crate::render::requested_dims(rect, renderer.cell_px(), ppp);
     // Split the unused fractional row between the top and bottom margins.
+    let rows = crate::render::layout_rows(rect, renderer.cell_px()[1], ppp);
     let text_rect = crate::render::terminal_rect(rect, rows, ch, ppp);
-    if pane.dims != (rows, cols) {
-        pane.dims = (rows, cols);
-        pane.selection = None;
-        pane.session.send(InputMsg::Resize {
-            dims: RequestedDims {
-                rows: rows.into(),
-                cols: cols.into(),
-                pixel_w: (text_rect.width().max(0.0) * ppp).round() as u32,
-                pixel_h: (text_rect.height().max(0.0) * ppp).round() as u32,
-            },
-        });
+    if let Some((dims, grid_changed)) = resize_effect(pane.requested, requested) {
+        if grid_changed {
+            pane.selection = None;
+        }
+        pane.requested = Some(dims);
+        pane.session.send(InputMsg::Resize { dims });
     }
     let mut state = pane.session.state.lock().unwrap();
+    // Held from here through painting and selection gestures below.
+    expire_selection(&mut pane.selection, &mut pane.selection_epoch, &state);
     let connected = state.connected;
     let painter = painter.with_clip_rect(text_rect);
     {
@@ -1987,16 +2011,24 @@ fn draw_pane(
     let shadow = &state.screen;
     let screen = shadow.screen();
     let cursor = screen.cursor();
+    let geometry = crate::render::PaneGeometry {
+        text_rect,
+        cell: Vec2::new(cw, ch),
+        cols: screen.cols(),
+        rows: screen.rows(),
+    };
     // Enabling XIM before the native window receives focus can consume its
     // pending input/focus events. Only the active native window owns the IME.
     if terminal_input_enabled && *focused == id && ui.input(|input| input.focused) {
-        let pos = text_rect.min + Vec2::new(f32::from(cursor.col) * cw, f32::from(cursor.row) * ch);
         ui.output_mut(|output| {
             output.ime = Some(egui::output::IMEOutput {
                 purpose: egui::IMEPurpose::Terminal,
                 should_interrupt_composition: false,
                 rect: text_rect,
-                cursor_rect: Rect::from_min_size(pos, Vec2::new(cw, ch)),
+                cursor_rect: geometry.cell_rect(GridPos {
+                    row: cursor.row,
+                    col: cursor.col,
+                }),
             })
         });
     }
@@ -2050,16 +2082,10 @@ fn draw_pane(
     }
     let modifiers = ui.input(|input| input.modifiers);
     let target_at = |pos: Pos2| {
-        if !text_rect.contains(pos) {
-            return None;
-        }
-        let col = ((pos.x - text_rect.left()) / cw).floor() as u16;
-        let row = ((pos.y - text_rect.top()) / ch).floor() as u16;
-        screen
-            .cell(row, col)
-            .and_then(|cell| cell.link)
-            .and_then(|id| shadow.hyperlink(id))
-            .and_then(|link| felis_client_core::ActivationTarget::parse(link.uri.as_str()).ok())
+        geometry
+            .cell_at(pos)
+            .and_then(|cell| link_at(shadow, cell))
+            .and_then(|uri| felis_client_core::ActivationTarget::parse(uri).ok())
     };
     // A link owns its whole primary-button gesture, even after the modifier
     // changes or the pointer leaves the URL. A TUI press retains its release.
@@ -2094,16 +2120,10 @@ fn draw_pane(
     }
     if response.hovered()
         && let Some(pos) = ui.input(|input| input.pointer.hover_pos())
-        && text_rect.contains(pos)
+        && let Some(uri) = geometry.cell_at(pos).and_then(|cell| link_at(shadow, cell))
     {
-        let col = ((pos.x - text_rect.left()) / cw).floor() as u16;
-        let row = ((pos.y - text_rect.top()) / ch).floor() as u16;
-        if let Some(link) = screen
-            .cell(row, col)
-            .and_then(|cell| cell.link)
-            .and_then(|id| shadow.hyperlink(id))
         {
-            match felis_client_core::ActivationTarget::parse(link.uri.as_str()) {
+            match felis_client_core::ActivationTarget::parse(uri) {
                 Ok(target) => {
                     let hint = crate::links::hint(&target, cfg!(target_os = "macos"));
                     response.clone().on_hover_ui_at_pointer(|ui| {
@@ -2127,14 +2147,7 @@ fn draw_pane(
         && !link_gesture
         && (!mouse_mode || ui.input(|i| i.modifiers.shift))
     {
-        let cell_at = |pos: Pos2| GridPos {
-            col: ((pos.x - text_rect.left()) / cw)
-                .floor()
-                .clamp(0.0, f32::from(screen.cols().saturating_sub(1))) as u16,
-            row: ((pos.y - text_rect.top()) / ch)
-                .floor()
-                .clamp(0.0, f32::from(screen.rows().saturating_sub(1))) as u16,
-        };
+        let cell_at = |pos: Pos2| geometry.clamped_cell(pos);
         if response.drag_started() {
             let origin = ui
                 .input(|input| input.pointer.press_origin())
@@ -2211,9 +2224,8 @@ fn draw_pane(
                 }
                 _ => continue,
             };
-            pane.session.send(mouse_input(
-                ui, text_rect, pos, cw, ch, pane.dims, button, action,
-            ));
+            pane.session
+                .send(mouse_input(ui, &geometry, pos, button, action));
         }
     }
     if response.hovered() {
@@ -2234,11 +2246,8 @@ fn draw_pane(
                 for _ in 0..lines.unsigned_abs().min(100) {
                     pane.session.send(mouse_input(
                         ui,
-                        text_rect,
+                        &geometry,
                         pos,
-                        cw,
-                        ch,
-                        pane.dims,
                         Some(button),
                         MouseAction::Press,
                     ));
@@ -2250,14 +2259,10 @@ fn draw_pane(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mouse_input(
     ui: &egui::Ui,
-    rect: Rect,
+    geometry: &crate::render::PaneGeometry,
     pos: Pos2,
-    cw: f32,
-    ch: f32,
-    dims: (u16, u16),
     button: Option<felis_protocol::messages::MouseButton>,
     action: felis_protocol::messages::MouseAction,
 ) -> InputMsg {
@@ -2267,30 +2272,42 @@ fn mouse_input(
     mods.set(InputMods::SHIFT, modifiers.shift);
     mods.set(InputMods::ALT, modifiers.alt);
     mods.set(InputMods::CTRL, modifiers.ctrl);
+    let ([x, y], [px, py]) = geometry.mouse_position(pos, ui.ctx().pixels_per_point());
     InputMsg::Mouse(MouseEvent {
         button,
         action,
         mods,
-        x: ((pos.x - rect.left()) / cw)
-            .floor()
-            .clamp(0.0, f32::from(dims.1 - 1)) as u16
-            + 1,
-        y: ((pos.y - rect.top()) / ch)
-            .floor()
-            .clamp(0.0, f32::from(dims.0 - 1)) as u16
-            + 1,
-        px: (((pos.x - rect.left()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
-            .saturating_add(1),
-        py: (((pos.y - rect.top()).max(0.0) * ui.ctx().pixels_per_point()) as u16)
-            .saturating_add(1),
+        x,
+        y,
+        px,
+        py,
     })
 }
 
-/// egui zooms the whole window on Ctrl (Cmd on macOS) with -, =, + or 0 after
-/// the frame has already forwarded those keys to the program; nekomata's own
-/// font-size actions cover zooming.
+/// Text size is the terminal font size, set by felis's font size actions.
+/// egui's built-in Cmd/Ctrl + `+` `=` `-` `0` would also rescale the whole UI
+/// whenever those keys are not bound to such an action.
 fn leave_zoom_keys_to_the_terminal(ctx: &egui::Context) {
     ctx.options_mut(|options| options.zoom_with_keyboard = false);
+}
+
+/// The resize that a frame's size calls for after `sent`: the size to send
+/// and whether its rows or columns differ, or `None` when nothing changed or
+/// the pane requests no size. Pixel sizes change with display scale and font
+/// steps even when the grid does not.
+fn resize_effect(
+    sent: Option<RequestedDims>,
+    now: Option<RequestedDims>,
+) -> Option<(RequestedDims, bool)> {
+    let now = now.filter(|now| sent != Some(*now))?;
+    let grid_changed = sent.is_none_or(|old| (old.rows, old.cols) != (now.rows, now.cols));
+    Some((now, grid_changed))
+}
+
+/// The OSC 8 URI of the link drawn at `cell`.
+fn link_at(shadow: &felis_client_core::ShadowScreen, cell: GridPos) -> Option<&str> {
+    let id = shadow.screen().cell(cell.row, cell.col)?.link?;
+    shadow.hyperlink(id).map(|link| link.uri.as_str())
 }
 
 /// Native clipboard replies are valid for one frame and one connection only.
@@ -2489,6 +2506,29 @@ mod tests {
     }
 
     #[test]
+    fn a_resize_is_sent_for_pixel_changes_but_clears_only_on_grid_changes() {
+        let dims = |rows, cols, pixel_w| RequestedDims {
+            rows,
+            cols,
+            pixel_w,
+            pixel_h: rows * 20,
+        };
+        let sent = Some(dims(24, 80, 800));
+        assert_eq!(resize_effect(sent, sent), None);
+        assert_eq!(resize_effect(sent, None), None, "too small to request");
+        // A display scale change keeps the grid but not its pixels.
+        assert_eq!(
+            resize_effect(sent, Some(dims(24, 80, 1600))),
+            Some((dims(24, 80, 1600), false))
+        );
+        assert_eq!(
+            resize_effect(sent, Some(dims(24, 81, 810))),
+            Some((dims(24, 81, 810), true))
+        );
+        assert_eq!(resize_effect(None, sent), Some((dims(24, 80, 800), true)));
+    }
+
+    #[test]
     fn zoom_keys_do_not_zoom_the_window() {
         let ctx = egui::Context::default();
         leave_zoom_keys_to_the_terminal(&ctx);
@@ -2592,6 +2632,35 @@ mod tests {
     }
 
     #[test]
+    fn an_advanced_selection_epoch_expires_the_pane_selection() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // This current-thread runtime is never driven: no daemon is contacted.
+        let session = Arc::new(Session::start(
+            &runtime,
+            egui::Context::default(),
+            Target::Local("/unused-nekomata-test.sock".into()),
+            None,
+            None,
+            vec![],
+        ));
+        let mut pane = Pane::from_session(session);
+        let selection = Some(Selection::new(GridPos { row: 0, col: 1 }));
+        pane.selection = selection;
+        pane.expire_selection();
+        assert_eq!(pane.selection, selection, "nothing moved yet");
+        pane.session.state.lock().unwrap().selection_epoch += 1;
+        pane.expire_selection();
+        assert_eq!(pane.selection, None);
+        // A selection made on the new screen stays.
+        pane.selection = selection;
+        pane.expire_selection();
+        assert_eq!(pane.selection, selection);
+    }
+
+    #[test]
     fn unsafe_paste_stops_forwarding_the_rest_of_the_input_frame() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -2646,6 +2715,61 @@ mod tests {
         );
         assert_eq!(pending.unwrap().into_bytes(), b"echo test\n");
         assert_eq!(selection, original, "a later key would clear the selection");
+    }
+
+    #[test]
+    fn link_lookup_resolves_the_spacer_of_a_wide_linked_character() {
+        use felis_grid::{
+            Cell, StyleTable,
+            wire::{RowEncode, encode_row},
+        };
+        use felis_protocol::{RowPayload, messages::GridMsg};
+        let mut shadow = felis_client_core::ShadowScreen::new(1, 4);
+        shadow
+            .apply(&GridMsg::Hyperlink {
+                id: 1,
+                anchor: None,
+                uri: "https://example.com/".into(),
+            })
+            .unwrap();
+        // felis-grid gives the spacer of a wide print the pen's link
+        // (editing.rs, `width == 2`); this pins that nekomata reads it there.
+        let link = std::num::NonZeroU16::new(1);
+        let cells = [
+            Cell {
+                grapheme: Grapheme::Char('字'),
+                link,
+                ..Cell::default()
+            },
+            Cell {
+                grapheme: Grapheme::Spacer,
+                link,
+                ..Cell::default()
+            },
+        ];
+        let bytes = encode_row(
+            RowEncode {
+                cells: &cells,
+                pad_to: 4,
+                sized_cells: &[],
+                soft_wrap_continued: false,
+            },
+            &StyleTable::new(),
+        )
+        .unwrap();
+        shadow
+            .apply(&GridMsg::RowDelta {
+                rows: vec![(0, RowPayload(bytes))],
+            })
+            .unwrap();
+        for col in [0, 1] {
+            assert_eq!(
+                link_at(&shadow, GridPos { row: 0, col }),
+                Some("https://example.com/"),
+                "column {col}"
+            );
+        }
+        assert_eq!(link_at(&shadow, GridPos { row: 0, col: 2 }), None);
     }
 
     #[test]

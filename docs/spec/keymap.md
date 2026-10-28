@@ -154,6 +154,9 @@ configuration should use the canonical kinds above.
 - nekomata bindings can invoke public terminal commands as well as workspace,
   tab and pane commands. felis's shared keymap remains the fallback and uses
   its own unchanged vocabulary.
+- The window has no zoom of its own: Cmd/Ctrl with `+`, `=`, `-` or `0`, when
+  not bound to a font size action, reaches the terminal program like any other key
+  and never rescales the UI.
 
 Unknown application `kind` values are dropped with a warning suggesting that
 terminal bindings may belong in felis's `config.toml`. This is a general hint,

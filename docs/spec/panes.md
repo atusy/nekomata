@@ -32,6 +32,14 @@ is distinct from the felis session ID.
 
 `FELIS_SOCKET` selects a local felis daemon other than the default.
 
+## Terminal size
+
+- A pane requests the number of whole cells that fit in it, up to 1000
+  columns and 500 rows, and a pixel size of exactly those cells, whenever
+  either changes (for example after a display scale or font size change).
+- A pane too small to hold one cell requests no size, so it never shrinks a
+  session other clients share to 1x1. The session keeps its last size.
+
 ## Listing felis sessions
 
 ```sh

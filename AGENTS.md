@@ -9,7 +9,7 @@ nekomata is a Rust 2024 native terminal frontend built with eframe/egui. The fel
 - `src/render.rs`, `src/presentation.rs`: composing felis's GPU renderer into egui, and native input and repaint deadlines adapted to felis presentation state.
 - `src/session.rs`, `src/ssh.rs`, `src/colors.rs`: asynchronous felis connections, ordered input and terminal state; the SSH relay; per-session color state.
 - `src/input.rs`: translation of keyboard, IME and clipboard events into terminal input.
-- `src/terminal_search.rs`, `src/links.rs`, `src/paste.rs`, `src/rectangle.rs`: scrollback search, OSC 8 link opening, paste confirmation, and rectangular selection.
+- `src/terminal_search.rs`, `src/links.rs`, `src/paste.rs`, `src/rectangle.rs`, `src/selection.rs`: scrollback search, OSC 8 link opening, paste confirmation, rectangular selection, and which grid changes invalidate a selection.
 - `src/daemon.rs`, `src/workspace.rs`, `src/workspace_client.rs`: retained workspaces, versioned leases, and asynchronous layout synchronization.
 - `src/control.rs`: per-window CLI commands and workspace-aware window discovery.
 - `src/layout.rs`, `src/shortcuts.rs`: pane layout, navigation, and keyboard actions.

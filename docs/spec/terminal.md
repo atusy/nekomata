@@ -55,6 +55,14 @@ daemon delivers each write to at most one window attached to the session.
   word and triple-click a line.
 - When the terminal program uses the mouse, Shift+drag selects text and
   Shift+Alt+drag selects a rectangle.
+- A selection is cleared when the terminal switches between the main and
+  alternate screens, when the view moves to other lines (scrolling, a search
+  or prompt jump, or returning to live output), when the terminal's row or
+  column count changes (also by another client of the session), and on
+  reconnection. Output that scrolls a browsed view along with its lines keeps
+  the selection.
+- A selection keeps its position on screen, not the text under it: output
+  that overwrites or scrolls the live screen changes what Copy takes.
 
 ## Links
 
@@ -131,6 +139,9 @@ daemon delivers each write to at most one window attached to the session.
 
 - Only visible local panes request new frames; hidden panes stop requesting
   updates. SSH panes receive pushed frames.
+- Inside a pane's 2-point border, the area outside whole cells takes the
+  terminal's default background, or its default foreground while reverse
+  video (DECSCNM) is on. The border keeps the window color.
 
 ## Reconnection
 

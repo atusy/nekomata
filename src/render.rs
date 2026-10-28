@@ -6,6 +6,7 @@ use eframe::{
     egui_wgpu::{RenderState, wgpu},
 };
 use felis_client_core::ImageShadow;
+use felis_protocol::messages::RequestedDims;
 use felis_render_core::{ImageData, ImageSource, SelectionRange};
 use felis_render_wgpu::{Renderer as GpuRenderer, RendererConfig};
 use felis_shaping::FontStack;
@@ -57,6 +58,113 @@ pub fn terminal_rect(rect: Rect, rows: u16, cell_height: f32, ppp: f32) -> Rect 
         centered.min.round_to_pixels(ppp),
         centered.size().round_to_pixels(ppp),
     )
+}
+
+/// nekomata's own grid limits; felis accepts up to `MAX_GRID_COLS` and
+/// `MAX_GRID_ROWS` (2048) and clamps larger requests itself.
+const MAX_REQUESTED_COLS: u32 = 1000;
+const MAX_REQUESTED_ROWS: u32 = 500;
+
+/// The terminal size that fits whole `cell_px` cells into `rect`, or `None`
+/// when not even one fits: a 1x1 request would resize a shared session for
+/// every other client attached to it.
+pub fn requested_dims(rect: Rect, cell_px: [u32; 2], ppp: f32) -> Option<RequestedDims> {
+    let [cell_w, cell_h] = cell_px;
+    let cols = whole_cells(rect.width(), cell_w, ppp, MAX_REQUESTED_COLS)?;
+    let rows = whole_cells(rect.height(), cell_h, ppp, MAX_REQUESTED_ROWS)?;
+    Some(RequestedDims {
+        rows,
+        cols,
+        pixel_w: cols * cell_w,
+        pixel_h: rows * cell_h,
+    })
+}
+
+/// The rows a pane lays out and centers, whether or not it can request a
+/// size: a pane narrower than one cell still shows as many rows as fit.
+pub fn layout_rows(rect: Rect, cell_h: u32, ppp: f32) -> u16 {
+    whole_cells(rect.height(), cell_h, ppp, MAX_REQUESTED_ROWS).map_or(1, |rows| rows as u16)
+}
+
+/// How many whole `cell` physical pixels fit in `extent` points, capped at
+/// `max`; `None` when not one does.
+fn whole_cells(extent: f32, cell: u32, ppp: f32, max: u32) -> Option<u32> {
+    // A zero cell (a degenerate font metric) would divide to infinity; a NaN
+    // extent or ppp fails the comparison by itself.
+    let count = (extent * ppp / cell as f32).floor();
+    (cell > 0 && count >= 1.0).then(|| (count as u32).min(max))
+}
+
+/// The pane area around the terminal grid. Under DECSCNM it takes the
+/// foreground, as felis's own letterbox does, or the margins would frame the
+/// reversed screen in a visible border.
+pub fn margin_color(theme: &felis_render_core::palette::Theme, reverse_video: bool) -> Color32 {
+    let linear = if reverse_video { theme.fg } else { theme.bg };
+    let [r, g, b, _] = felis_render_core::palette::linear_rgba_to_srgb8(linear);
+    Color32::from_rgb(r, g, b)
+}
+
+/// One frame's mapping between pane points and the cells felis drew.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaneGeometry {
+    /// Where cell (0, 0) starts; the grid extends right and down from here.
+    pub text_rect: Rect,
+    pub cell: Vec2,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+impl PaneGeometry {
+    /// The cell under `pos`, or `None` outside the drawn grid. Cells are
+    /// half-open, so the grid's right and bottom edges belong to no cell.
+    pub fn cell_at(&self, pos: Pos2) -> Option<felis_client_core::GridPos> {
+        let col = ((pos.x - self.text_rect.left()) / self.cell.x).floor();
+        let row = ((pos.y - self.text_rect.top()) / self.cell.y).floor();
+        let inside = |index: f32, len: u16| (0.0..f32::from(len)).contains(&index);
+        (inside(col, self.cols) && inside(row, self.rows)).then_some(felis_client_core::GridPos {
+            col: col as u16,
+            row: row as u16,
+        })
+    }
+
+    /// The nearest cell to `pos`, so a drag past an edge extends to it.
+    pub fn clamped_cell(&self, pos: Pos2) -> felis_client_core::GridPos {
+        felis_client_core::GridPos {
+            col: ((pos.x - self.text_rect.left()) / self.cell.x)
+                .floor()
+                .clamp(0.0, f32::from(self.cols.saturating_sub(1))) as u16,
+            row: ((pos.y - self.text_rect.top()) / self.cell.y)
+                .floor()
+                .clamp(0.0, f32::from(self.rows.saturating_sub(1))) as u16,
+        }
+    }
+
+    /// The 1-based `(x, y)` cell and `(px, py)` physical pixel a mouse report
+    /// names for `pos`, as xterm numbers them. The cell clamps to the drawn
+    /// grid; pixels clamp only at the text origin, as felis-client's do.
+    pub fn mouse_position(&self, pos: Pos2, ppp: f32) -> ([u16; 2], [u16; 2]) {
+        let cell = self.clamped_cell(pos);
+        let pixel = |offset: f32| ((offset.max(0.0) * ppp) as u16).saturating_add(1);
+        (
+            [cell.col + 1, cell.row + 1],
+            [
+                pixel(pos.x - self.text_rect.left()),
+                pixel(pos.y - self.text_rect.top()),
+            ],
+        )
+    }
+
+    /// The screen rectangle of `cell`, for the IME candidate window.
+    pub fn cell_rect(&self, cell: felis_client_core::GridPos) -> Rect {
+        Rect::from_min_size(
+            self.text_rect.min
+                + Vec2::new(
+                    f32::from(cell.col) * self.cell.x,
+                    f32::from(cell.row) * self.cell.y,
+                ),
+            self.cell,
+        )
+    }
 }
 
 pub struct Renderer {
@@ -131,6 +239,11 @@ impl Renderer {
             self.ppp = ppp;
             self.rendered = false;
         }
+    }
+
+    pub fn cell_px(&self) -> [u32; 2] {
+        let metrics = self.gpu.cell_metrics();
+        [metrics.width, metrics.height]
     }
 
     pub fn cell_size(&self) -> Vec2 {
@@ -338,6 +451,135 @@ mod tests {
         }
     }
 
+    fn geometry() -> PaneGeometry {
+        // 4 x 2 cells of 10 x 20, in a text area 7 points wider than the grid.
+        PaneGeometry {
+            text_rect: Rect::from_min_size(Pos2::new(100.0, 50.0), Vec2::new(47.0, 40.0)),
+            cell: Vec2::new(10.0, 20.0),
+            cols: 4,
+            rows: 2,
+        }
+    }
+
+    #[test]
+    fn points_past_the_last_cell_hit_no_cell() {
+        use felis_client_core::GridPos;
+        let geometry = geometry();
+        assert_eq!(
+            geometry.cell_at(Pos2::new(139.9, 89.9)),
+            Some(GridPos { row: 1, col: 3 })
+        );
+        // The horizontal remainder and the far edges belong to no cell.
+        assert_eq!(geometry.cell_at(Pos2::new(140.0, 60.0)), None);
+        assert_eq!(geometry.cell_at(Pos2::new(147.0, 60.0)), None);
+        assert_eq!(geometry.cell_at(Pos2::new(110.0, 90.0)), None);
+        assert_eq!(geometry.cell_at(Pos2::new(99.9, 60.0)), None);
+    }
+
+    #[test]
+    fn points_outside_the_grid_clamp_to_its_nearest_drawn_cell() {
+        use felis_client_core::GridPos;
+        let geometry = geometry();
+        assert_eq!(
+            geometry.clamped_cell(Pos2::new(500.0, 500.0)),
+            GridPos { row: 1, col: 3 }
+        );
+        assert_eq!(
+            geometry.clamped_cell(Pos2::new(0.0, 0.0)),
+            GridPos { row: 0, col: 0 }
+        );
+        let empty = PaneGeometry {
+            cols: 0,
+            rows: 0,
+            ..geometry
+        };
+        assert_eq!(
+            empty.clamped_cell(Pos2::new(500.0, 500.0)),
+            GridPos { row: 0, col: 0 }
+        );
+    }
+
+    #[test]
+    fn mouse_reports_name_one_based_cells_within_the_drawn_grid() {
+        let geometry = geometry();
+        // Cell (1, 2) at 2 physical pixels per point.
+        assert_eq!(
+            geometry.mouse_position(Pos2::new(125.0, 71.0), 2.0),
+            ([3, 2], [51, 43])
+        );
+        // Past the drawn grid, even inside a larger requested size.
+        assert_eq!(
+            geometry.mouse_position(Pos2::new(500.0, 500.0), 1.0).0,
+            [4, 2]
+        );
+        assert_eq!(
+            geometry.mouse_position(Pos2::new(0.0, 0.0), 1.0),
+            ([1, 1], [1, 1])
+        );
+    }
+
+    #[test]
+    fn requested_pixels_cover_whole_cells_only() {
+        // 4.7 x 2.25 cells of 10 x 20 points at 2 physical pixels per point.
+        let pane = Rect::from_min_size(Pos2::new(3.0, 5.0), Vec2::new(47.0, 45.0));
+        assert_eq!(
+            requested_dims(pane, [20, 40], 2.0),
+            Some(RequestedDims {
+                rows: 2,
+                cols: 4,
+                pixel_w: 80,
+                pixel_h: 80,
+            })
+        );
+    }
+
+    #[test]
+    fn a_pane_smaller_than_one_cell_requests_no_size() {
+        let cell = [20, 40];
+        let pane = |w, h| Rect::from_min_size(Pos2::ZERO, Vec2::new(w, h));
+        assert_eq!(requested_dims(pane(9.9, 45.0), cell, 2.0), None);
+        assert_eq!(requested_dims(pane(47.0, 19.9), cell, 2.0), None);
+        assert_eq!(requested_dims(pane(47.0, 45.0), [0, 40], 2.0), None);
+        assert_eq!(requested_dims(pane(47.0, 45.0), [20, 0], 2.0), None);
+        assert!(requested_dims(pane(10.0, 20.0), cell, 2.0).is_some());
+        assert_eq!(requested_dims(pane(47.0, 45.0), cell, f32::NAN), None);
+    }
+
+    #[test]
+    fn a_pane_narrower_than_one_cell_lays_out_every_row_that_fits() {
+        let narrow = Rect::from_min_size(Pos2::ZERO, Vec2::new(5.0, 45.0));
+        assert_eq!(requested_dims(narrow, [20, 40], 2.0), None);
+        assert_eq!(layout_rows(narrow, 40, 2.0), 2);
+        let short = Rect::from_min_size(Pos2::ZERO, Vec2::new(47.0, 5.0));
+        assert_eq!(layout_rows(short, 40, 2.0), 1);
+    }
+
+    #[test]
+    fn a_huge_pane_requests_at_most_the_grid_limits() {
+        let pane = Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0e6));
+        assert_eq!(
+            requested_dims(pane, [20, 40], 2.0),
+            Some(RequestedDims {
+                rows: MAX_REQUESTED_ROWS,
+                cols: MAX_REQUESTED_COLS,
+                pixel_w: MAX_REQUESTED_COLS * 20,
+                pixel_h: MAX_REQUESTED_ROWS * 40,
+            })
+        );
+    }
+
+    #[test]
+    fn reverse_video_margins_take_the_foreground() {
+        let theme = felis_render_core::palette::Theme::default();
+        let srgb = |linear| {
+            let [r, g, b, _] = felis_render_core::palette::linear_rgba_to_srgb8(linear);
+            Color32::from_rgb(r, g, b)
+        };
+        assert_ne!(theme.fg, theme.bg);
+        assert_eq!(margin_color(&theme, false), srgb(theme.bg));
+        assert_eq!(margin_color(&theme, true), srgb(theme.fg));
+    }
+
     #[test]
     fn terminal_smaller_than_one_row_keeps_the_available_height() {
         let pane = Rect::from_min_size(Pos2::ZERO, Vec2::new(8.0, 7.0));
@@ -388,6 +630,7 @@ mod tests {
             detached: false,
             exited: false,
             clipboard: None,
+            selection_epoch: 0,
         };
         let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(40.0, 48.0));
         let mut paint = |state: &mut crate::session::State| {
