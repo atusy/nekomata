@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn a_large_body_keeps_name_and_detail_on_separate_lines_inside_the_row() {
+    fn a_large_body_keeps_the_name_above_the_detail_line() {
         let ctx = egui::Context::default();
         ctx.global_style_mut(|style| {
             style
