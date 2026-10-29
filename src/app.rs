@@ -199,11 +199,35 @@ struct GrownWindow {
     requested: egui::Vec2,
 }
 
+/// What to do about a grown window once no overlay wants the room.
+#[derive(Debug, PartialEq)]
+enum Undo {
+    /// Return to the size before the growth.
+    Restore(egui::Vec2),
+    /// The window has not taken the growth yet, so there is nothing to undo
+    /// until it does.
+    Wait,
+    /// The user resized the window or the system refused the growth.
+    Forget,
+}
+
 impl GrownWindow {
     /// Whether the window still has the size this growth asked for, that is,
     /// the user has not resized it since.
     fn holds(&self, inner: egui::Vec2) -> bool {
-        (inner - self.requested).abs().max_elem() < 2.0
+        Self::near(inner, self.requested)
+    }
+
+    fn near(a: egui::Vec2, b: egui::Vec2) -> bool {
+        (a - b).abs().max_elem() < 2.0
+    }
+
+    fn undo(&self, inner: Option<egui::Vec2>) -> Undo {
+        match inner {
+            Some(inner) if self.holds(inner) => Undo::Restore(self.original),
+            Some(inner) if Self::near(inner, self.original) => Undo::Wait,
+            _ => Undo::Forget,
+        }
     }
 }
 
@@ -682,12 +706,17 @@ impl App {
 
     /// Undoes the growth unless the user has resized the window since.
     fn restore_window_size(&mut self, ctx: &egui::Context) {
-        let Some(grown) = self.grown_window.take() else {
+        let Some(grown) = &self.grown_window else {
             return;
         };
         let inner = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()));
-        if inner.is_some_and(|size| grown.holds(size)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(grown.original));
+        match grown.undo(inner) {
+            Undo::Restore(size) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                self.grown_window = None;
+            }
+            Undo::Wait => {}
+            Undo::Forget => self.grown_window = None,
         }
     }
 
@@ -2515,6 +2544,21 @@ mod tests {
         let resized = egui::vec2(800.0, 400.0);
         let second = grown_window(resized, 600.0, Some(&first)).unwrap();
         assert_eq!(second.original, resized);
+    }
+
+    #[test]
+    fn a_grown_window_waits_for_the_system_before_it_is_restored() {
+        let short = egui::vec2(800.0, 300.0);
+        let grown = grown_window(short, 500.0, None).unwrap();
+        // Closed before the system applied the growth: nothing to undo yet.
+        assert_eq!(grown.undo(Some(short)), Undo::Wait);
+        assert_eq!(
+            grown.undo(Some(egui::vec2(800.0, 500.0))),
+            Undo::Restore(short)
+        );
+        // A user's size, or one the system clamped, is left as it is.
+        assert_eq!(grown.undo(Some(egui::vec2(800.0, 420.0))), Undo::Forget);
+        assert_eq!(grown.undo(None), Undo::Forget);
     }
 
     #[test]
