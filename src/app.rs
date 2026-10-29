@@ -606,50 +606,17 @@ impl App {
         if !matches!(self.overlay, Some(Overlay::Workspaces)) {
             return;
         }
-        let mut open = true;
-        let mut selected = None;
-        let mut refresh = false;
-        egui::Window::new("Workspaces")
-            .open(&mut open)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                if ui.button("New workspace").clicked() {
-                    selected = Some(None);
-                }
-                refresh = ui.button("Refresh").clicked();
-                ui.separator();
-                if let Some(workspaces) = &self.workspace_roster {
-                    for workspace in workspaces {
-                        let current = Some(workspace.id) == self.workspace_id;
-                        let owner = workspace
-                            .window
-                            .map(|window| format!(" · window {window}"))
-                            .unwrap_or_default();
-                        let label = format!(
-                            "Workspace {} · {} tabs · {} panes{owner}",
-                            workspace.id, workspace.tabs, workspace.panes
-                        );
-                        if ui
-                            .add_enabled(
-                                workspace.window.is_none(),
-                                egui::Button::new(label).selected(current),
-                            )
-                            .clicked()
-                        {
-                            selected = Some(Some(workspace.id));
-                        }
-                    }
-                } else {
-                    ui.label("Loading workspaces…");
-                }
-            });
-        if !open {
+        let outcome =
+            crate::workspace_picker::show(ctx, self.workspace_roster.as_deref(), self.workspace_id);
+        if outcome.dismissed {
             self.overlay = None;
         }
-        if refresh && let Some(client) = &self.workspace {
+        if outcome.refresh
+            && let Some(client) = &self.workspace
+        {
             let _ = client.send(WorkspaceCommand::List);
         }
-        if let Some(workspace) = selected {
+        if let Some(workspace) = outcome.selected {
             self.begin_workspace(workspace, None);
         }
     }
