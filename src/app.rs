@@ -203,6 +203,8 @@ struct GrownWindow {
     /// Whether the window has reported the latest growth, after which its
     /// original size is a size the user picked.
     acknowledged: bool,
+    /// Whether the user has resized the window since it reported the growth.
+    user_resized: bool,
 }
 
 /// What to do about a grown window once no overlay wants the room.
@@ -227,25 +229,22 @@ impl GrownWindow {
             .any(|size| Self::near(inner, *size))
     }
 
-    /// Retires the earlier growths once the window has the latest, so that a
-    /// size the user picks later is not taken for one of them.
-    fn acknowledge(&mut self, inner: egui::Vec2) {
-        if Self::near(inner, self.requested) {
+    /// Follows what the window reports: it retires the earlier growths once
+    /// the window has the latest, and notes that the user has resized it when
+    /// it then has any other size, even if it returns to the grown one.
+    fn observe(&mut self, inner: egui::Vec2) {
+        if self.acknowledged {
+            self.user_resized |= !Self::near(inner, self.requested);
+        } else if Self::near(inner, self.requested) {
             self.earlier.clear();
             self.acknowledged = true;
         }
     }
 
-    /// Whether the window, having reported the latest growth, now has another
-    /// size, which only the user can have chosen.
-    fn resized_by_user(&self, inner: egui::Vec2) -> bool {
-        self.acknowledged && !self.holds(inner)
-    }
-
     /// Whether `inner` is a size this growth has led through, as opposed to
     /// one the user chose.
     fn leads_through(&self, inner: egui::Vec2) -> bool {
-        self.holds(inner) || Self::near(inner, self.original)
+        !self.user_resized && (self.holds(inner) || Self::near(inner, self.original))
     }
 
     fn near(a: egui::Vec2, b: egui::Vec2) -> bool {
@@ -253,6 +252,9 @@ impl GrownWindow {
     }
 
     fn undo(&self, inner: Option<egui::Vec2>) -> Undo {
+        if self.user_resized {
+            return Undo::Forget;
+        }
         match inner {
             Some(inner) if self.holds(inner) => Undo::Restore(self.original),
             Some(inner) if !self.acknowledged && Self::near(inner, self.original) => Undo::Wait,
@@ -283,6 +285,7 @@ fn grown_window(
             earlier
         }),
         acknowledged: false,
+        user_resized: false,
     })
 }
 
@@ -706,10 +709,7 @@ impl App {
         if let Some(grown) = &mut self.grown_window
             && let Some(inner) = ctx.input(|input| input.viewport().inner_rect)
         {
-            grown.acknowledge(inner.size());
-            if grown.resized_by_user(inner.size()) {
-                self.grown_window = None;
-            }
+            grown.observe(inner.size());
         }
         let wanted = match &self.overlay {
             Some(Overlay::Workspaces) => {
@@ -2622,7 +2622,7 @@ mod tests {
         let short = egui::vec2(800.0, 300.0);
         let first = grown_window(short, 500.0, None).unwrap();
         let mut second = grown_window(short, 600.0, Some(&first)).unwrap();
-        second.acknowledge(egui::vec2(800.0, 600.0));
+        second.observe(egui::vec2(800.0, 600.0));
         assert_eq!(second.undo(Some(egui::vec2(800.0, 500.0))), Undo::Forget);
         assert_eq!(
             second.undo(Some(egui::vec2(800.0, 600.0))),
@@ -2635,16 +2635,21 @@ mod tests {
         let short = egui::vec2(800.0, 300.0);
         let mut grown = grown_window(short, 500.0, None).unwrap();
         assert_eq!(grown.undo(Some(short)), Undo::Wait);
-        grown.acknowledge(egui::vec2(800.0, 500.0));
+        grown.observe(egui::vec2(800.0, 500.0));
         assert_eq!(grown.undo(Some(short)), Undo::Forget);
     }
 
     #[test]
-    fn a_resize_after_the_growth_arrives_retires_it_even_if_undone() {
-        let mut grown = grown_window(egui::vec2(800.0, 300.0), 500.0, None).unwrap();
-        grown.acknowledge(egui::vec2(800.0, 500.0));
-        assert!(!grown.resized_by_user(egui::vec2(800.0, 500.0)));
-        assert!(grown.resized_by_user(egui::vec2(800.0, 400.0)));
+    fn a_resize_after_the_growth_arrives_is_kept_even_if_undone() {
+        let short = egui::vec2(800.0, 300.0);
+        let mut grown = grown_window(short, 500.0, None).unwrap();
+        grown.observe(egui::vec2(800.0, 500.0));
+        grown.observe(egui::vec2(800.0, 400.0));
+        grown.observe(egui::vec2(800.0, 500.0));
+        assert_eq!(grown.undo(Some(egui::vec2(800.0, 500.0))), Undo::Forget);
+        // A taller overlay keeps the user's size as the one to restore.
+        let again = grown_window(egui::vec2(800.0, 500.0), 600.0, Some(&grown)).unwrap();
+        assert_eq!(again.original, egui::vec2(800.0, 500.0));
     }
 
     #[test]
