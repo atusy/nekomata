@@ -111,6 +111,7 @@ impl CommandPalette {
                     egui::TextEdit::singleline(&mut self.query)
                         .hint_text("Search commands…")
                         .font(egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)))
+                        .align(egui::Align2::LEFT_CENTER)
                         .margin(egui::vec2(10.0, 7.0)),
                 );
                 if !search.has_focus() {
@@ -275,6 +276,49 @@ mod tests {
         };
         assert!(rows_at(14.0) >= 4);
         assert_eq!(rows_at(28.0), rows_at(14.0));
+    }
+
+    #[test]
+    fn the_search_text_is_centered_in_its_field_at_a_large_body() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        let mut palette = CommandPalette::default();
+        let mut hint_center = None;
+        for _ in 0..2 {
+            let output = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    palette.show(
+                        ui.ctx(),
+                        &crate::shortcuts::AppKeymap::default().hints(),
+                        None,
+                    );
+                },
+            );
+            hint_center = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Search commands…" => {
+                    Some(text.visual_bounding_rect().center().y)
+                }
+                _ => None,
+            });
+        }
+        // The field starts below the overlay offset and the frame's margin.
+        let field_top = theme::overlay_top(800.0) + 12.0;
+        let field_center =
+            field_top + theme::ui_extent(&ctx.global_style(), theme::PALETTE_ROW_HEIGHT) / 2.0;
+        let offset = (hint_center.unwrap() - field_center).abs();
+        assert!(offset <= 2.0, "{offset}");
     }
 
     #[test]
