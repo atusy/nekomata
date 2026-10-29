@@ -32,9 +32,9 @@ pub(crate) fn wanted_height(ctx: &egui::Context, count: usize) -> f32 {
     let style = ctx.global_style();
     let (pitch, gap) = row_pitch(&style);
     let rows = (count as f32).clamp(1.0, MAX_VISIBLE_ROWS);
-    // The offset from the top is at most 64 px, and the header and the
-    // frame take what `show` reserves below it.
-    64.0 + theme::ui_extent(&style, HEADER_RESERVE) + rows * pitch - gap
+    // The header and the frame take what `show` reserves below the offset
+    // from the top.
+    theme::OVERLAY_MAX_TOP + theme::ui_extent(&style, HEADER_RESERVE) + rows * pitch - gap
 }
 
 /// What the header and the frame take from the window besides the list.

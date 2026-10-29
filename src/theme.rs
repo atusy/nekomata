@@ -71,10 +71,13 @@ pub fn menu_style(style: &mut eframe::egui::Style) {
     style.visuals.widgets.open.weak_bg_fill = TAB_ACTIVE_BG;
 }
 
+/// The farthest an overlay sits below the window top.
+pub const OVERLAY_MAX_TOP: f32 = 64.0;
+
 /// Distance from the window top to the palette and the controls it opens:
 /// a little below the tab bar, closer on short windows.
 pub fn overlay_top(viewport_height: f32) -> f32 {
-    (viewport_height * 0.12).min(64.0)
+    (viewport_height * 0.12).min(OVERLAY_MAX_TOP)
 }
 
 /// The floating panel behind the command palette and the controls it opens.

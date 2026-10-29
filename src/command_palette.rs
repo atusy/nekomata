@@ -35,6 +35,18 @@ impl Command {
     }
 }
 
+/// What the search field and the frame take from the window besides the
+/// list.
+const LIST_RESERVE: f32 = 88.0;
+
+/// The window height at which the palette lists its full height of rows.
+pub(crate) fn wanted_height(ctx: &egui::Context) -> f32 {
+    let style = ctx.global_style();
+    theme::OVERLAY_MAX_TOP
+        + theme::ui_extent(&style, LIST_RESERVE)
+        + theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT)
+}
+
 fn commands() -> Vec<Command> {
     public_commands()
         .iter()
@@ -76,7 +88,7 @@ impl CommandPalette {
             (viewport.width() - 48.0).clamp(100.0, theme::ui_extent(&style, theme::PALETTE_WIDTH));
         let row_height = theme::ui_extent(&style, theme::PALETTE_ROW_HEIGHT);
         let detail_row_height = theme::ui_extent(&style, theme::PALETTE_DETAIL_ROW_HEIGHT);
-        let list_height = (viewport.height() - top - theme::ui_extent(&style, 88.0)).clamp(
+        let list_height = (viewport.height() - top - theme::ui_extent(&style, LIST_RESERVE)).clamp(
             row_height,
             theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT),
         );
@@ -121,6 +133,7 @@ impl CommandPalette {
                 egui::ScrollArea::vertical()
                     .id_salt("command_results")
                     .max_height(list_height)
+                    .min_scrolled_height(list_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         if matches.is_empty() {
@@ -207,6 +220,63 @@ mod tests {
         });
         result
     }
+    #[test]
+    fn wanted_height_follows_the_body_size() {
+        let ctx = egui::Context::default();
+        let small = wanted_height(&ctx);
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        assert!(wanted_height(&ctx) > 1.5 * small);
+    }
+
+    #[test]
+    fn a_window_of_the_wanted_height_lists_as_many_rows_at_a_large_body_as_at_a_small_one() {
+        let rows_at = |body: f32| {
+            let ctx = egui::Context::default();
+            ctx.global_style_mut(|style| {
+                style
+                    .text_styles
+                    .insert(egui::TextStyle::Body, egui::FontId::proportional(body));
+            });
+            let height = wanted_height(&ctx);
+            let mut palette = CommandPalette::default();
+            let mut rows = 0;
+            for _ in 0..2 {
+                let output = crate::test_support::run(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1200.0, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        palette.show(
+                            ui.ctx(),
+                            &crate::shortcuts::AppKeymap::default().hints(),
+                            None,
+                        );
+                    },
+                );
+                rows = output
+                    .shapes
+                    .iter()
+                    .filter(|shape| {
+                        matches!(&shape.shape, egui::Shape::Text(text)
+                            if text.galley.text().starts_with("Tab: "))
+                    })
+                    .count();
+            }
+            rows
+        };
+        assert!(rows_at(14.0) >= 4);
+        assert_eq!(rows_at(28.0), rows_at(14.0));
+    }
+
     #[test]
     fn unavailable_prompt_jumps_explain_why_and_recover_without_reopening() {
         use felis_client_core::Action::ScrollToPrompt;

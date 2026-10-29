@@ -193,7 +193,7 @@ struct PendingAttach {
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
-/// A window the workspace picker made taller, so that it can be restored.
+/// A window an overlay made taller, so that it can be restored.
 struct GrownWindow {
     original: egui::Vec2,
     requested: egui::Vec2,
@@ -611,12 +611,23 @@ impl App {
         }
     }
 
-    /// Makes a short window tall enough to list the workspaces, up to seven.
-    /// The window never shrinks for the list, and is not touched when
-    /// maximized or fullscreen.
-    fn grow_window_for_workspaces(&mut self, ctx: &egui::Context) {
-        let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
-            return;
+    /// Makes a short window tall enough for the open overlay's list: the
+    /// palette's rows or up to seven workspaces. The window never shrinks for
+    /// it, is not touched when maximized or fullscreen, and returns to its
+    /// size once no overlay wants the room.
+    fn fit_window_to_overlay(&mut self, ctx: &egui::Context) {
+        let wanted = match &self.overlay {
+            Some(Overlay::Workspaces) => {
+                let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
+                    return;
+                };
+                crate::workspace_picker::wanted_height(ctx, count)
+            }
+            Some(Overlay::Palette(_)) => crate::command_palette::wanted_height(ctx),
+            _ => {
+                self.restore_window_size(ctx);
+                return;
+            }
         };
         let (inner, monitor, fixed) = ctx.input(|input| {
             let viewport = input.viewport();
@@ -629,7 +640,7 @@ impl App {
         let Some(inner) = inner else {
             return;
         };
-        let mut wanted = crate::workspace_picker::wanted_height(ctx, count);
+        let mut wanted = wanted;
         if let Some(monitor) = monitor {
             wanted = wanted.min(monitor.y * 0.9);
         }
@@ -662,10 +673,8 @@ impl App {
 
     fn workspace_picker(&mut self, ctx: &egui::Context) {
         if !matches!(self.overlay, Some(Overlay::Workspaces)) {
-            self.restore_window_size(ctx);
             return;
         }
-        self.grow_window_for_workspaces(ctx);
         let outcome =
             crate::workspace_picker::show(ctx, self.workspace_roster.as_deref(), self.workspace_id);
         if outcome.dismissed {
@@ -1606,6 +1615,7 @@ impl App {
                 self.action(ctx, action);
             }
         }
+        self.fit_window_to_overlay(ctx);
         self.workspace_picker(ctx);
         if self.pending_workspace.is_some() {
             egui::Window::new("Switching workspace")
