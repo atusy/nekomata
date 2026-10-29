@@ -236,6 +236,12 @@ impl GrownWindow {
         }
     }
 
+    /// Whether the window, having reported the latest growth, now has another
+    /// size, which only the user can have chosen.
+    fn resized_by_user(&self, inner: egui::Vec2) -> bool {
+        self.acknowledged && !self.holds(inner)
+    }
+
     /// Whether `inner` is a size this growth has led through, as opposed to
     /// one the user chose.
     fn leads_through(&self, inner: egui::Vec2) -> bool {
@@ -701,6 +707,9 @@ impl App {
             && let Some(inner) = ctx.input(|input| input.viewport().inner_rect)
         {
             grown.acknowledge(inner.size());
+            if grown.resized_by_user(inner.size()) {
+                self.grown_window = None;
+            }
         }
         let wanted = match &self.overlay {
             Some(Overlay::Workspaces) => {
@@ -2628,6 +2637,14 @@ mod tests {
         assert_eq!(grown.undo(Some(short)), Undo::Wait);
         grown.acknowledge(egui::vec2(800.0, 500.0));
         assert_eq!(grown.undo(Some(short)), Undo::Forget);
+    }
+
+    #[test]
+    fn a_resize_after_the_growth_arrives_retires_it_even_if_undone() {
+        let mut grown = grown_window(egui::vec2(800.0, 300.0), 500.0, None).unwrap();
+        grown.acknowledge(egui::vec2(800.0, 500.0));
+        assert!(!grown.resized_by_user(egui::vec2(800.0, 500.0)));
+        assert!(grown.resized_by_user(egui::vec2(800.0, 400.0)));
     }
 
     #[test]
