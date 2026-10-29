@@ -210,20 +210,22 @@ pub(crate) fn show(
                             (theme::FG, theme::TAB_INACTIVE_FG)
                         };
                         let x = rect.left() + 10.0;
-                        painter.text(
-                            egui::pos2(x, rect.center().y - 8.0),
-                            egui::Align2::LEFT_CENTER,
-                            text.text(),
+                        // Stack the two lines from their measured heights, so
+                        // they keep apart whatever the body size.
+                        let name = painter.layout_no_wrap(
+                            text.text().to_owned(),
                             egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)),
                             ink,
                         );
-                        painter.text(
-                            egui::pos2(x, rect.center().y + 9.0),
-                            egui::Align2::LEFT_CENTER,
-                            detail.text(),
+                        let detail = painter.layout_no_wrap(
+                            detail.text().to_owned(),
                             egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
                             detail_ink,
                         );
+                        let top = rect.center().y - (name.size().y + detail.size().y) / 2.0;
+                        let below = top + name.size().y;
+                        painter.galley(egui::pos2(x, top), name, ink);
+                        painter.galley(egui::pos2(x, below), detail, detail_ink);
                         if Some(workspace.id) == current {
                             painter.text(
                                 egui::pos2(rect.right() - 10.0, rect.center().y),
@@ -365,6 +367,51 @@ mod tests {
         ] {
             assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
         }
+    }
+
+    #[test]
+    fn a_large_body_keeps_name_and_detail_on_separate_lines_inside_the_row() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        let roster = [summary(1, None, 2, 3)];
+        let bounds = |ctx: &egui::Context| {
+            let output = crate::test_support::run(
+                ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(1));
+                },
+            );
+            let find = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == wanted => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+            };
+            (
+                find("Workspace 00000000000000000000000000000001"),
+                find("2 tabs · 3 panes"),
+            )
+        };
+        bounds(&ctx);
+        let (name, detail) = bounds(&ctx);
+        let (name, detail) = (name.unwrap(), detail.unwrap());
+        assert!(
+            name.bottom() <= detail.top(),
+            "{name:?} overlaps {detail:?}"
+        );
     }
 
     #[test]
