@@ -80,13 +80,12 @@ nekomata panes attach [PANE_ID] [--window WINDOW_ID] [--ssh HOST] [--daemon SOCK
 A CLI command targets a window as follows:
 
 1. `--window`, when given.
-2. Otherwise, if `NEKOMATA_WORKSPACE_ID` holds a workspace ID (else, if the
-   legacy `NEKOMATA_SESSION_ID` does), the window that workspace is attached
+2. Otherwise, if `NEKOMATA_WORKSPACE_ID` holds a 32-digit hexadecimal
+   workspace ID, the window that workspace is attached
    to. The command fails, without falling back further, if that workspace no
    longer exists or has no window, if the nekomata daemon is unreachable, or
    if `NEKOMATA_DAEMON_INSTANCE` is non-empty and names a daemon other than
-   the running one. A restarted daemon numbers workspaces from 1 again, so the
-   instance check keeps a shell from reaching an unrelated window. A shell
+   the running one. A shell
    without `NEKOMATA_DAEMON_INSTANCE` resolves by workspace ID alone.
 3. Otherwise `NEKOMATA_WINDOW_ID`, when set.
 4. Otherwise the only running GUI window. With no window or several, the

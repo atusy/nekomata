@@ -74,3 +74,5 @@ nekomata daemon stop
 A UI-only update does not need a daemon restart.
 
 See the [workspace specification](../spec/workspaces.md) for the exact rules.
+
+Workspace IDs are 32-digit hexadecimal strings generated randomly. Use the full ID when attaching.

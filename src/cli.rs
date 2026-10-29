@@ -6,7 +6,7 @@ pub enum Command {
     WorkspacesList,
     Workspace {
         window: Option<u32>,
-        workspace: Option<u64>,
+        workspace: Option<u128>,
     },
     List(Vec<String>),
     Help,
@@ -90,7 +90,8 @@ fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str
                 );
             }
             id if verb == "attach" && workspace.is_none() && !id.starts_with('-') => {
-                workspace = Some(id.parse().map_err(|_| "invalid workspace ID")?);
+                workspace =
+                    Some(crate::daemon::workspace_id::parse(id).ok_or("invalid workspace ID")?);
             }
             _ => return Err("unknown or repeated workspace argument"),
         }
@@ -207,7 +208,16 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(&["workspaces", "attach", "7", "--window", "42"].map(String::from)),
+            parse(
+                &[
+                    "workspaces",
+                    "attach",
+                    "00000000000000000000000000000007",
+                    "--window",
+                    "42"
+                ]
+                .map(String::from)
+            ),
             Ok(Command::Workspace {
                 window: Some(42),
                 workspace: Some(7)
@@ -240,7 +250,12 @@ mod tests {
         for command in [
             vec!["list"],
             vec!["new"],
-            vec!["attach", "7", "--window", "42"],
+            vec![
+                "attach",
+                "00000000000000000000000000000007",
+                "--window",
+                "42",
+            ],
             vec!["--help"],
             vec!["attach", "-h"],
             vec!["attach"],

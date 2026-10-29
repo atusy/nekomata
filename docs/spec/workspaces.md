@@ -43,7 +43,9 @@ felis daemon.
   it has no tabs.
 - A workspace without tabs is discarded once no window holds it, for example
   after its window closes its last pane or cancels a switch to a new
-  workspace. The same daemon never reuses a discarded workspace's ID.
+  workspace. Workspace IDs are generated from 128 bits of OS randomness and
+  displayed as 32 lowercase hexadecimal digits. Collisions with current
+  workspaces are retried.
 
 ## Startup
 
@@ -127,8 +129,8 @@ there, never into another window's retained layout:
 
 The workspace ID may therefore change. Shells started before the change keep
 exporting the old ID in `NEKOMATA_WORKSPACE_ID`, so CLI commands run from
-them may fail or, on a restarted daemon that reused the ID, reach another
-window; pass `--window` there. Shells started afterwards carry the new ID.
+them may fail because the old workspace no longer exists; pass `--window`
+there. Shells started afterwards carry the new ID.
 
 ## CLI
 
