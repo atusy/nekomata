@@ -197,6 +197,9 @@ struct PendingAttach {
 struct GrownWindow {
     original: egui::Vec2,
     requested: egui::Vec2,
+    /// Growths asked for before `requested` that the window may still report
+    /// while the latest is on its way.
+    earlier: Vec<egui::Vec2>,
 }
 
 /// What to do about a grown window once no overlay wants the room.
@@ -212,10 +215,19 @@ enum Undo {
 }
 
 impl GrownWindow {
-    /// Whether the window still has the size this growth asked for, that is,
-    /// the user has not resized it since.
+    /// Whether the window has the size a growth asked for, so the user has
+    /// not resized it since.
     fn holds(&self, inner: egui::Vec2) -> bool {
-        Self::near(inner, self.requested)
+        [self.requested]
+            .iter()
+            .chain(&self.earlier)
+            .any(|size| Self::near(inner, *size))
+    }
+
+    /// Whether `inner` is a size this growth has led through, as opposed to
+    /// one the user chose.
+    fn leads_through(&self, inner: egui::Vec2) -> bool {
+        self.holds(inner) || Self::near(inner, self.original)
     }
 
     fn near(a: egui::Vec2, b: egui::Vec2) -> bool {
@@ -243,12 +255,15 @@ fn grown_window(
     if wanted <= inner.y + 1.0 || grown.is_some_and(|grown| grown.requested.y >= wanted) {
         return None;
     }
-    let original = grown
-        .filter(|grown| grown.holds(inner))
-        .map_or(inner, |grown| grown.original);
+    let continued = grown.filter(|grown| grown.leads_through(inner));
     Some(GrownWindow {
-        original,
+        original: continued.map_or(inner, |grown| grown.original),
         requested: egui::vec2(inner.x, wanted),
+        earlier: continued.map_or_else(Vec::new, |grown| {
+            let mut earlier = grown.earlier.clone();
+            earlier.push(grown.requested);
+            earlier
+        }),
     })
 }
 
@@ -2559,6 +2574,20 @@ mod tests {
         // A user's size, or one the system clamped, is left as it is.
         assert_eq!(grown.undo(Some(egui::vec2(800.0, 420.0))), Undo::Forget);
         assert_eq!(grown.undo(None), Undo::Forget);
+    }
+
+    #[test]
+    fn a_window_reporting_an_earlier_growth_is_still_restored() {
+        let short = egui::vec2(800.0, 300.0);
+        let first = grown_window(short, 500.0, None).unwrap();
+        // A taller overlay asks again before the window reports 500.
+        let second = grown_window(short, 600.0, Some(&first)).unwrap();
+        assert_eq!(second.original, short);
+        assert_eq!(
+            second.undo(Some(egui::vec2(800.0, 500.0))),
+            Undo::Restore(short)
+        );
+        assert_eq!(second.undo(Some(short)), Undo::Wait);
     }
 
     #[test]
