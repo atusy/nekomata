@@ -200,6 +200,9 @@ struct GrownWindow {
     /// Growths asked for before `requested` that the window may still report
     /// while the latest is on its way.
     earlier: Vec<egui::Vec2>,
+    /// Whether the window has reported the latest growth, after which its
+    /// original size is a size the user picked.
+    acknowledged: bool,
 }
 
 /// What to do about a grown window once no overlay wants the room.
@@ -229,6 +232,7 @@ impl GrownWindow {
     fn acknowledge(&mut self, inner: egui::Vec2) {
         if Self::near(inner, self.requested) {
             self.earlier.clear();
+            self.acknowledged = true;
         }
     }
 
@@ -245,7 +249,7 @@ impl GrownWindow {
     fn undo(&self, inner: Option<egui::Vec2>) -> Undo {
         match inner {
             Some(inner) if self.holds(inner) => Undo::Restore(self.original),
-            Some(inner) if Self::near(inner, self.original) => Undo::Wait,
+            Some(inner) if !self.acknowledged && Self::near(inner, self.original) => Undo::Wait,
             _ => Undo::Forget,
         }
     }
@@ -272,6 +276,7 @@ fn grown_window(
             earlier.push(grown.requested);
             earlier
         }),
+        acknowledged: false,
     })
 }
 
@@ -2614,6 +2619,15 @@ mod tests {
             second.undo(Some(egui::vec2(800.0, 600.0))),
             Undo::Restore(short)
         );
+    }
+
+    #[test]
+    fn the_original_size_chosen_after_the_growth_arrives_is_the_users() {
+        let short = egui::vec2(800.0, 300.0);
+        let mut grown = grown_window(short, 500.0, None).unwrap();
+        assert_eq!(grown.undo(Some(short)), Undo::Wait);
+        grown.acknowledge(egui::vec2(800.0, 500.0));
+        assert_eq!(grown.undo(Some(short)), Undo::Forget);
     }
 
     #[test]
