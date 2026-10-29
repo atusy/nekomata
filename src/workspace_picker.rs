@@ -11,8 +11,34 @@ pub(crate) struct Outcome {
     pub(crate) dismissed: bool,
 }
 
-/// Rows the list shows before it scrolls.
-const MAX_VISIBLE_ROWS: f32 = 8.0;
+/// Rows the list shows before it scrolls, and the most the window grows to
+/// fit.
+const MAX_VISIBLE_ROWS: f32 = 7.0;
+
+/// The height of one list row and the gap between rows.
+fn row_pitch(style: &egui::Style) -> (f32, f32) {
+    let mut inner = style.clone();
+    theme::menu_style(&mut inner);
+    let gap = inner.spacing.item_spacing.y;
+    (
+        theme::ui_extent(style, theme::PALETTE_DETAIL_ROW_HEIGHT) + gap,
+        gap,
+    )
+}
+
+/// The window height at which the picker lists `count` workspaces, up to
+/// seven, without scrolling.
+pub(crate) fn wanted_height(ctx: &egui::Context, count: usize) -> f32 {
+    let style = ctx.global_style();
+    let (pitch, gap) = row_pitch(&style);
+    let rows = (count as f32).clamp(1.0, MAX_VISIBLE_ROWS);
+    // The offset from the top is at most 64 px, and the header and the
+    // frame take what `show` reserves below it.
+    64.0 + theme::ui_extent(&style, HEADER_RESERVE) + rows * pitch - gap
+}
+
+/// What the header and the frame take from the window besides the list.
+const HEADER_RESERVE: f32 = 64.0;
 
 fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
@@ -117,14 +143,11 @@ pub(crate) fn show(
     let width =
         (viewport.width() - 48.0).clamp(100.0, theme::ui_extent(&style, theme::PALETTE_WIDTH));
     let detail_row_height = theme::ui_extent(&style, theme::PALETTE_DETAIL_ROW_HEIGHT);
-    // The list grows with the workspaces, up to eight rows or the room the
+    // The list grows with the workspaces, up to seven rows or the room the
     // window leaves below the header. It holds whole rows, so a row is
     // never cut off mid-text; the rest scrolls.
-    let mut inner = (*style).clone();
-    theme::menu_style(&mut inner);
-    let gap = inner.spacing.item_spacing.y;
-    let pitch = detail_row_height + gap;
-    let room = viewport.height() - top - theme::ui_extent(&style, 64.0);
+    let (pitch, gap) = row_pitch(&style);
+    let room = viewport.height() - top - theme::ui_extent(&style, HEADER_RESERVE);
     let rows = ((room + gap) / pitch).floor().clamp(1.0, MAX_VISIBLE_ROWS);
     let list_height = rows * pitch - gap;
     let id = egui::Id::unique("workspace_picker");
@@ -256,6 +279,16 @@ mod tests {
             |current| -> Vec<u64> { ordered(&roster, current).iter().map(|w| w.id).collect() };
         assert_eq!(ids(Some(3)), [3, 2, 4, 1]);
         assert_eq!(ids(None), [2, 4, 1, 3]);
+    }
+
+    #[test]
+    fn wanted_height_grows_with_workspaces_up_to_seven() {
+        let ctx = egui::Context::default();
+        let height = |count| wanted_height(&ctx, count);
+        assert!(height(2) > height(1));
+        assert!(height(7) > height(6));
+        assert_eq!(height(7), height(30));
+        assert_eq!(height(0), height(1));
     }
 
     #[test]

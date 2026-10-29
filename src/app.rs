@@ -193,6 +193,12 @@ struct PendingAttach {
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
+/// A window the workspace picker made taller, so that it can be restored.
+struct GrownWindow {
+    original: egui::Vec2,
+    requested: egui::Vec2,
+}
+
 pub struct App {
     workspace: Option<WorkspaceClient>,
     workspace_id: Option<u64>,
@@ -204,6 +210,8 @@ pub struct App {
     reconnect: crate::workspace_client::Reconnect,
     paste_requested: Option<(u64, u64, Arc<Session>)>,
     workspace_roster: Option<Vec<daemon::Summary>>,
+    /// The window size before the workspace picker grew it.
+    grown_window: Option<GrownWindow>,
     runtime: tokio::runtime::Runtime,
     control: control::Server,
     pending_attach: BTreeMap<u64, PendingAttach>,
@@ -272,6 +280,7 @@ impl App {
             reconnect: Default::default(),
             paste_requested: None,
             workspace_roster: None,
+            grown_window: None,
             runtime,
             control,
             pending_attach: BTreeMap::new(),
@@ -602,10 +611,61 @@ impl App {
         }
     }
 
-    fn workspace_picker(&mut self, ctx: &egui::Context) {
-        if !matches!(self.overlay, Some(Overlay::Workspaces)) {
+    /// Makes a short window tall enough to list the workspaces, up to seven.
+    /// The window never shrinks for the list, and is not touched when
+    /// maximized or fullscreen.
+    fn grow_window_for_workspaces(&mut self, ctx: &egui::Context) {
+        let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
+            return;
+        };
+        let (inner, monitor, fixed) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.inner_rect.map(|rect| rect.size()),
+                viewport.monitor_size,
+                viewport.maximized == Some(true) || viewport.fullscreen == Some(true),
+            )
+        });
+        let Some(inner) = inner else {
+            return;
+        };
+        let mut wanted = crate::workspace_picker::wanted_height(ctx, count);
+        if let Some(monitor) = monitor {
+            wanted = wanted.min(monitor.y * 0.9);
+        }
+        let requested = self.grown_window.as_ref().map(|grown| grown.requested.y);
+        if fixed || wanted <= inner.y + 1.0 || requested.is_some_and(|height| height >= wanted) {
             return;
         }
+        let size = egui::vec2(inner.x, wanted);
+        let original = self
+            .grown_window
+            .take()
+            .map_or(inner, |grown| grown.original);
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        self.grown_window = Some(GrownWindow {
+            original,
+            requested: size,
+        });
+    }
+
+    /// Undoes the growth unless the user has resized the window since.
+    fn restore_window_size(&mut self, ctx: &egui::Context) {
+        let Some(grown) = self.grown_window.take() else {
+            return;
+        };
+        let inner = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()));
+        if inner.is_some_and(|size| (size - grown.requested).abs().max_elem() < 2.0) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(grown.original));
+        }
+    }
+
+    fn workspace_picker(&mut self, ctx: &egui::Context) {
+        if !matches!(self.overlay, Some(Overlay::Workspaces)) {
+            self.restore_window_size(ctx);
+            return;
+        }
+        self.grow_window_for_workspaces(ctx);
         let outcome =
             crate::workspace_picker::show(ctx, self.workspace_roster.as_deref(), self.workspace_id);
         if outcome.dismissed {
@@ -3536,6 +3596,7 @@ mod tests {
             reconnect: Default::default(),
             paste_requested: None,
             workspace_roster: None,
+            grown_window: None,
             runtime,
             control,
             pending_attach: BTreeMap::new(),
