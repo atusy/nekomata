@@ -74,6 +74,28 @@ fn ordered(workspaces: &[Summary], current: Option<u128>) -> Vec<&Summary> {
     ordered
 }
 
+/// One line of `text`, cut with an ellipsis where it would pass `room`.
+fn elided(
+    painter: &egui::Painter,
+    text: &str,
+    size: f32,
+    color: egui::Color32,
+    room: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        text.to_owned(),
+        egui::FontId::proportional(size),
+        color,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: room.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    painter.layout_job(job)
+}
+
 #[derive(Clone, Copy)]
 enum Icon {
     Plus,
@@ -210,28 +232,46 @@ pub(crate) fn show(
                             (theme::FG, theme::TAB_INACTIVE_FG)
                         };
                         let x = rect.left() + 10.0;
+                        let marker = (Some(workspace.id) == current).then(|| {
+                            painter.layout_no_wrap(
+                                "Current".to_owned(),
+                                egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
+                                theme::ACCENT,
+                            )
+                        });
+                        // The lines give way to the marker instead of running
+                        // under it, and to the row's edge.
+                        let room = rect.width()
+                            - 20.0
+                            - marker.as_ref().map_or(0.0, |marker| marker.size().x + 10.0);
                         // Stack the two lines from their measured heights, so
                         // they keep apart whatever the body size.
-                        let name = painter.layout_no_wrap(
-                            text.text().to_owned(),
-                            egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)),
+                        let name = elided(
+                            painter,
+                            text.text(),
+                            theme::ui_size(ui.style(), 14.0),
                             ink,
+                            room,
                         );
-                        let detail = painter.layout_no_wrap(
-                            detail.text().to_owned(),
-                            egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
+                        let detail = elided(
+                            painter,
+                            detail.text(),
+                            theme::ui_size(ui.style(), 12.0),
                             detail_ink,
+                            room,
                         );
                         let top = rect.center().y - (name.size().y + detail.size().y) / 2.0;
                         let below = top + name.size().y;
                         painter.galley(egui::pos2(x, top), name, ink);
                         painter.galley(egui::pos2(x, below), detail, detail_ink);
-                        if Some(workspace.id) == current {
-                            painter.text(
-                                egui::pos2(rect.right() - 10.0, rect.center().y),
-                                egui::Align2::RIGHT_CENTER,
-                                "Current",
-                                egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
+                        if let Some(marker) = marker {
+                            let size = marker.size();
+                            painter.galley(
+                                egui::pos2(
+                                    rect.right() - 10.0 - size.x,
+                                    rect.center().y - size.y / 2.0,
+                                ),
+                                marker,
                                 theme::ACCENT,
                             );
                         }
@@ -411,6 +451,58 @@ mod tests {
         assert!(
             name.bottom() <= detail.top(),
             "{name:?} overlaps {detail:?}"
+        );
+    }
+
+    #[test]
+    fn a_long_name_gives_way_to_the_current_marker_in_a_narrow_window() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(21.0));
+        });
+        let roster = [summary(1, None, 2, 3)];
+        let mut rects = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(1));
+                },
+            );
+            rects = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.text().starts_with("Workspace 0")
+                            || text.galley.text() == "Current" =>
+                    {
+                        Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        let find = |wanted: &str| {
+            rects
+                .iter()
+                .find(|(text, _)| text.starts_with(wanted))
+                .unwrap()
+                .1
+        };
+        let (name, current) = (find("Workspace 0"), find("Current"));
+        assert!(
+            name.right() < current.left(),
+            "{name:?} runs into {current:?}"
         );
     }
 
