@@ -224,6 +224,14 @@ impl GrownWindow {
             .any(|size| Self::near(inner, *size))
     }
 
+    /// Retires the earlier growths once the window has the latest, so that a
+    /// size the user picks later is not taken for one of them.
+    fn acknowledge(&mut self, inner: egui::Vec2) {
+        if Self::near(inner, self.requested) {
+            self.earlier.clear();
+        }
+    }
+
     /// Whether `inner` is a size this growth has led through, as opposed to
     /// one the user chose.
     fn leads_through(&self, inner: egui::Vec2) -> bool {
@@ -684,6 +692,11 @@ impl App {
     /// it, is not touched when maximized or fullscreen, and returns to its
     /// size once no overlay wants the room.
     fn fit_window_to_overlay(&mut self, ctx: &egui::Context) {
+        if let Some(grown) = &mut self.grown_window
+            && let Some(inner) = ctx.input(|input| input.viewport().inner_rect)
+        {
+            grown.acknowledge(inner.size());
+        }
         let wanted = match &self.overlay {
             Some(Overlay::Workspaces) => {
                 let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
@@ -2588,6 +2601,19 @@ mod tests {
             Undo::Restore(short)
         );
         assert_eq!(second.undo(Some(short)), Undo::Wait);
+    }
+
+    #[test]
+    fn a_size_picked_after_the_latest_growth_arrives_is_the_users() {
+        let short = egui::vec2(800.0, 300.0);
+        let first = grown_window(short, 500.0, None).unwrap();
+        let mut second = grown_window(short, 600.0, Some(&first)).unwrap();
+        second.acknowledge(egui::vec2(800.0, 600.0));
+        assert_eq!(second.undo(Some(egui::vec2(800.0, 500.0))), Undo::Forget);
+        assert_eq!(
+            second.undo(Some(egui::vec2(800.0, 600.0))),
+            Undo::Restore(short)
+        );
     }
 
     #[test]
