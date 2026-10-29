@@ -199,6 +199,35 @@ struct GrownWindow {
     requested: egui::Vec2,
 }
 
+impl GrownWindow {
+    /// Whether the window still has the size this growth asked for, that is,
+    /// the user has not resized it since.
+    fn holds(&self, inner: egui::Vec2) -> bool {
+        (inner - self.requested).abs().max_elem() < 2.0
+    }
+}
+
+/// The growth that gives a window of size `inner` the `wanted` height, or
+/// `None` when it is tall enough or a taller growth is already requested.
+/// The size to restore is the one before the first growth, unless the user
+/// has resized the window since.
+fn grown_window(
+    inner: egui::Vec2,
+    wanted: f32,
+    grown: Option<&GrownWindow>,
+) -> Option<GrownWindow> {
+    if wanted <= inner.y + 1.0 || grown.is_some_and(|grown| grown.requested.y >= wanted) {
+        return None;
+    }
+    let original = grown
+        .filter(|grown| grown.holds(inner))
+        .map_or(inner, |grown| grown.original);
+    Some(GrownWindow {
+        original,
+        requested: egui::vec2(inner.x, wanted),
+    })
+}
+
 pub struct App {
     workspace: Option<WorkspaceClient>,
     workspace_id: Option<u128>,
@@ -640,24 +669,15 @@ impl App {
         let Some(inner) = inner else {
             return;
         };
-        let mut wanted = wanted;
-        if let Some(monitor) = monitor {
-            wanted = wanted.min(monitor.y * 0.9);
-        }
-        let requested = self.grown_window.as_ref().map(|grown| grown.requested.y);
-        if fixed || wanted <= inner.y + 1.0 || requested.is_some_and(|height| height >= wanted) {
+        let wanted = monitor.map_or(wanted, |monitor| wanted.min(monitor.y * 0.9));
+        if fixed {
             return;
         }
-        let size = egui::vec2(inner.x, wanted);
-        let original = self
-            .grown_window
-            .take()
-            .map_or(inner, |grown| grown.original);
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-        self.grown_window = Some(GrownWindow {
-            original,
-            requested: size,
-        });
+        let Some(grown) = grown_window(inner, wanted, self.grown_window.as_ref()) else {
+            return;
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(grown.requested));
+        self.grown_window = Some(grown);
     }
 
     /// Undoes the growth unless the user has resized the window since.
@@ -666,7 +686,7 @@ impl App {
             return;
         };
         let inner = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()));
-        if inner.is_some_and(|size| (size - grown.requested).abs().max_elem() < 2.0) {
+        if inner.is_some_and(|size| grown.holds(size)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(grown.original));
         }
     }
@@ -2468,6 +2488,43 @@ mod tests {
     use super::*;
     use crate::workspace::{PaneRemoval, Tab};
     use std::time::Duration;
+
+    #[test]
+    fn a_short_window_grows_to_the_wanted_height_and_remembers_its_size() {
+        let short = egui::vec2(800.0, 300.0);
+        let grown = grown_window(short, 500.0, None).unwrap();
+        assert_eq!(grown.requested, egui::vec2(800.0, 500.0));
+        assert_eq!(grown.original, short);
+        assert!(grown_window(egui::vec2(800.0, 500.0), 500.0, None).is_none());
+        assert!(grown_window(egui::vec2(800.0, 700.0), 500.0, None).is_none());
+    }
+
+    #[test]
+    fn a_taller_overlay_grows_the_window_again_from_the_first_size() {
+        let short = egui::vec2(800.0, 300.0);
+        let first = grown_window(short, 500.0, None).unwrap();
+        assert!(grown_window(first.requested, 450.0, Some(&first)).is_none());
+        let second = grown_window(first.requested, 600.0, Some(&first)).unwrap();
+        assert_eq!(second.requested.y, 600.0);
+        assert_eq!(second.original, short);
+    }
+
+    #[test]
+    fn growing_after_a_user_resize_restores_the_users_size() {
+        let first = grown_window(egui::vec2(800.0, 300.0), 500.0, None).unwrap();
+        let resized = egui::vec2(800.0, 400.0);
+        let second = grown_window(resized, 600.0, Some(&first)).unwrap();
+        assert_eq!(second.original, resized);
+    }
+
+    #[test]
+    fn a_grown_window_holds_its_size_only_until_the_user_resizes_it() {
+        let grown = grown_window(egui::vec2(800.0, 300.0), 500.0, None).unwrap();
+        assert!(grown.holds(egui::vec2(800.0, 500.0)));
+        assert!(grown.holds(egui::vec2(801.0, 499.5)));
+        assert!(!grown.holds(egui::vec2(800.0, 450.0)));
+        assert!(!grown.holds(egui::vec2(900.0, 500.0)));
+    }
 
     #[test]
     fn a_geometry_change_wakes_the_window_once_the_autosave_is_due() {
