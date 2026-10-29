@@ -317,7 +317,7 @@ mod tests {
             });
         }
         // The field starts below the overlay offset and the frame's margin.
-        let field_top = theme::overlay_top(800.0) + 12.0;
+        let field_top = theme::overlay_top(800.0) + theme::OVERLAY_MARGIN;
         let field_center =
             field_top + theme::ui_extent(&ctx.global_style(), theme::PALETTE_ROW_HEIGHT) / 2.0;
         let offset = (hint_center.unwrap() - field_center).abs();
