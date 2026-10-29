@@ -508,6 +508,58 @@ mod tests {
     }
 
     #[test]
+    fn a_long_detail_gives_way_to_the_current_marker_in_a_narrow_window() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        let roster = [summary(1, None, 2, 3)];
+        let mut rects = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(200.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(1));
+                },
+            );
+            rects = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.text().starts_with("2 tabs")
+                            || text.galley.text() == "Current" =>
+                    {
+                        Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        let find = |wanted: &str| {
+            rects
+                .iter()
+                .find(|(text, _)| text.starts_with(wanted))
+                .unwrap()
+                .1
+        };
+        let (detail, current) = (find("2 tabs"), find("Current"));
+        assert!(
+            detail.right() < current.left(),
+            "{detail:?} runs into {current:?}"
+        );
+    }
+
+    #[test]
     fn waits_for_the_roster() {
         let ctx = egui::Context::default();
         texts(&ctx, None);
