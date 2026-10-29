@@ -193,10 +193,100 @@ struct PendingAttach {
     reply: tokio::sync::oneshot::Sender<Reply>,
 }
 
-/// A window the workspace picker made taller, so that it can be restored.
+/// A window an overlay made taller, so that it can be restored.
 struct GrownWindow {
     original: egui::Vec2,
     requested: egui::Vec2,
+    /// Growths asked for before `requested` that the window may still report
+    /// while the latest is on its way.
+    earlier: Vec<egui::Vec2>,
+    /// Whether the window has reported the latest growth, after which its
+    /// original size is a size the user picked.
+    acknowledged: bool,
+    /// Whether the user has resized the window since it reported the growth.
+    user_resized: bool,
+}
+
+/// What to do about a grown window once no overlay wants the room.
+#[derive(Debug, PartialEq)]
+enum Undo {
+    /// Return to the size before the growth.
+    Restore(egui::Vec2),
+    /// The window has not taken the growth yet, so there is nothing to undo
+    /// until it does.
+    Wait,
+    /// The user resized the window or the system refused the growth.
+    Forget,
+}
+
+impl GrownWindow {
+    /// Whether the window has the size a growth asked for, so the user has
+    /// not resized it since.
+    fn holds(&self, inner: egui::Vec2) -> bool {
+        [self.requested]
+            .iter()
+            .chain(&self.earlier)
+            .any(|size| Self::near(inner, *size))
+    }
+
+    /// Follows what the window reports: it retires the earlier growths once
+    /// the window has the latest, and notes that the user has resized it when
+    /// it then has any other size, even if it returns to the grown one.
+    fn observe(&mut self, inner: egui::Vec2) {
+        if self.acknowledged {
+            self.user_resized |= !Self::near(inner, self.requested);
+        } else if Self::near(inner, self.requested) {
+            self.earlier.clear();
+            self.acknowledged = true;
+        }
+    }
+
+    /// Whether `inner` is a size this growth has led through, as opposed to
+    /// one the user chose.
+    fn leads_through(&self, inner: egui::Vec2) -> bool {
+        !self.user_resized && (self.holds(inner) || Self::near(inner, self.original))
+    }
+
+    fn near(a: egui::Vec2, b: egui::Vec2) -> bool {
+        (a - b).abs().max_elem() < 2.0
+    }
+
+    fn undo(&self, inner: Option<egui::Vec2>) -> Undo {
+        if self.user_resized {
+            return Undo::Forget;
+        }
+        match inner {
+            Some(inner) if self.holds(inner) => Undo::Restore(self.original),
+            Some(inner) if !self.acknowledged && Self::near(inner, self.original) => Undo::Wait,
+            _ => Undo::Forget,
+        }
+    }
+}
+
+/// The growth that gives a window of size `inner` the `wanted` height, or
+/// `None` when it is tall enough or a taller growth is already requested.
+/// The size to restore is the one before the first growth, unless the user
+/// has resized the window since.
+fn grown_window(
+    inner: egui::Vec2,
+    wanted: f32,
+    grown: Option<&GrownWindow>,
+) -> Option<GrownWindow> {
+    if wanted <= inner.y + 1.0 || grown.is_some_and(|grown| grown.requested.y >= wanted) {
+        return None;
+    }
+    let continued = grown.filter(|grown| grown.leads_through(inner));
+    Some(GrownWindow {
+        original: continued.map_or(inner, |grown| grown.original),
+        requested: egui::vec2(inner.x, wanted),
+        earlier: continued.map_or_else(Vec::new, |grown| {
+            let mut earlier = grown.earlier.clone();
+            earlier.push(grown.requested);
+            earlier
+        }),
+        acknowledged: false,
+        user_resized: false,
+    })
 }
 
 pub struct App {
@@ -611,12 +701,28 @@ impl App {
         }
     }
 
-    /// Makes a short window tall enough to list the workspaces, up to seven.
-    /// The window never shrinks for the list, and is not touched when
-    /// maximized or fullscreen.
-    fn grow_window_for_workspaces(&mut self, ctx: &egui::Context) {
-        let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
-            return;
+    /// Makes a short window tall enough for the open overlay's list: the
+    /// palette's rows or up to seven workspaces. The window never shrinks for
+    /// it, is not touched when maximized or fullscreen, and returns to its
+    /// size once no overlay wants the room.
+    fn fit_window_to_overlay(&mut self, ctx: &egui::Context) {
+        if let Some(grown) = &mut self.grown_window
+            && let Some(inner) = ctx.input(|input| input.viewport().inner_rect)
+        {
+            grown.observe(inner.size());
+        }
+        let wanted = match &self.overlay {
+            Some(Overlay::Workspaces) => {
+                let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
+                    return;
+                };
+                crate::workspace_picker::wanted_height(ctx, count)
+            }
+            Some(Overlay::Palette(_)) => crate::command_palette::wanted_height(ctx),
+            _ => {
+                self.restore_window_size(ctx);
+                return;
+            }
         };
         let (inner, monitor, fixed) = ctx.input(|input| {
             let viewport = input.viewport();
@@ -629,43 +735,37 @@ impl App {
         let Some(inner) = inner else {
             return;
         };
-        let mut wanted = crate::workspace_picker::wanted_height(ctx, count);
-        if let Some(monitor) = monitor {
-            wanted = wanted.min(monitor.y * 0.9);
-        }
-        let requested = self.grown_window.as_ref().map(|grown| grown.requested.y);
-        if fixed || wanted <= inner.y + 1.0 || requested.is_some_and(|height| height >= wanted) {
+        let wanted = monitor.map_or(wanted, |monitor| wanted.min(monitor.y * 0.9));
+        if fixed {
             return;
         }
-        let size = egui::vec2(inner.x, wanted);
-        let original = self
-            .grown_window
-            .take()
-            .map_or(inner, |grown| grown.original);
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-        self.grown_window = Some(GrownWindow {
-            original,
-            requested: size,
-        });
+        let Some(grown) = grown_window(inner, wanted, self.grown_window.as_ref()) else {
+            return;
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(grown.requested));
+        self.grown_window = Some(grown);
     }
 
     /// Undoes the growth unless the user has resized the window since.
     fn restore_window_size(&mut self, ctx: &egui::Context) {
-        let Some(grown) = self.grown_window.take() else {
+        let Some(grown) = &self.grown_window else {
             return;
         };
         let inner = ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.size()));
-        if inner.is_some_and(|size| (size - grown.requested).abs().max_elem() < 2.0) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(grown.original));
+        match grown.undo(inner) {
+            Undo::Restore(size) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+                self.grown_window = None;
+            }
+            Undo::Wait => {}
+            Undo::Forget => self.grown_window = None,
         }
     }
 
     fn workspace_picker(&mut self, ctx: &egui::Context) {
         if !matches!(self.overlay, Some(Overlay::Workspaces)) {
-            self.restore_window_size(ctx);
             return;
         }
-        self.grow_window_for_workspaces(ctx);
         let outcome =
             crate::workspace_picker::show(ctx, self.workspace_roster.as_deref(), self.workspace_id);
         if outcome.dismissed {
@@ -1606,6 +1706,7 @@ impl App {
                 self.action(ctx, action);
             }
         }
+        self.fit_window_to_overlay(ctx);
         self.workspace_picker(ctx);
         if self.pending_workspace.is_some() {
             egui::Window::new("Switching workspace")
@@ -2458,6 +2559,107 @@ mod tests {
     use super::*;
     use crate::workspace::{PaneRemoval, Tab};
     use std::time::Duration;
+
+    #[test]
+    fn a_short_window_grows_to_the_wanted_height_and_remembers_its_size() {
+        let short = egui::vec2(800.0, 300.0);
+        let grown = grown_window(short, 500.0, None).unwrap();
+        assert_eq!(grown.requested, egui::vec2(800.0, 500.0));
+        assert_eq!(grown.original, short);
+        assert!(grown_window(egui::vec2(800.0, 500.0), 500.0, None).is_none());
+        assert!(grown_window(egui::vec2(800.0, 700.0), 500.0, None).is_none());
+    }
+
+    #[test]
+    fn a_taller_overlay_grows_the_window_again_from_the_first_size() {
+        let short = egui::vec2(800.0, 300.0);
+        let first = grown_window(short, 500.0, None).unwrap();
+        assert!(grown_window(first.requested, 450.0, Some(&first)).is_none());
+        let second = grown_window(first.requested, 600.0, Some(&first)).unwrap();
+        assert_eq!(second.requested.y, 600.0);
+        assert_eq!(second.original, short);
+    }
+
+    #[test]
+    fn growing_after_a_user_resize_restores_the_users_size() {
+        let first = grown_window(egui::vec2(800.0, 300.0), 500.0, None).unwrap();
+        let resized = egui::vec2(800.0, 400.0);
+        let second = grown_window(resized, 600.0, Some(&first)).unwrap();
+        assert_eq!(second.original, resized);
+    }
+
+    #[test]
+    fn a_grown_window_waits_for_the_system_before_it_is_restored() {
+        let short = egui::vec2(800.0, 300.0);
+        let grown = grown_window(short, 500.0, None).unwrap();
+        // Closed before the system applied the growth: nothing to undo yet.
+        assert_eq!(grown.undo(Some(short)), Undo::Wait);
+        assert_eq!(
+            grown.undo(Some(egui::vec2(800.0, 500.0))),
+            Undo::Restore(short)
+        );
+        // A user's size, or one the system clamped, is left as it is.
+        assert_eq!(grown.undo(Some(egui::vec2(800.0, 420.0))), Undo::Forget);
+        assert_eq!(grown.undo(None), Undo::Forget);
+    }
+
+    #[test]
+    fn a_window_reporting_an_earlier_growth_is_still_restored() {
+        let short = egui::vec2(800.0, 300.0);
+        let first = grown_window(short, 500.0, None).unwrap();
+        // A taller overlay asks again before the window reports 500.
+        let second = grown_window(short, 600.0, Some(&first)).unwrap();
+        assert_eq!(second.original, short);
+        assert_eq!(
+            second.undo(Some(egui::vec2(800.0, 500.0))),
+            Undo::Restore(short)
+        );
+        assert_eq!(second.undo(Some(short)), Undo::Wait);
+    }
+
+    #[test]
+    fn a_size_picked_after_the_latest_growth_arrives_is_the_users() {
+        let short = egui::vec2(800.0, 300.0);
+        let first = grown_window(short, 500.0, None).unwrap();
+        let mut second = grown_window(short, 600.0, Some(&first)).unwrap();
+        second.observe(egui::vec2(800.0, 600.0));
+        assert_eq!(second.undo(Some(egui::vec2(800.0, 500.0))), Undo::Forget);
+        assert_eq!(
+            second.undo(Some(egui::vec2(800.0, 600.0))),
+            Undo::Restore(short)
+        );
+    }
+
+    #[test]
+    fn the_original_size_chosen_after_the_growth_arrives_is_the_users() {
+        let short = egui::vec2(800.0, 300.0);
+        let mut grown = grown_window(short, 500.0, None).unwrap();
+        assert_eq!(grown.undo(Some(short)), Undo::Wait);
+        grown.observe(egui::vec2(800.0, 500.0));
+        assert_eq!(grown.undo(Some(short)), Undo::Forget);
+    }
+
+    #[test]
+    fn a_resize_after_the_growth_arrives_is_kept_even_if_undone() {
+        let short = egui::vec2(800.0, 300.0);
+        let mut grown = grown_window(short, 500.0, None).unwrap();
+        grown.observe(egui::vec2(800.0, 500.0));
+        grown.observe(egui::vec2(800.0, 400.0));
+        grown.observe(egui::vec2(800.0, 500.0));
+        assert_eq!(grown.undo(Some(egui::vec2(800.0, 500.0))), Undo::Forget);
+        // A taller overlay keeps the user's size as the one to restore.
+        let again = grown_window(egui::vec2(800.0, 500.0), 600.0, Some(&grown)).unwrap();
+        assert_eq!(again.original, egui::vec2(800.0, 500.0));
+    }
+
+    #[test]
+    fn a_grown_window_holds_its_size_only_until_the_user_resizes_it() {
+        let grown = grown_window(egui::vec2(800.0, 300.0), 500.0, None).unwrap();
+        assert!(grown.holds(egui::vec2(800.0, 500.0)));
+        assert!(grown.holds(egui::vec2(801.0, 499.5)));
+        assert!(!grown.holds(egui::vec2(800.0, 450.0)));
+        assert!(!grown.holds(egui::vec2(900.0, 500.0)));
+    }
 
     #[test]
     fn a_geometry_change_wakes_the_window_once_the_autosave_is_due() {

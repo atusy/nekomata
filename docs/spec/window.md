@@ -22,3 +22,10 @@ The command palette, the font size control, the workspace list and the
 session picker are overlays: the window shows at most one of them. Opening
 one, for example with the command palette button while the workspace list is
 open, closes the one already open.
+
+The command palette and the workspace list size their lists to the UI font, so
+a larger font makes rows taller rather than showing fewer of them. A window too
+short for the list grows while the overlay is open, up to 90% of the monitor's
+height when the monitor's size is known, and returns to its size when the
+overlay closes. A maximized or fullscreen window is left alone, and a window
+the user resized meanwhile keeps its new size.

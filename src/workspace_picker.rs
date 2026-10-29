@@ -32,9 +32,10 @@ pub(crate) fn wanted_height(ctx: &egui::Context, count: usize) -> f32 {
     let style = ctx.global_style();
     let (pitch, gap) = row_pitch(&style);
     let rows = (count as f32).clamp(1.0, MAX_VISIBLE_ROWS);
-    // The offset from the top is at most 64 px, and the header and the
-    // frame take what `show` reserves below it.
-    64.0 + theme::ui_extent(&style, HEADER_RESERVE) + rows * pitch - gap
+    // The offset from the top is at most its maximum, which is what the
+    // window height has to allow for; the header and the frame take what
+    // `show` reserves below it.
+    theme::OVERLAY_MAX_TOP + theme::ui_extent(&style, HEADER_RESERVE) + rows * pitch - gap
 }
 
 /// What the header and the frame take from the window besides the list.
@@ -72,6 +73,28 @@ fn ordered(workspaces: &[Summary], current: Option<u128>) -> Vec<&Summary> {
         }
     });
     ordered
+}
+
+/// One line of `text`, cut with an ellipsis where it would pass `room`.
+fn elided(
+    painter: &egui::Painter,
+    text: &str,
+    size: f32,
+    color: egui::Color32,
+    room: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        text.to_owned(),
+        egui::FontId::proportional(size),
+        color,
+    );
+    job.wrap = egui::text::TextWrapping {
+        max_width: room.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    painter.layout_job(job)
 }
 
 #[derive(Clone, Copy)]
@@ -210,26 +233,46 @@ pub(crate) fn show(
                             (theme::FG, theme::TAB_INACTIVE_FG)
                         };
                         let x = rect.left() + 10.0;
-                        painter.text(
-                            egui::pos2(x, rect.center().y - 8.0),
-                            egui::Align2::LEFT_CENTER,
-                            text.text(),
-                            egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)),
-                            ink,
-                        );
-                        painter.text(
-                            egui::pos2(x, rect.center().y + 9.0),
-                            egui::Align2::LEFT_CENTER,
-                            detail.text(),
-                            egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
-                            detail_ink,
-                        );
-                        if Some(workspace.id) == current {
-                            painter.text(
-                                egui::pos2(rect.right() - 10.0, rect.center().y),
-                                egui::Align2::RIGHT_CENTER,
-                                "Current",
+                        let marker = (Some(workspace.id) == current).then(|| {
+                            painter.layout_no_wrap(
+                                "Current".to_owned(),
                                 egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
+                                theme::ACCENT,
+                            )
+                        });
+                        // The lines give way to the marker instead of running
+                        // under it, and to the row's edge.
+                        let room = rect.width()
+                            - 20.0
+                            - marker.as_ref().map_or(0.0, |marker| marker.size().x + 10.0);
+                        // Stack the two lines from their measured heights, so
+                        // they keep apart whatever the body size.
+                        let name = elided(
+                            painter,
+                            text.text(),
+                            theme::ui_size(ui.style(), 14.0),
+                            ink,
+                            room,
+                        );
+                        let detail = elided(
+                            painter,
+                            detail.text(),
+                            theme::ui_size(ui.style(), 12.0),
+                            detail_ink,
+                            room,
+                        );
+                        let top = rect.center().y - (name.size().y + detail.size().y) / 2.0;
+                        let below = top + name.size().y;
+                        painter.galley(egui::pos2(x, top), name, ink);
+                        painter.galley(egui::pos2(x, below), detail, detail_ink);
+                        if let Some(marker) = marker {
+                            let size = marker.size();
+                            painter.galley(
+                                egui::pos2(
+                                    rect.right() - 10.0 - size.x,
+                                    rect.center().y - size.y / 2.0,
+                                ),
+                                marker,
                                 theme::ACCENT,
                             );
                         }
@@ -365,6 +408,155 @@ mod tests {
         ] {
             assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
         }
+    }
+
+    #[test]
+    fn a_large_body_keeps_the_name_above_the_detail_line() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        let roster = [summary(1, None, 2, 3)];
+        let bounds = |ctx: &egui::Context| {
+            let output = crate::test_support::run(
+                ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(1));
+                },
+            );
+            let find = |wanted: &str| {
+                output.shapes.iter().find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == wanted => {
+                        Some(text.visual_bounding_rect())
+                    }
+                    _ => None,
+                })
+            };
+            (
+                find("Workspace 00000000000000000000000000000001"),
+                find("2 tabs · 3 panes"),
+            )
+        };
+        bounds(&ctx);
+        let (name, detail) = bounds(&ctx);
+        let (name, detail) = (name.unwrap(), detail.unwrap());
+        assert!(
+            name.bottom() <= detail.top(),
+            "{name:?} overlaps {detail:?}"
+        );
+    }
+
+    #[test]
+    fn a_long_name_gives_way_to_the_current_marker_in_a_narrow_window() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(21.0));
+        });
+        let roster = [summary(1, None, 2, 3)];
+        let mut rects = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(1));
+                },
+            );
+            rects = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.text().starts_with("Workspace 0")
+                            || text.galley.text() == "Current" =>
+                    {
+                        Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        let find = |wanted: &str| {
+            rects
+                .iter()
+                .find(|(text, _)| text.starts_with(wanted))
+                .unwrap()
+                .1
+        };
+        let (name, current) = (find("Workspace 0"), find("Current"));
+        assert!(
+            name.right() < current.left(),
+            "{name:?} runs into {current:?}"
+        );
+    }
+
+    #[test]
+    fn a_long_detail_gives_way_to_the_current_marker_in_a_narrow_window() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        let roster = [summary(1, None, 2, 3)];
+        let mut rects = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(200.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(1));
+                },
+            );
+            rects = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text)
+                        if text.galley.text().starts_with("2 tabs")
+                            || text.galley.text() == "Current" =>
+                    {
+                        Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+        let find = |wanted: &str| {
+            rects
+                .iter()
+                .find(|(text, _)| text.starts_with(wanted))
+                .unwrap()
+                .1
+        };
+        let (detail, current) = (find("2 tabs"), find("Current"));
+        assert!(
+            detail.right() < current.left(),
+            "{detail:?} runs into {current:?}"
+        );
     }
 
     #[test]

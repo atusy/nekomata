@@ -35,6 +35,18 @@ impl Command {
     }
 }
 
+/// What the search field and the frame take from the window besides the
+/// list.
+const LIST_RESERVE: f32 = 88.0;
+
+/// The window height at which the palette lists its full height of rows.
+pub(crate) fn wanted_height(ctx: &egui::Context) -> f32 {
+    let style = ctx.global_style();
+    theme::OVERLAY_MAX_TOP
+        + theme::ui_extent(&style, LIST_RESERVE)
+        + theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT)
+}
+
 fn commands() -> Vec<Command> {
     public_commands()
         .iter()
@@ -76,7 +88,7 @@ impl CommandPalette {
             (viewport.width() - 48.0).clamp(100.0, theme::ui_extent(&style, theme::PALETTE_WIDTH));
         let row_height = theme::ui_extent(&style, theme::PALETTE_ROW_HEIGHT);
         let detail_row_height = theme::ui_extent(&style, theme::PALETTE_DETAIL_ROW_HEIGHT);
-        let list_height = (viewport.height() - top - theme::ui_extent(&style, 88.0)).clamp(
+        let list_height = (viewport.height() - top - theme::ui_extent(&style, LIST_RESERVE)).clamp(
             row_height,
             theme::ui_extent(&style, theme::PALETTE_LIST_HEIGHT),
         );
@@ -99,6 +111,7 @@ impl CommandPalette {
                     egui::TextEdit::singleline(&mut self.query)
                         .hint_text("Search commands…")
                         .font(egui::FontId::proportional(theme::ui_size(ui.style(), 14.0)))
+                        .align(egui::Align2::LEFT_CENTER)
                         .margin(egui::vec2(10.0, 7.0)),
                 );
                 if !search.has_focus() {
@@ -121,6 +134,7 @@ impl CommandPalette {
                 egui::ScrollArea::vertical()
                     .id_salt("command_results")
                     .max_height(list_height)
+                    .min_scrolled_height(list_height)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         if matches.is_empty() {
@@ -207,6 +221,109 @@ mod tests {
         });
         result
     }
+    #[test]
+    fn wanted_height_follows_the_body_size() {
+        let ctx = egui::Context::default();
+        let small = wanted_height(&ctx);
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        assert!(wanted_height(&ctx) > 1.5 * small);
+    }
+
+    #[test]
+    fn a_window_of_the_wanted_height_lists_as_many_rows_as_a_tall_one_at_any_body() {
+        let rows = |body: f32, height: Option<f32>| {
+            let ctx = egui::Context::default();
+            ctx.global_style_mut(|style| {
+                style
+                    .text_styles
+                    .insert(egui::TextStyle::Body, egui::FontId::proportional(body));
+            });
+            let height = height.unwrap_or_else(|| wanted_height(&ctx));
+            let mut palette = CommandPalette::default();
+            let mut rows = 0;
+            for _ in 0..2 {
+                let output = crate::test_support::run(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1200.0, height),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        palette.show(
+                            ui.ctx(),
+                            &crate::shortcuts::AppKeymap::default().hints(),
+                            None,
+                        );
+                    },
+                );
+                rows = output
+                    .shapes
+                    .iter()
+                    .filter(|shape| {
+                        matches!(&shape.shape, egui::Shape::Text(text)
+                            if text.galley.text().contains(": "))
+                    })
+                    .count();
+            }
+            rows
+        };
+        for body in [14.0, 20.0, 28.0] {
+            let full = rows(body, Some(3000.0));
+            assert!(full >= 6, "{body}: {full}");
+            assert_eq!(rows(body, None), full, "body {body}");
+        }
+    }
+
+    #[test]
+    fn the_search_text_is_centered_in_its_field_at_a_large_body() {
+        let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(28.0));
+        });
+        let mut palette = CommandPalette::default();
+        let mut hint_center = None;
+        for _ in 0..2 {
+            let output = crate::test_support::run(
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    palette.show(
+                        ui.ctx(),
+                        &crate::shortcuts::AppKeymap::default().hints(),
+                        None,
+                    );
+                },
+            );
+            hint_center = output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == "Search commands…" => {
+                    Some(text.visual_bounding_rect().center().y)
+                }
+                _ => None,
+            });
+        }
+        // The field starts below the overlay offset and the frame's margin.
+        let field_top = theme::overlay_top(800.0) + theme::OVERLAY_MARGIN;
+        let field_center =
+            field_top + theme::ui_extent(&ctx.global_style(), theme::PALETTE_ROW_HEIGHT) / 2.0;
+        let offset = (hint_center.unwrap() - field_center).abs();
+        assert!(offset <= 2.0, "{offset}");
+    }
+
     #[test]
     fn unavailable_prompt_jumps_explain_why_and_recover_without_reopening() {
         use felis_client_core::Action::ScrollToPrompt;
