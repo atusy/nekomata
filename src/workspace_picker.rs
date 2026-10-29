@@ -6,7 +6,7 @@ use eframe::egui;
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Outcome {
     /// `Some(None)` asks for a new workspace, `Some(Some(id))` for `id`.
-    pub(crate) selected: Option<Option<u64>>,
+    pub(crate) selected: Option<Option<u128>>,
     pub(crate) refresh: bool,
     pub(crate) dismissed: bool,
 }
@@ -60,7 +60,7 @@ fn detail(workspace: &Summary) -> String {
 /// The current workspace first, then those this window can switch to, then
 /// those another window holds, which it cannot. Each group keeps the
 /// daemon's order.
-fn ordered(workspaces: &[Summary], current: Option<u64>) -> Vec<&Summary> {
+fn ordered(workspaces: &[Summary], current: Option<u128>) -> Vec<&Summary> {
     let mut ordered: Vec<_> = workspaces.iter().collect();
     ordered.sort_by_key(|workspace| {
         if Some(workspace.id) == current {
@@ -134,7 +134,7 @@ fn icon_button(ui: &mut egui::Ui, side: f32, icon: Icon, tooltip: &str) -> egui:
 pub(crate) fn show(
     ctx: &egui::Context,
     roster: Option<&[Summary]>,
-    current: Option<u64>,
+    current: Option<u128>,
 ) -> Outcome {
     let mut outcome = Outcome::default();
     let style = ctx.global_style();
@@ -188,7 +188,7 @@ pub(crate) fn show(
                     for workspace in ordered(workspaces, current) {
                         let held = workspace.window.is_some();
                         let unavailable = held && Some(workspace.id) != current;
-                        let text = egui::RichText::new(format!("Workspace {}", workspace.id));
+                        let text = egui::RichText::new(format!("Workspace {:032x}", workspace.id));
                         let detail = egui::RichText::new(detail(workspace))
                             .size(theme::ui_size(ui.style(), 12.0))
                             .color(theme::TAB_INACTIVE_FG);
@@ -247,7 +247,7 @@ pub(crate) fn show(
 mod tests {
     use super::*;
 
-    fn summary(id: u64, window: Option<u32>, tabs: usize, panes: usize) -> Summary {
+    fn summary(id: u128, window: Option<u32>, tabs: usize, panes: usize) -> Summary {
         Summary {
             id,
             window,
@@ -276,7 +276,7 @@ mod tests {
             summary(4, None, 1, 1),
         ];
         let ids =
-            |current| -> Vec<u64> { ordered(&roster, current).iter().map(|w| w.id).collect() };
+            |current| -> Vec<u128> { ordered(&roster, current).iter().map(|w| w.id).collect() };
         assert_eq!(ids(Some(3)), [3, 2, 4, 1]);
         assert_eq!(ids(None), [2, 4, 1, 3]);
     }
@@ -314,7 +314,9 @@ mod tests {
                 .shapes
                 .iter()
                 .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text() == "Workspace 1" => {
+                    egui::Shape::Text(text)
+                        if text.galley.text() == "Workspace 00000000000000000000000000000001" =>
+                    {
                         Some(shape.clip_rect.height())
                     }
                     _ => None,
@@ -355,10 +357,10 @@ mod tests {
         texts(&ctx, Some(&roster));
         let shown = texts(&ctx, Some(&roster));
         for expected in [
-            "Workspace 1",
+            "Workspace 00000000000000000000000000000001",
             "2 tabs · 3 panes",
             "Current",
-            "Workspace 2",
+            "Workspace 00000000000000000000000000000002",
             "1 tab · 1 pane · in window 4",
         ] {
             assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");

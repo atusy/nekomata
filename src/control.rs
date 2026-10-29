@@ -21,8 +21,8 @@ use crate::cli::PaneAction;
 pub enum Request {
     List,
     Switch {
-        #[serde(rename = "session")]
-        workspace: Option<u64>,
+        #[serde(rename = "session", with = "crate::daemon::workspace_id::optional")]
+        workspace: Option<u128>,
     },
     Attach {
         pane: Option<u64>,
@@ -312,22 +312,16 @@ pub fn run(window: Option<u32>, action: PaneAction) -> Result<String> {
 
 /// Exported to local shells so CLI calls follow their workspace across GUI restarts.
 pub(crate) const WORKSPACE_ENV: &str = "NEKOMATA_WORKSPACE_ID";
-/// Name exported by builds before the workspace rename; their shells still carry it.
-const LEGACY_WORKSPACE_ENV: &str = "NEKOMATA_SESSION_ID";
-
-/// Exported beside the workspace ID: a restarted daemon numbers workspaces
-/// from 1 again, so the ID alone could name an unrelated workspace.
+/// Exported beside the workspace ID to identify the issuing daemon.
 pub(crate) const DAEMON_INSTANCE_ENV: &str = "NEKOMATA_DAEMON_INSTANCE";
 
-fn workspace_from_env(get: impl Fn(&str) -> Option<String>) -> Option<u64> {
-    [WORKSPACE_ENV, LEGACY_WORKSPACE_ENV]
-        .into_iter()
-        .find_map(|name| get(name)?.parse().ok())
+fn workspace_from_env(get: impl Fn(&str) -> Option<String>) -> Option<u128> {
+    get(WORKSPACE_ENV).and_then(|id| crate::daemon::workspace_id::parse(&id))
 }
 
 fn window_of_workspace(
     workspaces: &[crate::daemon::Summary],
-    id: u64,
+    id: u128,
     instance: Option<&str>,
 ) -> Result<u32> {
     if let Some(instance) = instance
@@ -463,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn shells_name_their_workspace_with_a_legacy_fallback() {
+    fn shells_name_their_workspace_with_a_full_hex_id() {
         let env = |vars: &'static [(&'static str, &'static str)]| {
             move |name: &str| {
                 vars.iter()
@@ -473,17 +467,20 @@ mod tests {
         };
         assert_eq!(workspace_from_env(env(&[])), None);
         assert_eq!(
-            workspace_from_env(env(&[("NEKOMATA_WORKSPACE_ID", "7")])),
+            workspace_from_env(env(&[(
+                "NEKOMATA_WORKSPACE_ID",
+                "00000000000000000000000000000007"
+            )])),
             Some(7)
         );
         // Shells started by builds before the rename only carry the old name.
         assert_eq!(
             workspace_from_env(env(&[("NEKOMATA_SESSION_ID", "5")])),
-            Some(5)
+            None
         );
         assert_eq!(
             workspace_from_env(env(&[
-                ("NEKOMATA_WORKSPACE_ID", "7"),
+                ("NEKOMATA_WORKSPACE_ID", "00000000000000000000000000000007"),
                 ("NEKOMATA_SESSION_ID", "5")
             ])),
             Some(7)
@@ -493,7 +490,7 @@ mod tests {
                 ("NEKOMATA_WORKSPACE_ID", "bad"),
                 ("NEKOMATA_SESSION_ID", "5")
             ])),
-            Some(5)
+            None
         );
     }
 
@@ -772,7 +769,7 @@ mod tests {
         let request = Request::Switch { workspace: Some(7) };
         assert_eq!(
             serde_json::to_value(&request).unwrap(),
-            serde_json::json!({"Switch": {"session": 7}})
+            serde_json::json!({"Switch": {"session": "00000000000000000000000000000007"}})
         );
     }
 

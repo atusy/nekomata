@@ -161,7 +161,7 @@ impl Pane {
         runtime: &tokio::runtime::Runtime,
         ctx: &egui::Context,
         window: u32,
-        workspace: Option<(u64, Option<&str>)>,
+        workspace: Option<(u128, Option<&str>)>,
         id: u64,
         target: Target,
         attach: Option<String>,
@@ -172,7 +172,7 @@ impl Pane {
             ("NEKOMATA_PANE_ID".into(), id.to_string()),
         ];
         if let Some((id, instance)) = workspace {
-            env.push((control::WORKSPACE_ENV.into(), id.to_string()));
+            env.push((control::WORKSPACE_ENV.into(), format!("{id:032x}")));
             if let Some(instance) = instance {
                 env.push((control::DAEMON_INSTANCE_ENV.into(), instance.into()));
             }
@@ -201,7 +201,7 @@ struct GrownWindow {
 
 pub struct App {
     workspace: Option<WorkspaceClient>,
-    workspace_id: Option<u64>,
+    workspace_id: Option<u128>,
     /// The daemon instance that issued `workspace_id`, when it reports one.
     daemon_instance: Option<String>,
     workspace_error: Option<String>,
@@ -309,7 +309,7 @@ impl App {
     }
 
     /// The workspace identity new local shells carry.
-    fn workspace(&self) -> Option<(u64, Option<&str>)> {
+    fn workspace(&self) -> Option<(u128, Option<&str>)> {
         self.workspace_id
             .map(|id| (id, self.daemon_instance.as_deref()))
     }
@@ -472,7 +472,7 @@ impl App {
                             self.last_snapshot = None;
                             self.workspace_error = None;
                             if let Some(reply) = reply {
-                                let _ = reply.send(Ok(format!("Attached workspace {id}")));
+                                let _ = reply.send(Ok(format!("Attached workspace {id:032x}")));
                             }
                         }
                         Step::Failed { error, reply } => {
@@ -523,7 +523,7 @@ impl App {
 
     fn begin_workspace(
         &mut self,
-        workspace: Option<u64>,
+        workspace: Option<u128>,
         reply: Option<tokio::sync::oneshot::Sender<Reply>>,
     ) {
         let result = (|| -> anyhow::Result<()> {
@@ -3166,7 +3166,7 @@ mod tests {
             let command = app.runtime.spawn(async move {
                 let result = tokio::process::Command::new(executable)
                     .args(["panes", "list"])
-                    .env(control::WORKSPACE_ENV, id.to_string())
+                    .env(control::WORKSPACE_ENV, format!("{id:032x}"))
                     .env(control::DAEMON_INSTANCE_ENV, instance)
                     .env("NEKOMATA_WINDOW_ID", u32::MAX.to_string())
                     .output()
@@ -3237,7 +3237,7 @@ mod tests {
             vec![
                 "workspaces".into(),
                 "attach".into(),
-                workspace_id.unwrap().to_string(),
+                format!("{:032x}", workspace_id.unwrap()),
             ],
         );
         assert!(output.status.success(), "{output:?}");
@@ -3271,7 +3271,11 @@ mod tests {
         let original_connection = replacement.panes[&1].session.clone();
         let output = command(
             &mut replacement,
-            vec!["workspaces".into(), "attach".into(), other.to_string()],
+            vec![
+                "workspaces".into(),
+                "attach".into(),
+                format!("{other:032x}"),
+            ],
         );
         assert!(!output.status.success(), "{output:?}");
         assert_eq!(replacement.workspace_id, workspace_id);
@@ -3323,7 +3327,7 @@ mod tests {
             vec![
                 "workspaces".into(),
                 "attach".into(),
-                workspace_id.unwrap().to_string(),
+                format!("{:032x}", workspace_id.unwrap()),
             ],
         );
         assert!(output.status.success(), "{output:?}");
@@ -3360,7 +3364,11 @@ mod tests {
         let original_connection = replacement.panes[&1].session.clone();
         let output = command(
             &mut replacement,
-            vec!["workspaces".into(), "attach".into(), other.to_string()],
+            vec![
+                "workspaces".into(),
+                "attach".into(),
+                format!("{other:032x}"),
+            ],
         );
         assert!(output.status.success(), "{output:?}");
         assert_eq!(replacement.workspace_id, Some(other));
@@ -3379,7 +3387,7 @@ mod tests {
             vec![
                 "workspaces".into(),
                 "attach".into(),
-                workspace_id.unwrap().to_string(),
+                format!("{:032x}", workspace_id.unwrap()),
             ],
         );
         assert!(output.status.success(), "{output:?}");

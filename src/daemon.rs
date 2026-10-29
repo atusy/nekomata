@@ -22,7 +22,50 @@ use tokio::{
 
 use crate::workspace::Snapshot;
 
-const VERSION: u32 = 1;
+pub(crate) mod workspace_id {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(id: &u128, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{id:032x}"))
+    }
+
+    pub fn parse(text: &str) -> Option<u128> {
+        if text.len() != 32 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        u128::from_str_radix(text, 16).ok()
+    }
+
+    pub mod optional {
+        use serde::{Deserialize, Deserializer, Serializer};
+        pub fn serialize<S: Serializer>(
+            id: &Option<u128>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            match id {
+                Some(id) => serializer.serialize_some(&format!("{id:032x}")),
+                None => serializer.serialize_none(),
+            }
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            deserializer: D,
+        ) -> Result<Option<u128>, D::Error> {
+            Option::<String>::deserialize(deserializer)?
+                .map(|text| {
+                    super::parse(&text)
+                        .ok_or_else(|| serde::de::Error::custom("invalid workspace ID"))
+                })
+                .transpose()
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u128, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        parse(&text).ok_or_else(|| serde::de::Error::custom("invalid workspace ID"))
+    }
+}
+
+const VERSION: u32 = 2;
 const MAX_MESSAGE: usize = 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
@@ -31,7 +74,7 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 pub enum Selection {
     Latest,
     New,
-    Id(u64),
+    Id(#[serde(with = "workspace_id")] u128),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +90,8 @@ pub enum Request {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
-    pub id: u64,
+    #[serde(with = "workspace_id")]
+    pub id: u128,
     pub window: Option<u32>,
     pub tabs: usize,
     pub panes: usize,
@@ -61,7 +105,8 @@ pub struct Summary {
 pub enum Payload {
     #[serde(rename = "Session")]
     Workspace {
-        id: u64,
+        #[serde(with = "workspace_id")]
+        id: u128,
         snapshot: Snapshot,
         /// Identifies the daemon that issued `id`; empty from older daemons.
         #[serde(default)]
@@ -131,10 +176,9 @@ struct Record {
 
 #[derive(Default)]
 struct Registry {
-    workspaces: BTreeMap<u64, Record>,
-    next_id: u64,
+    workspaces: BTreeMap<u128, Record>,
     clock: u64,
-    /// Distinguishes this daemon from earlier ones, whose IDs restarted at 1.
+    /// Distinguishes this daemon from earlier instances.
     instance: String,
     /// Set under the lock by an accepted Stop, so no window opens between the
     /// owner check and the daemon exiting.
@@ -142,7 +186,7 @@ struct Registry {
 }
 
 impl Registry {
-    fn claim(&mut self, owner: u64, window: u32, selection: Selection) -> Result<u64> {
+    fn claim(&mut self, owner: u64, window: u32, selection: Selection) -> Result<u128> {
         let selected = match selection {
             Selection::Latest => self
                 .workspaces
@@ -161,8 +205,14 @@ impl Registry {
             }
         };
         let id = selected.unwrap_or_else(|| {
-            self.next_id += 1;
-            let id = self.next_id;
+            let id = loop {
+                let mut bytes = [0; 16];
+                getrandom::fill(&mut bytes).expect("OS RNG failed");
+                let candidate = u128::from_be_bytes(bytes);
+                if !self.workspaces.contains_key(&candidate) {
+                    break candidate;
+                }
+            };
             self.workspaces.insert(
                 id,
                 Record {
@@ -177,12 +227,12 @@ impl Registry {
         Ok(id)
     }
 
-    fn touch(&mut self, id: u64) {
+    fn touch(&mut self, id: u128) {
         self.clock += 1;
         self.workspaces.get_mut(&id).unwrap().last_used = self.clock;
     }
 
-    fn snapshot(&self, id: u64) -> Payload {
+    fn snapshot(&self, id: u128) -> Payload {
         Payload::Workspace {
             id,
             snapshot: self.workspaces[&id].snapshot.clone(),
@@ -190,7 +240,7 @@ impl Registry {
         }
     }
 
-    fn release(&mut self, owner: u64, current: Option<u64>) {
+    fn release(&mut self, owner: u64, current: Option<u128>) {
         if let Some(id) = current {
             self.touch(id);
         }
@@ -207,7 +257,7 @@ impl Registry {
 
     /// Ends the lease on a workspace. One without tabs has nothing to restore,
     /// so it is discarded rather than listed forever.
-    fn unlease(&mut self, id: u64) {
+    fn unlease(&mut self, id: u128) {
         let record = self.workspaces.get_mut(&id).unwrap();
         record.owner = None;
         if record.snapshot.window.tabs.is_empty() {
@@ -493,8 +543,8 @@ fn handle(
     registry: &mut Registry,
     owner: u64,
     window: &mut Option<u32>,
-    current: &mut Option<u64>,
-    pending: &mut Option<u64>,
+    current: &mut Option<u128>,
+    pending: &mut Option<u128>,
     request: Request,
 ) -> Result<Payload> {
     match request {
@@ -568,7 +618,7 @@ pub fn command(stop: bool) -> Result<String> {
                 let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
                 for workspace in workspaces {
                     output.push_str(&format!(
-                        "{}\t{}\t{}\t{}\n",
+                        "{:032x}\t{}\t{}\t{}\n",
                         workspace.id,
                         workspace
                             .window
@@ -590,6 +640,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn workspace_ids_are_serialized_as_full_hex_strings() {
+        let mut registry = Registry::default();
+        let id = registry.claim(1, 1, Selection::New).unwrap();
+        let json = serde_json::to_value(registry.snapshot(id)).unwrap();
+        let id = json["Session"]["id"].as_str().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(
+            id.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        );
+    }
+
+    #[test]
+    fn new_workspaces_have_distinct_ids() {
+        let mut registry = Registry::default();
+        let first = registry.claim(1, 1, Selection::New).unwrap();
+        let second = registry.claim(2, 2, Selection::New).unwrap();
+        assert_ne!(first, second);
+        let encoded = serde_json::to_string(&Selection::Id(second)).unwrap();
+        let Selection::Id(decoded) = serde_json::from_str(&encoded).unwrap() else {
+            panic!("expected an ID selection");
+        };
+        assert_eq!(decoded, second);
+    }
+
+    #[test]
+    fn workspace_ids_require_a_complete_hexadecimal_value() {
+        assert_eq!(
+            workspace_id::parse("ffffffffffffffffffffffffffffffff"),
+            Some(u128::MAX)
+        );
+        assert_eq!(
+            workspace_id::parse("+0000000000000000000000000000001"),
+            None
+        );
+        assert_eq!(workspace_id::parse("7"), None);
+    }
+
+    #[test]
     fn workspace_payloads_keep_their_wire_names_for_running_daemons() {
         let workspace = Payload::Workspace {
             id: 3,
@@ -597,7 +686,7 @@ mod tests {
             instance: String::new(),
         };
         let json = serde_json::to_value(&workspace).unwrap();
-        assert_eq!(json["Session"]["id"], 3);
+        assert_eq!(json["Session"]["id"], "00000000000000000000000000000003");
         assert_eq!(
             serde_json::to_value(Payload::Workspaces(vec![])).unwrap(),
             serde_json::json!({"Sessions": []})
@@ -760,7 +849,7 @@ mod tests {
         }
     }
 
-    fn workspace(payload: Payload) -> (u64, Snapshot) {
+    fn workspace(payload: Payload) -> (u128, Snapshot) {
         let Payload::Workspace { id, snapshot, .. } = payload else {
             panic!("expected workspace")
         };

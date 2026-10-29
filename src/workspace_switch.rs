@@ -27,13 +27,13 @@ enum Phase<P> {
     Preparing,
     /// The destination is reserved; its panes are connecting.
     Connecting {
-        id: u64,
+        id: u128,
         snapshot: Snapshot,
         panes: BTreeMap<u64, P>,
     },
     /// `Finish` with the destination snapshot was sent.
     Committing {
-        id: u64,
+        id: u128,
         snapshot: Snapshot,
         panes: BTreeMap<u64, P>,
     },
@@ -57,7 +57,7 @@ pub enum Poll {
 pub enum Step<P> {
     Pending(Switch<P>),
     Committed {
-        id: u64,
+        id: u128,
         snapshot: Snapshot,
         panes: BTreeMap<u64, P>,
         reply: Option<ReplySender>,
@@ -80,7 +80,7 @@ impl<P> Switch<P> {
     /// that attach an existing felis session.
     pub fn prepared(
         &mut self,
-        id: u64,
+        id: u128,
         snapshot: Snapshot,
         mut connect: impl FnMut(u64, &PaneSpec) -> P,
     ) {

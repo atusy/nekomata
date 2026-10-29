@@ -177,7 +177,7 @@ impl Reconnect {
 #[derive(Debug, Clone)]
 pub struct Resume {
     /// The workspace the window held before the connection was lost.
-    pub previous: u64,
+    pub previous: u128,
     /// The layouts the daemon may hold for it.
     pub saved: Saved,
     /// The window's layout now, which the resumed workspace takes.
@@ -199,7 +199,7 @@ async fn resume(
     resume: Resume,
     saved: &Shared,
 ) -> Result<Payload> {
-    let own = |id: u64, retained: &Snapshot| id == resume.previous && resume.saved.holds(retained);
+    let own = |id: u128, retained: &Snapshot| id == resume.previous && resume.saved.holds(retained);
     // Every write below may land even if its answer is lost.
     saved.lock().unwrap().sending(&resume.current);
     let opened = daemon::exchange(stream, Request::Open { window }).await?;
@@ -237,11 +237,11 @@ async fn resume(
 /// Gives the layout to the opened workspace when it is new, else to a new one.
 async fn fresh(
     stream: &mut UnixStream,
-    id: u64,
+    id: u128,
     retained: &Snapshot,
     resume: &Resume,
     commit: Request,
-) -> Result<u64> {
+) -> Result<u128> {
     if retained.window.tabs.is_empty() {
         daemon::exchange(stream, Request::Save(resume.current.clone())).await?;
         return Ok(id);
@@ -257,7 +257,7 @@ async fn fresh(
 async fn reserve(
     stream: &mut UnixStream,
     selection: daemon::Selection,
-) -> Result<Option<(u64, Snapshot)>> {
+) -> Result<Option<(u128, Snapshot)>> {
     match daemon::exchange(stream, Request::Prepare(selection)).await {
         Ok(payload) => workspace(payload).map(Some),
         Err(error) if error.downcast_ref::<daemon::Rejection>().is_some() => Ok(None),
@@ -265,7 +265,7 @@ async fn reserve(
     }
 }
 
-fn workspace(payload: Payload) -> Result<(u64, Snapshot)> {
+fn workspace(payload: Payload) -> Result<(u128, Snapshot)> {
     match payload {
         Payload::Workspace { id, snapshot, .. } => Ok((id, snapshot)),
         _ => anyhow::bail!("unexpected nekomata daemon reply"),
@@ -939,7 +939,7 @@ mod tests {
         (client, daemon)
     }
 
-    async fn resumed(client: &mut Client) -> u64 {
+    async fn resumed(client: &mut Client) -> u128 {
         let event = client.events.recv().await.unwrap();
         assert_eq!(event.operation, Operation::Resume);
         let Ok(Payload::Workspace { id, instance, .. }) = event.result else {
