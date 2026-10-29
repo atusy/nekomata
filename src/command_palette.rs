@@ -234,15 +234,15 @@ mod tests {
     }
 
     #[test]
-    fn a_window_of_the_wanted_height_lists_as_many_rows_at_a_large_body_as_at_a_small_one() {
-        let rows_at = |body: f32| {
+    fn a_window_of_the_wanted_height_lists_as_many_rows_as_a_tall_one_at_any_body() {
+        let rows = |body: f32, height: Option<f32>| {
             let ctx = egui::Context::default();
             ctx.global_style_mut(|style| {
                 style
                     .text_styles
                     .insert(egui::TextStyle::Body, egui::FontId::proportional(body));
             });
-            let height = wanted_height(&ctx);
+            let height = height.unwrap_or_else(|| wanted_height(&ctx));
             let mut palette = CommandPalette::default();
             let mut rows = 0;
             for _ in 0..2 {
@@ -268,14 +268,17 @@ mod tests {
                     .iter()
                     .filter(|shape| {
                         matches!(&shape.shape, egui::Shape::Text(text)
-                            if text.galley.text().starts_with("Tab: "))
+                            if text.galley.text().contains(": "))
                     })
                     .count();
             }
             rows
         };
-        assert!(rows_at(14.0) >= 4);
-        assert_eq!(rows_at(28.0), rows_at(14.0));
+        for body in [14.0, 20.0, 28.0] {
+            let full = rows(body, Some(3000.0));
+            assert!(full >= 6, "{body}: {full}");
+            assert_eq!(rows(body, None), full, "body {body}");
+        }
     }
 
     #[test]
