@@ -3434,15 +3434,16 @@ mod tests {
             .unwrap()
             .session_id
             .unwrap();
+        // Two random IDs share 12 leading digits with negligible probability.
         let output = command(
             &mut replacement,
             vec![
                 "workspaces".into(),
                 "attach".into(),
-                format!("{:032x}", workspace_id.unwrap()),
+                format!("{:032x}", workspace_id.unwrap())[..12].to_owned(),
             ],
         );
-        assert!(output.status.success(), "{output:?}");
+        assert!(output.status.success(), "attach by prefix: {output:?}");
         assert_eq!(replacement.snapshot(), before);
 
         // No pane of the destination can connect, so the switch is cancelled

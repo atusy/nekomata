@@ -1,5 +1,24 @@
-//! The workspace roster as `nekomata workspaces list` prints it.
+//! The workspace roster as the CLI prints it and reads IDs back from it.
+use anyhow::{Result, bail};
+
 use crate::daemon::Summary;
+
+/// The workspace whose ID starts with `prefix`, a lowercase hex string.
+/// Workspaces other windows hold are candidates too: the switch then
+/// reports the workspace as attached instead of as missing.
+pub fn resolve(workspaces: &[Summary], prefix: &str) -> Result<u128> {
+    let mut matches = workspaces
+        .iter()
+        .filter(|workspace| format!("{:032x}", workspace.id).starts_with(prefix));
+    match (matches.next(), matches.count()) {
+        (Some(workspace), 0) => Ok(workspace.id),
+        (Some(_), others) => bail!(
+            "workspace ID prefix {prefix} matches {} workspaces; type more digits",
+            others + 1
+        ),
+        (None, _) => bail!("no workspace ID starts with {prefix}"),
+    }
+}
 
 /// One object per workspace under a version key, as felis lists sessions.
 /// `windows` is an array so that a workspace shown in several windows would
@@ -50,6 +69,30 @@ mod tests {
             last_used: 0,
             instance: String::new(),
         }
+    }
+
+    #[test]
+    fn a_prefix_names_the_one_workspace_whose_id_starts_with_it() {
+        let workspaces = [
+            summary(0x3f2a << 112, Some(1), 1, 1),
+            summary(0x3f2b << 112, None, 1, 1),
+            summary(0x91bc << 112, None, 1, 1),
+        ];
+        assert_eq!(resolve(&workspaces, "91").unwrap(), 0x91bc << 112);
+        assert_eq!(
+            resolve(&workspaces, "3f2a").unwrap(),
+            0x3f2a << 112,
+            "a workspace another window holds still counts, so that attaching \
+             reports it as attached rather than as missing"
+        );
+        assert_eq!(
+            resolve(&workspaces, "3f").unwrap_err().to_string(),
+            "workspace ID prefix 3f matches 2 workspaces; type more digits"
+        );
+        assert_eq!(
+            resolve(&workspaces, "a0").unwrap_err().to_string(),
+            "no workspace ID starts with a0"
+        );
     }
 
     #[test]

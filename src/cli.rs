@@ -8,7 +8,8 @@ pub enum Command {
     },
     Workspace {
         window: Option<u32>,
-        workspace: Option<u128>,
+        /// A full ID or a prefix of one, in lowercase.
+        workspace: Option<String>,
     },
     List(Vec<String>),
     Help,
@@ -101,8 +102,8 @@ fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str
                 );
             }
             id if verb == "attach" && workspace.is_none() && !id.starts_with('-') => {
-                workspace =
-                    Some(crate::daemon::workspace_id::parse(id).ok_or("invalid workspace ID")?);
+                ensure_hex_prefix(id)?;
+                workspace = Some(id.to_ascii_lowercase());
             }
             _ => return Err("unknown or repeated workspace argument"),
         }
@@ -111,6 +112,14 @@ fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str
         return Err("workspace ID is required");
     }
     Ok(Command::Workspace { window, workspace })
+}
+
+fn ensure_hex_prefix(id: &str) -> Result<(), &'static str> {
+    if (1..=32).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("invalid workspace ID")
+    }
 }
 
 fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
@@ -258,12 +267,22 @@ mod tests {
             ),
             Ok(Command::Workspace {
                 window: Some(42),
-                workspace: Some(7)
+                workspace: Some("00000000000000000000000000000007".into())
             })
+        );
+        assert_eq!(
+            parse(&["workspaces", "attach", "3F"].map(String::from)),
+            Ok(Command::Workspace {
+                window: None,
+                workspace: Some("3f".into())
+            }),
+            "a prefix is matched without regard to case"
         );
         for args in [
             vec!["workspaces", "attach"],
-            vec!["workspaces", "attach", "bad"],
+            vec!["workspaces", "attach", "bag"],
+            vec!["workspaces", "attach", ""],
+            vec!["workspaces", "attach", "000000000000000000000000000000001"],
             vec!["workspaces", "attach", "1", "2"],
             vec!["workspaces", "new", "2"],
             vec!["workspaces", "new", "--window"],

@@ -153,6 +153,11 @@ format, the default, is a table with a header row and the columns
 | `tabs`    | number           | how many tabs it has                        |
 | `panes`   | number           | how many panes it has                       |
 
+`workspaces attach` takes the full ID or any prefix of it, in either case.
+A prefix matches against every listed workspace, including those another
+window holds; one that matches none or several fails without contacting a
+window. A full ID is passed to the window as is.
+
 The target window is resolved as in [panes](panes.md#window-resolution).
 `nekomata sessions …` is a deprecated alias of `nekomata workspaces …` and
 prints a deprecation notice on standard error.

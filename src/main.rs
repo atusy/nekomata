@@ -74,7 +74,17 @@ fn main() -> eframe::Result {
             return Ok(());
         }
         cli::Command::Workspace { window, workspace } => {
-            match control::run_request(window, control::Request::Switch { workspace }) {
+            // A full ID needs no roster; the window's switch checks it.
+            let workspace = workspace
+                .map(|prefix| match daemon::workspace_id::parse(&prefix) {
+                    Some(id) => Ok(id),
+                    None => daemon::list_running()
+                        .and_then(|workspaces| workspace_list::resolve(&workspaces, &prefix)),
+                })
+                .transpose();
+            match workspace.and_then(|workspace| {
+                control::run_request(window, control::Request::Switch { workspace })
+            }) {
                 Ok(output) => println!("{output}"),
                 Err(error) => {
                     eprintln!("{error:#}");

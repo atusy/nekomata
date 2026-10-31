@@ -614,12 +614,25 @@ pub fn stop() -> Result<()> {
 
 /// The retained workspaces, starting the daemon if none is running.
 pub fn list() -> Result<Vec<Summary>> {
+    tokio::runtime::Runtime::new()?.block_on(async { roster(&mut connect().await?).await })
+}
+
+/// The retained workspaces of a running daemon. Starting one would only
+/// find none.
+pub fn list_running() -> Result<Vec<Summary>> {
     tokio::runtime::Runtime::new()?.block_on(async {
-        match exchange(&mut connect().await?, Request::List).await? {
-            Payload::Workspaces(workspaces) => Ok(workspaces),
-            _ => bail!("unexpected nekomata daemon response"),
-        }
+        let mut stream = UnixStream::connect(socket()?)
+            .await
+            .context("no nekomata daemon is running")?;
+        roster(&mut stream).await
     })
+}
+
+async fn roster(stream: &mut UnixStream) -> Result<Vec<Summary>> {
+    match exchange(stream, Request::List).await? {
+        Payload::Workspaces(workspaces) => Ok(workspaces),
+        _ => bail!("unexpected nekomata daemon response"),
+    }
 }
 
 #[cfg(test)]

@@ -38,6 +38,9 @@ nekomata workspaces new                   # switch this window to a new workspac
 nekomata workspaces attach WORKSPACE_ID   # switch to an ID from the WORKSPACE column
 ```
 
+`attach` accepts the start of an ID as long as no other workspace's ID starts
+the same way.
+
 Run from a nekomata shell, `new` and `attach` act on the window showing that
 shell's workspace. Add `--window WINDOW_ID` to them to pick another, or for a
 shell you moved into another workspace. After the nekomata daemon restarts,
