@@ -39,7 +39,7 @@ nekomata workspaces attach WORKSPACE_ID   # switch to an ID from the WORKSPACE c
 ```
 
 `list` shortens IDs, and on a terminal highlights the part of each that is
-enough for `attach`: it accepts the start of an ID as long as no other
+enough for `attach` and dims the rest: it accepts the start of an ID as long as no other
 workspace's ID starts the same way. Scripts should read full IDs from
 `--format json`.
 

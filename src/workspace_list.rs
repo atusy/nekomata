@@ -43,6 +43,8 @@ pub fn json(workspaces: &[Summary]) -> String {
 const MIN_LISTED_DIGITS: usize = 8;
 const ID_DIGITS: usize = 32;
 const HIGHLIGHT: &str = "\x1b[1;35m";
+/// Bright black, as jj dims the part of a change ID that is not needed.
+const DIM: &str = "\x1b[90m";
 const RESET: &str = "\x1b[0m";
 
 /// Whether to color output to a stream; see <https://no-color.org>.
@@ -63,7 +65,8 @@ fn identifying_digits(id: u128, workspaces: &[Summary]) -> usize {
 
 /// The table shown to people, one workspace per row in the daemon's order.
 /// IDs are cut to one length that keeps all of them distinct; with `color`,
-/// each row highlights the shorter prefix that alone identifies it.
+/// each row highlights the shorter prefix that alone identifies it and dims
+/// the digits after it.
 pub fn human(workspaces: &[Summary], color: bool) -> String {
     let identifying: Vec<_> = workspaces
         .iter()
@@ -77,11 +80,13 @@ pub fn human(workspaces: &[Summary], color: bool) -> String {
     for (workspace, identifying) in workspaces.iter().zip(identifying) {
         let id = format!("{:032x}", workspace.id);
         let id = if color {
-            format!(
-                "{HIGHLIGHT}{}{RESET}{}",
-                &id[..identifying],
-                &id[identifying..width]
-            )
+            let rest = &id[identifying..width];
+            let rest = if rest.is_empty() {
+                String::new()
+            } else {
+                format!("{DIM}{rest}{RESET}")
+            };
+            format!("{HIGHLIGHT}{}{RESET}{rest}", &id[..identifying])
         } else {
             id[..width].to_owned()
         };
@@ -196,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn color_marks_the_prefix_that_identifies_each_workspace() {
+    fn color_marks_the_prefix_that_identifies_each_workspace_and_dims_the_rest() {
         let table = human(
             &[
                 summary(0x3f2a << 112, None, 1, 1),
@@ -213,9 +218,9 @@ mod tests {
         assert_eq!(
             ids,
             [
-                "\x1b[1;35m3f2a\x1b[0m0000",
-                "\x1b[1;35m3f2b\x1b[0m0000",
-                "\x1b[1;35m9\x1b[0m1bc0000",
+                "\x1b[1;35m3f2a\x1b[0m\x1b[90m0000\x1b[0m",
+                "\x1b[1;35m3f2b\x1b[0m\x1b[90m0000\x1b[0m",
+                "\x1b[1;35m9\x1b[0m\x1b[90m1bc0000\x1b[0m",
             ]
         );
     }
