@@ -664,12 +664,21 @@ pub fn list() -> Result<Vec<Summary>> {
 /// The retained workspaces of a running daemon. Starting one would only
 /// find none.
 pub fn list_running() -> Result<Vec<Summary>> {
+    tokio::runtime::Runtime::new()?.block_on(async { roster(&mut connect_running().await?).await })
+}
+
+/// Names a workspace of the running daemon, or clears its name.
+pub fn rename(id: u128, name: String) -> Result<()> {
     tokio::runtime::Runtime::new()?.block_on(async {
-        let mut stream = UnixStream::connect(socket()?)
-            .await
-            .context("no nekomata daemon is running")?;
-        roster(&mut stream).await
+        exchange(&mut connect_running().await?, Request::Rename { id, name }).await?;
+        Ok(())
     })
+}
+
+async fn connect_running() -> Result<UnixStream> {
+    UnixStream::connect(socket()?)
+        .await
+        .context("no nekomata daemon is running")
 }
 
 async fn roster(stream: &mut UnixStream) -> Result<Vec<Summary>> {

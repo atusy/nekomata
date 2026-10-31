@@ -3445,6 +3445,28 @@ mod tests {
         );
         assert!(output.status.success(), "attach by prefix: {output:?}");
         assert_eq!(replacement.snapshot(), before);
+        // Renaming reaches the daemon without the window that holds the
+        // workspace taking part.
+        let full_id = format!("{:032x}", workspace_id.unwrap());
+        let run = |args: &[&str]| {
+            std::process::Command::new(&executable)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        let output = run(&["workspaces", "rename", &full_id[..12], "live test"]);
+        assert!(output.status.success(), "rename by prefix: {output:?}");
+        let output = run(&["workspaces", "list", "--format", "json"]);
+        let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            listed["workspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|workspace| workspace["id"] == full_id.as_str()
+                    && workspace["name"] == "live test"),
+            "{listed}"
+        );
 
         // No pane of the destination can connect, so the switch is cancelled
         // and the window keeps its workspace and its source connections.
