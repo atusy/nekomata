@@ -53,8 +53,8 @@ felis daemon.
   in a window titles each workspace by its name, or by its full ID when it
   has none.
 - Each row of the workspace list has a rename button, shown in place of the
-  `Current` marker while the pointer or keyboard focus is on the row,
-  including rows of workspaces another window has. It turns the row's title
+  `Current` marker while the pointer is on the row or the button has the
+  keyboard focus, including rows of workspaces another window has. It turns the row's title
   into a field holding the current name; Enter saves what it holds, while
   Escape or moving the focus away abandons it and keeps the list open.
 - A name is trimmed of surrounding whitespace, is at most 64 characters and
