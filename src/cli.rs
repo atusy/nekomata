@@ -3,10 +3,13 @@ pub enum Command {
     Gui,
     DaemonRun,
     DaemonStop,
-    WorkspacesList,
+    WorkspacesList {
+        json: bool,
+    },
     Workspace {
         window: Option<u32>,
-        workspace: Option<u128>,
+        /// A full ID or a prefix of one, in lowercase.
+        workspace: Option<String>,
     },
     List(Vec<String>),
     Help,
@@ -28,7 +31,7 @@ pub enum PaneAction {
 }
 
 pub const HELP: &str = "nekomata\n\
-nekomata workspaces list\n\
+nekomata workspaces list [--format human|json]\n\
 nekomata workspaces new [--window WINDOW_ID]\n\
 nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]\n\
 nekomata daemon stop\n\
@@ -54,11 +57,11 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         [] => Ok(Command::Gui),
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
-        ["workspaces", "list"] => Ok(Command::WorkspacesList),
         ["workspaces", "--help" | "-h"]
         | ["workspaces", "list" | "new" | "attach", "--help" | "-h"]
         | ["daemon", "--help" | "-h"]
         | ["daemon", "run" | "stop", "--help" | "-h"] => Ok(Command::Help),
+        ["workspaces", "list", options @ ..] => parse_list(options),
         ["workspaces", verb @ ("new" | "attach"), options @ ..] => parse_workspace(verb, options),
         ["--help" | "-h"]
         | ["felis", "--help" | "-h"]
@@ -72,6 +75,15 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         }
         ["panes", verb @ ("list" | "attach"), options @ ..] => parse_pane(verb, options),
         _ => Err("unknown command"),
+    }
+}
+
+fn parse_list(options: &[&str]) -> Result<Command, &'static str> {
+    match options {
+        [] | ["--format", "human"] => Ok(Command::WorkspacesList { json: false }),
+        ["--format", "json"] => Ok(Command::WorkspacesList { json: true }),
+        ["--format", ..] => Err("--format takes human or json"),
+        _ => Err("unknown or repeated workspace argument"),
     }
 }
 
@@ -90,8 +102,8 @@ fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str
                 );
             }
             id if verb == "attach" && workspace.is_none() && !id.starts_with('-') => {
-                workspace =
-                    Some(crate::daemon::workspace_id::parse(id).ok_or("invalid workspace ID")?);
+                ensure_hex_prefix(id)?;
+                workspace = Some(id.to_ascii_lowercase());
             }
             _ => return Err("unknown or repeated workspace argument"),
         }
@@ -100,6 +112,14 @@ fn parse_workspace(verb: &str, options: &[&str]) -> Result<Command, &'static str
         return Err("workspace ID is required");
     }
     Ok(Command::Workspace { window, workspace })
+}
+
+fn ensure_hex_prefix(id: &str) -> Result<(), &'static str> {
+    if (1..=32).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("invalid workspace ID")
+    }
 }
 
 fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
@@ -195,10 +215,37 @@ mod tests {
     }
 
     #[test]
+    fn workspace_lists_are_human_unless_json_is_asked_for() {
+        let parse =
+            |args: &[&str]| parse(&args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        assert_eq!(
+            parse(&["workspaces", "list"]),
+            Ok(Command::WorkspacesList { json: false })
+        );
+        assert_eq!(
+            parse(&["workspaces", "list", "--format", "human"]),
+            Ok(Command::WorkspacesList { json: false })
+        );
+        assert_eq!(
+            parse(&["workspaces", "list", "--format", "json"]),
+            Ok(Command::WorkspacesList { json: true })
+        );
+        for invalid in [
+            vec!["workspaces", "list", "--format"],
+            vec!["workspaces", "list", "--format", "jsonl"],
+            vec!["workspaces", "list", "--format", "json", "--format", "json"],
+            vec!["workspaces", "list", "extra"],
+        ] {
+            assert!(parse(&invalid).is_err(), "{invalid:?}");
+        }
+        assert!(HELP.contains("nekomata workspaces list [--format human|json]"));
+    }
+
+    #[test]
     fn workspace_switch_commands_select_the_destination_and_window() {
         assert_eq!(
             parse(&["workspaces", "list"].map(String::from)),
-            Ok(Command::WorkspacesList)
+            Ok(Command::WorkspacesList { json: false })
         );
         assert_eq!(
             parse(&["workspaces", "new"].map(String::from)),
@@ -220,12 +267,22 @@ mod tests {
             ),
             Ok(Command::Workspace {
                 window: Some(42),
-                workspace: Some(7)
+                workspace: Some("00000000000000000000000000000007".into())
             })
+        );
+        assert_eq!(
+            parse(&["workspaces", "attach", "3F"].map(String::from)),
+            Ok(Command::Workspace {
+                window: None,
+                workspace: Some("3f".into())
+            }),
+            "a prefix is matched without regard to case"
         );
         for args in [
             vec!["workspaces", "attach"],
-            vec!["workspaces", "attach", "bad"],
+            vec!["workspaces", "attach", "bag"],
+            vec!["workspaces", "attach", ""],
+            vec!["workspaces", "attach", "000000000000000000000000000000001"],
             vec!["workspaces", "attach", "1", "2"],
             vec!["workspaces", "new", "2"],
             vec!["workspaces", "new", "--window"],

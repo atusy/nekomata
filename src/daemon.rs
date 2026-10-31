@@ -607,32 +607,32 @@ fn handle(
     }
 }
 
-pub fn command(stop: bool) -> Result<String> {
+pub fn stop() -> Result<()> {
+    tokio::runtime::Runtime::new()?
+        .block_on(async { request_stop(&mut UnixStream::connect(socket()?).await?).await })
+}
+
+/// The retained workspaces, starting the daemon if none is running.
+pub fn list() -> Result<Vec<Summary>> {
+    tokio::runtime::Runtime::new()?.block_on(async { roster(&mut connect().await?).await })
+}
+
+/// The retained workspaces of a running daemon. Starting one would only
+/// find none.
+pub fn list_running() -> Result<Vec<Summary>> {
     tokio::runtime::Runtime::new()?.block_on(async {
-        if stop {
-            request_stop(&mut UnixStream::connect(socket()?).await?).await?;
-            return Ok("Stopped nekomata daemon".into());
-        }
-        match exchange(&mut connect().await?, Request::List).await? {
-            Payload::Workspaces(workspaces) => {
-                let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
-                for workspace in workspaces {
-                    output.push_str(&format!(
-                        "{:032x}\t{}\t{}\t{}\n",
-                        workspace.id,
-                        workspace
-                            .window
-                            .map(|w| w.to_string())
-                            .unwrap_or_else(|| "-".into()),
-                        workspace.tabs,
-                        workspace.panes
-                    ));
-                }
-                Ok(output.trim_end().into())
-            }
-            _ => bail!("unexpected nekomata daemon response"),
-        }
+        let mut stream = UnixStream::connect(socket()?)
+            .await
+            .context("no nekomata daemon is running")?;
+        roster(&mut stream).await
     })
+}
+
+async fn roster(stream: &mut UnixStream) -> Result<Vec<Summary>> {
+    match exchange(stream, Request::List).await? {
+        Payload::Workspaces(workspaces) => Ok(workspaces),
+        _ => bail!("unexpected nekomata daemon response"),
+    }
 }
 
 #[cfg(test)]

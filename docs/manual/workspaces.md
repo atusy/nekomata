@@ -33,9 +33,15 @@ whose shell starts after the switch, switches regardless.
 
 ```sh
 nekomata workspaces list                  # workspaces and the windows showing them
+nekomata workspaces list --format json    # the same, for scripts
 nekomata workspaces new                   # switch this window to a new workspace
 nekomata workspaces attach WORKSPACE_ID   # switch to an ID from the WORKSPACE column
 ```
+
+`list` shortens IDs, and on a terminal highlights the part of each that is
+enough for `attach` and dims the rest: it accepts the start of an ID as long as no other
+workspace's ID starts the same way. Scripts should read full IDs from
+`--format json`.
 
 Run from a nekomata shell, `new` and `attach` act on the window showing that
 shell's workspace. Add `--window WINDOW_ID` to them to pick another, or for a
