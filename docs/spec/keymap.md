@@ -60,7 +60,7 @@ to be dropped with a warning. Labels may change without changing the identity.
 | `kind` and argument | Command |
 | --- | --- |
 | `workspace:create` | Workspace: Create |
-| `workspace:switch` | Workspace: Switch… |
+| `workspace:switch` | Workspace: Manage… |
 | `tab:create` | Tab: Create |
 | `tab:switch`, `target = "next"` | Tab: Switch to next |
 | `tab:switch`, `target = "previous"` | Tab: Switch to previous |

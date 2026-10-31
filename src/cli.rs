@@ -11,6 +11,12 @@ pub enum Command {
         /// A full ID or a prefix of one, in lowercase.
         workspace: Option<String>,
     },
+    WorkspaceRename {
+        /// A full ID or a prefix of one, in lowercase.
+        workspace: String,
+        /// Blank to clear the name.
+        name: String,
+    },
     List(Vec<String>),
     Help,
     Pane {
@@ -34,6 +40,7 @@ pub const HELP: &str = "nekomata\n\
 nekomata workspaces list [--format human|json]\n\
 nekomata workspaces new [--window WINDOW_ID]\n\
 nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]\n\
+nekomata workspaces rename WORKSPACE_ID NAME\n\
 nekomata daemon stop\n\
 nekomata felis sessions list [--format human|json]\n\
 nekomata panes list [--window WINDOW_ID]\n\
@@ -58,10 +65,21 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
         ["workspaces", "--help" | "-h"]
-        | ["workspaces", "list" | "new" | "attach", "--help" | "-h"]
+        | [
+            "workspaces",
+            "list" | "new" | "attach" | "rename",
+            "--help" | "-h",
+        ]
         | ["daemon", "--help" | "-h"]
         | ["daemon", "run" | "stop", "--help" | "-h"] => Ok(Command::Help),
         ["workspaces", "list", options @ ..] => parse_list(options),
+        ["workspaces", "rename", id, name] => {
+            ensure_hex_prefix(id)?;
+            Ok(Command::WorkspaceRename {
+                workspace: id.to_ascii_lowercase(),
+                name: (*name).to_owned(),
+            })
+        }
         ["workspaces", verb @ ("new" | "attach"), options @ ..] => parse_workspace(verb, options),
         ["--help" | "-h"]
         | ["felis", "--help" | "-h"]
@@ -239,6 +257,40 @@ mod tests {
             assert!(parse(&invalid).is_err(), "{invalid:?}");
         }
         assert!(HELP.contains("nekomata workspaces list [--format human|json]"));
+    }
+
+    #[test]
+    fn workspace_renames_take_an_id_or_prefix_and_a_name() {
+        let parse =
+            |args: &[&str]| parse(&args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+        assert_eq!(
+            parse(&["workspaces", "rename", "3F", "my work"]),
+            Ok(Command::WorkspaceRename {
+                workspace: "3f".into(),
+                name: "my work".into()
+            })
+        );
+        assert_eq!(
+            parse(&["workspaces", "rename", "3f", ""]),
+            Ok(Command::WorkspaceRename {
+                workspace: "3f".into(),
+                name: String::new()
+            }),
+            "an empty name clears it"
+        );
+        for invalid in [
+            vec!["workspaces", "rename"],
+            vec!["workspaces", "rename", "3f"],
+            vec!["workspaces", "rename", "bag", "name"],
+            vec!["workspaces", "rename", "3f", "name", "extra"],
+        ] {
+            assert!(parse(&invalid).is_err(), "{invalid:?}");
+        }
+        assert_eq!(
+            parse(&["workspaces", "rename", "--help"]),
+            Ok(Command::Help)
+        );
+        assert!(HELP.contains("nekomata workspaces rename WORKSPACE_ID NAME"));
     }
 
     #[test]

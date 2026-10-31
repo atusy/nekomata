@@ -318,7 +318,7 @@ pub struct App {
 enum Overlay {
     Palette(crate::command_palette::CommandPalette),
     FontSize,
-    Workspaces,
+    Workspaces(crate::workspace_picker::Picker),
     SessionPicker,
 }
 
@@ -467,6 +467,11 @@ impl App {
                 }
                 (Operation::List, Ok(Payload::Workspaces(workspaces))) => {
                     self.workspace_roster = Some(workspaces);
+                }
+                (Operation::Rename, Ok(_)) => {
+                    if let Some(client) = &self.workspace {
+                        let _ = client.send(WorkspaceCommand::List);
+                    }
                 }
                 (
                     Operation::Prepare,
@@ -712,7 +717,7 @@ impl App {
             grown.observe(inner.size());
         }
         let wanted = match &self.overlay {
-            Some(Overlay::Workspaces) => {
+            Some(Overlay::Workspaces(_)) => {
                 let Some(count) = self.workspace_roster.as_ref().map(Vec::len) else {
                     return;
                 };
@@ -763,11 +768,15 @@ impl App {
     }
 
     fn workspace_picker(&mut self, ctx: &egui::Context) {
-        if !matches!(self.overlay, Some(Overlay::Workspaces)) {
+        let Some(Overlay::Workspaces(picker)) = &mut self.overlay else {
             return;
-        }
-        let outcome =
-            crate::workspace_picker::show(ctx, self.workspace_roster.as_deref(), self.workspace_id);
+        };
+        let outcome = crate::workspace_picker::show(
+            ctx,
+            self.workspace_roster.as_deref(),
+            self.workspace_id,
+            picker,
+        );
         if outcome.dismissed {
             self.overlay = None;
         }
@@ -775,6 +784,12 @@ impl App {
             && let Some(client) = &self.workspace
         {
             let _ = client.send(WorkspaceCommand::List);
+        }
+        // The list refreshes once the daemon has taken the name.
+        if let Some((id, name)) = outcome.renamed
+            && let Some(client) = &self.workspace
+        {
+            let _ = client.send(WorkspaceCommand::Rename { id, name });
         }
         if let Some(workspace) = outcome.selected {
             self.begin_workspace(workspace, None);
@@ -1255,7 +1270,7 @@ impl App {
             Action::Terminal(action) => self.terminal_action(ctx, action),
             Action::NewWorkspace => self.begin_workspace(None, None),
             Action::OpenWorkspaces => {
-                self.overlay = Some(Overlay::Workspaces);
+                self.overlay = Some(Overlay::Workspaces(Default::default()));
                 self.workspace_roster = None;
                 if let Some(client) = &self.workspace {
                     let _ = client.send(WorkspaceCommand::List);
@@ -3445,6 +3460,28 @@ mod tests {
         );
         assert!(output.status.success(), "attach by prefix: {output:?}");
         assert_eq!(replacement.snapshot(), before);
+        // Renaming reaches the daemon without the window that holds the
+        // workspace taking part.
+        let full_id = format!("{:032x}", workspace_id.unwrap());
+        let run = |args: &[&str]| {
+            std::process::Command::new(&executable)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        let output = run(&["workspaces", "rename", &full_id[..12], "live test"]);
+        assert!(output.status.success(), "rename by prefix: {output:?}");
+        let output = run(&["workspaces", "list", "--format", "json"]);
+        let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            listed["workspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|workspace| workspace["id"] == full_id.as_str()
+                    && workspace["name"] == "live test"),
+            "{listed}"
+        );
 
         // No pane of the destination can connect, so the switch is cancelled
         // and the window keeps its workspace and its source connections.

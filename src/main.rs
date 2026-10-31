@@ -34,6 +34,16 @@ mod workspace_list;
 mod workspace_picker;
 mod workspace_switch;
 
+/// The workspace a full ID or a prefix of one names. A full ID needs no
+/// roster: whatever receives it checks that it exists.
+fn resolve_workspace(prefix: &str) -> anyhow::Result<u128> {
+    match daemon::workspace_id::parse(prefix) {
+        Some(id) => Ok(id),
+        None => daemon::list_running()
+            .and_then(|workspaces| workspace_list::resolve(&workspaces, prefix)),
+    }
+}
+
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if cli::is_deprecated(&args) {
@@ -81,14 +91,7 @@ fn main() -> eframe::Result {
             return Ok(());
         }
         cli::Command::Workspace { window, workspace } => {
-            // A full ID needs no roster; the window's switch checks it.
-            let workspace = workspace
-                .map(|prefix| match daemon::workspace_id::parse(&prefix) {
-                    Some(id) => Ok(id),
-                    None => daemon::list_running()
-                        .and_then(|workspaces| workspace_list::resolve(&workspaces, &prefix)),
-                })
-                .transpose();
+            let workspace = workspace.as_deref().map(resolve_workspace).transpose();
             match workspace.and_then(|workspace| {
                 control::run_request(window, control::Request::Switch { workspace })
             }) {
@@ -107,6 +110,15 @@ fn main() -> eframe::Result {
                     eprintln!("{err:#}");
                     std::process::exit(1);
                 }
+            }
+            return Ok(());
+        }
+        cli::Command::WorkspaceRename { workspace, name } => {
+            if let Err(error) =
+                resolve_workspace(&workspace).and_then(|id| daemon::rename(id, name))
+            {
+                eprintln!("{error:#}");
+                std::process::exit(1);
             }
             return Ok(());
         }

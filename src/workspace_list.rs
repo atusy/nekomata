@@ -20,19 +20,24 @@ pub fn resolve(workspaces: &[Summary], prefix: &str) -> Result<u128> {
     }
 }
 
-/// One object per workspace under a version key, as felis lists sessions.
+/// One object per workspace under a version key, as felis lists sessions;
+/// `name` is omitted when unset.
 /// `windows` is an array so that a workspace shown in several windows would
 /// not change the shape.
 pub fn json(workspaces: &[Summary]) -> String {
     let workspaces: Vec<_> = workspaces
         .iter()
         .map(|workspace| {
-            serde_json::json!({
+            let mut entry = serde_json::json!({
                 "id": format!("{:032x}", workspace.id),
                 "windows": workspace.window.into_iter().collect::<Vec<_>>(),
                 "tabs": workspace.tabs,
                 "panes": workspace.panes,
-            })
+            });
+            if let Some(name) = &workspace.name {
+                entry["name"] = name.as_str().into();
+            }
+            entry
         })
         .collect();
     serde_json::json!({"v": 1, "workspaces": workspaces}).to_string()
@@ -76,7 +81,8 @@ pub fn human(workspaces: &[Summary], color: bool) -> String {
         .iter()
         .copied()
         .fold(MIN_LISTED_DIGITS, usize::max);
-    let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
+    // NAME comes last: it is the only column of varying width.
+    let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\tNAME\n");
     for (workspace, identifying) in workspaces.iter().zip(identifying) {
         let id = format!("{:032x}", workspace.id);
         let id = if color {
@@ -91,13 +97,14 @@ pub fn human(workspaces: &[Summary], color: bool) -> String {
             id[..width].to_owned()
         };
         output.push_str(&format!(
-            "{id}\t{}\t{}\t{}\n",
+            "{id}\t{}\t{}\t{}\t{}\n",
             workspace
                 .window
                 .map(|w| w.to_string())
                 .unwrap_or_else(|| "-".into()),
             workspace.tabs,
-            workspace.panes
+            workspace.panes,
+            workspace.name.as_deref().unwrap_or("-"),
         ));
     }
     output.trim_end().into()
@@ -115,6 +122,7 @@ mod tests {
             panes,
             last_used: 0,
             instance: String::new(),
+            name: None,
         }
     }
 
@@ -144,16 +152,25 @@ mod tests {
 
     #[test]
     fn json_lists_full_ids_and_every_window_showing_each_workspace() {
-        let output: serde_json::Value =
-            serde_json::from_str(&json(&[summary(1, Some(2), 3, 4), summary(5, None, 1, 1)]))
-                .unwrap();
+        let output: serde_json::Value = serde_json::from_str(&json(&[
+            named("my work", summary(1, Some(2), 3, 4)),
+            summary(5, None, 1, 1),
+        ]))
+        .unwrap();
         assert_eq!(
             output,
             serde_json::json!({"v": 1, "workspaces": [
-                {"id": "00000000000000000000000000000001", "windows": [2], "tabs": 3, "panes": 4},
+                {"id": "00000000000000000000000000000001", "name": "my work", "windows": [2], "tabs": 3, "panes": 4},
                 {"id": "00000000000000000000000000000005", "windows": [], "tabs": 1, "panes": 1},
             ]})
         );
+    }
+
+    fn named(name: &str, workspace: Summary) -> Summary {
+        Summary {
+            name: Some(name.into()),
+            ..workspace
+        }
     }
 
     #[test]
@@ -161,14 +178,14 @@ mod tests {
         assert_eq!(
             human(
                 &[
-                    summary(1 << 124, Some(2), 3, 4),
+                    named("my work", summary(1 << 124, Some(2), 3, 4)),
                     summary(5 << 124, None, 1, 1)
                 ],
                 false
             ),
-            "WORKSPACE\tWINDOW\tTABS\tPANES\n\
-             10000000\t2\t3\t4\n\
-             50000000\t-\t1\t1"
+            "WORKSPACE\tWINDOW\tTABS\tPANES\tNAME\n\
+             10000000\t2\t3\t4\tmy work\n\
+             50000000\t-\t1\t1\t-"
         );
     }
 

@@ -47,6 +47,28 @@ felis daemon.
   displayed as 32 lowercase hexadecimal digits. Collisions with current
   workspaces are retried.
 
+## Names
+
+- A workspace may have a name. New workspaces have none. The workspace list
+  in a window titles each workspace by its name, or by its full ID when it
+  has none.
+- Each row of the workspace list has a rename button, shown in place of the
+  `Current` marker while the pointer is on the row or the button has the
+  keyboard focus, including rows of workspaces another window has. It turns the row's title
+  into a field holding the current name; Enter saves what it holds, while
+  Escape or moving the focus away abandons it and keeps the list open.
+- A name is trimmed of surrounding whitespace, is at most 64 characters and
+  contains no control characters; a name that breaks these rules is refused.
+  Setting a blank name removes it.
+- Names need not be unique and never stand in for an ID: commands select
+  workspaces by ID only.
+- Any client may rename any workspace, including one another window has
+  attached. Renaming changes neither the layout nor the lease, and saving a
+  layout never changes the name.
+- Names live in the daemon's memory with the workspaces. A window that
+  [reconnects](#losing-the-nekomata-daemon) to a new daemon restores its
+  layout without its name.
+
 ## Startup
 
 At startup, a window attaches to the most recently used workspace that no
@@ -72,7 +94,8 @@ size (see [configuration](configuration.md#font-size-precedence)).
 
 ## Switching
 
-`Workspace: Create` and `Workspace: Switch…` replace the window's workspace.
+`Workspace: Create` and choosing a workspace in `Workspace: Manage…` replace
+the window's workspace.
 
 1. The daemon must first accept the current workspace's snapshot.
 2. The destination is reserved while the source lease is still held.
@@ -138,12 +161,13 @@ there. Shells started afterwards carry the new ID.
 nekomata workspaces list [--format human|json]                # workspaces and the window each is attached to
 nekomata workspaces new [--window WINDOW_ID]                   # switch a window to a new workspace
 nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]   # switch a window to this workspace
+nekomata workspaces rename WORKSPACE_ID NAME                   # name a workspace, or clear its name with ""
 ```
 
 `workspaces list` lists the workspaces most recently used first. The human
 format, the default, is a table with a header row and the columns
-`WORKSPACE`, `WINDOW` (`-` when no window has the workspace), `TABS` and
-`PANES`; it is for reading, not parsing. `WORKSPACE` shows every ID cut to
+`WORKSPACE`, `WINDOW` (`-` when no window has the workspace), `TABS`,
+`PANES` and `NAME` (`-` when unnamed); it is for reading, not parsing. `WORKSPACE` shows every ID cut to
 the same length: the fewest leading digits that keep all listed IDs
 distinct, but at least 8. On a terminal, unless `NO_COLOR` is set to a
 non-empty value, each ID highlights its shortest prefix that no other listed
@@ -154,6 +178,7 @@ IDs. `--format json` prints one object,
 | Key       | Type             | Value                                       |
 | --------- | ---------------- | ------------------------------------------- |
 | `id`      | string           | the full 32-digit workspace ID              |
+| `name`    | string           | the workspace's name, omitted when unnamed  |
 | `windows` | array of numbers | the windows showing the workspace, or empty |
 | `tabs`    | number           | how many tabs it has                        |
 | `panes`   | number           | how many panes it has                       |
@@ -162,6 +187,10 @@ IDs. `--format json` prints one object,
 A prefix matches against every listed workspace, including those another
 window holds; one that matches none or several fails without contacting a
 window. A full ID is passed to the window as is.
+
+`workspaces rename` takes an ID or prefix as `attach` does and names that
+workspace, whether or not a window has it; it prints nothing on success and
+never starts the daemon. See [names](#names) for what a name may be.
 
 The target window is resolved as in [panes](panes.md#window-resolution).
 `nekomata sessions …` is a deprecated alias of `nekomata workspaces …` and

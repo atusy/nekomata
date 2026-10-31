@@ -110,10 +110,10 @@ pub(crate) fn commands() -> &'static [Command] {
         Command::new(
             "workspace:switch",
             Workspace,
-            "Switch…",
+            "Manage…",
             Action::OpenWorkspaces,
         )
-        .keywords(&["open", "list"]),
+        .keywords(&["open", "list", "switch", "rename"]),
         Command::new("tab:create", Tab, "Create", Action::NewTab).keywords(&["new"]),
         Command::new("tab:switch", Tab, "Switch to next", Action::NextTab)
             .argument("target", "next"),
