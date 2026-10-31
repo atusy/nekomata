@@ -9,6 +9,22 @@ pub(crate) struct Outcome {
     pub(crate) selected: Option<Option<u128>>,
     pub(crate) refresh: bool,
     pub(crate) dismissed: bool,
+    /// A workspace and the name typed for it; blank removes its name.
+    pub(crate) renamed: Option<(u128, String)>,
+}
+
+/// What the picker keeps between frames while it is open.
+#[derive(Debug, Default)]
+pub(crate) struct Picker {
+    /// The workspace being renamed and the name typed so far.
+    renaming: Option<(u128, String)>,
+    /// Whether the name field has yet to take the keyboard focus.
+    focus: bool,
+}
+
+/// The rename button of a workspace's row.
+pub(crate) fn rename_button(workspace: u128) -> egui::Id {
+    egui::Id::unique(("workspace_rename", workspace))
 }
 
 /// Rows the list shows before it scrolls, and the most the window grows to
@@ -109,6 +125,7 @@ fn elided(
 enum Icon {
     Plus,
     Refresh,
+    Pencil,
 }
 
 /// A square button with an icon drawn as strokes, so it scales with the
@@ -122,8 +139,34 @@ fn icon_button(ui: &mut egui::Ui, side: f32, icon: Icon, tooltip: &str) -> egui:
     } else {
         theme::TAB_HOVER_BG
     };
-    let painter = ui.painter();
-    painter.rect_filled(rect, 5, fill);
+    ui.painter().rect_filled(rect, 5, fill);
+    paint_icon(ui.painter(), rect, icon);
+    response.on_hover_text(tooltip)
+}
+
+/// An icon button laid over `rect` of a list row, drawn only when
+/// `visible` and backed only while hovered, so that it does not crowd rows
+/// the pointer is not on.
+fn row_icon_button(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    id: egui::Id,
+    icon: Icon,
+    tooltip: &str,
+    visible: bool,
+) -> egui::Response {
+    let response = ui.interact(rect, id, egui::Sense::click());
+    if visible {
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 5, theme::TAB_HOVER_BG);
+        }
+        paint_icon(ui.painter(), rect, icon);
+    }
+    response.on_hover_text(tooltip)
+}
+
+fn paint_icon(painter: &egui::Painter, rect: egui::Rect, icon: Icon) {
+    let side = rect.width();
     let stroke = egui::Stroke::new(1.6, theme::FG);
     let c = rect.center();
     let r = side * 0.24;
@@ -156,8 +199,24 @@ fn icon_button(ui: &mut egui::Ui, side: f32, icon: Icon, tooltip: &str) -> egui:
                 egui::Stroke::NONE,
             ));
         }
+        Icon::Pencil => {
+            // A body slanting up to the right, capped at its top end, over
+            // the solid point it writes with.
+            let along = egui::vec2(1.0, -1.0).normalized();
+            let across = egui::vec2(along.y, -along.x) * r * 0.32;
+            let tip = c - along * r * 1.1;
+            let neck = tip + along * r * 0.5;
+            let end = c + along * r * 1.1;
+            painter.add(egui::Shape::convex_polygon(
+                vec![tip, neck + across, neck - across],
+                theme::FG,
+                egui::Stroke::NONE,
+            ));
+            painter.line_segment([neck + across, end + across], stroke);
+            painter.line_segment([neck - across, end - across], stroke);
+            painter.line_segment([end + across, end - across], stroke);
+        }
     }
-    response.on_hover_text(tooltip)
 }
 
 /// `roster` is `None` until the daemon has answered; `current` is the
@@ -166,8 +225,16 @@ pub(crate) fn show(
     ctx: &egui::Context,
     roster: Option<&[Summary]>,
     current: Option<u128>,
+    picker: &mut Picker,
 ) -> Outcome {
     let mut outcome = Outcome::default();
+    let Picker { renaming, focus } = picker;
+    // Escape abandons a rename before the list sees it, so the list stays.
+    if renaming.is_some()
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        *renaming = None;
+    }
     let style = ctx.global_style();
     let viewport = ctx.content_rect();
     let top = theme::overlay_top(viewport.height());
@@ -217,6 +284,29 @@ pub(crate) fn show(
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
                     for workspace in ordered(workspaces, current) {
+                        if let Some((_, name)) =
+                            renaming.as_mut().filter(|(id, _)| *id == workspace.id)
+                        {
+                            let field = ui.add_sized(
+                                [ui.available_width(), detail_row_height],
+                                egui::TextEdit::singleline(name)
+                                    .font(egui::FontId::proportional(theme::ui_size(
+                                        ui.style(),
+                                        14.0,
+                                    )))
+                                    .align(egui::Align2::LEFT_CENTER)
+                                    .hint_text("Name, or nothing to remove it"),
+                            );
+                            if std::mem::take(focus) {
+                                field.request_focus();
+                            } else if field.lost_focus() {
+                                if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                                    outcome.renamed = Some((workspace.id, name.clone()));
+                                }
+                                *renaming = None;
+                            }
+                            continue;
+                        }
                         let held = workspace.window.is_some();
                         let unavailable = held && Some(workspace.id) != current;
                         let text = egui::RichText::new(title(workspace));
@@ -241,7 +331,17 @@ pub(crate) fn show(
                             (theme::FG, theme::TAB_INACTIVE_FG)
                         };
                         let x = rect.left() + 10.0;
-                        let marker = (Some(workspace.id) == current).then(|| {
+                        let side = theme::ui_extent(ui.style(), 24.0);
+                        let button = egui::Rect::from_center_size(
+                            egui::pos2(rect.right() - 6.0 - side / 2.0, rect.center().y),
+                            egui::vec2(side, side),
+                        );
+                        // The button shows on the row the pointer or the
+                        // keyboard is on, in place of the marker, so rows
+                        // keep their room for text otherwise.
+                        let actions = ui.rect_contains_pointer(rect)
+                            || ui.memory(|memory| memory.has_focus(rename_button(workspace.id)));
+                        let marker = (!actions && Some(workspace.id) == current).then(|| {
                             painter.layout_no_wrap(
                                 "Current".to_owned(),
                                 egui::FontId::proportional(theme::ui_size(ui.style(), 12.0)),
@@ -252,7 +352,11 @@ pub(crate) fn show(
                         // under it, and to the row's edge.
                         let room = rect.width()
                             - 20.0
-                            - marker.as_ref().map_or(0.0, |marker| marker.size().x + 10.0);
+                            - if actions {
+                                side + 6.0
+                            } else {
+                                marker.as_ref().map_or(0.0, |marker| marker.size().x + 10.0)
+                            };
                         // Stack the two lines from their measured heights, so
                         // they keep apart whatever the body size.
                         let name = elided(
@@ -284,7 +388,22 @@ pub(crate) fn show(
                                 theme::ACCENT,
                             );
                         }
-                        if row.inner.clicked() {
+                        // Any workspace can be renamed, even one that cannot
+                        // be chosen because another window has it.
+                        if row_icon_button(
+                            ui,
+                            button,
+                            rename_button(workspace.id),
+                            Icon::Pencil,
+                            "Rename",
+                            actions,
+                        )
+                        .clicked()
+                        {
+                            *renaming =
+                                Some((workspace.id, workspace.name.clone().unwrap_or_default()));
+                            *focus = true;
+                        } else if row.inner.clicked() {
                             outcome.selected = Some(Some(workspace.id));
                         }
                     }
@@ -372,7 +491,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    show(ui.ctx(), Some(&roster), Some(1));
+                    show(ui.ctx(), Some(&roster), Some(1), &mut Picker::default());
                 },
             );
             clips = output
@@ -402,7 +521,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                show(ui.ctx(), roster, Some(1));
+                show(ui.ctx(), roster, Some(1), &mut Picker::default());
             },
         );
         output
@@ -452,7 +571,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    show(ui.ctx(), Some(&roster), Some(1));
+                    show(ui.ctx(), Some(&roster), Some(1), &mut Picker::default());
                 },
             );
             let find = |wanted: &str| {
@@ -498,7 +617,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    show(ui.ctx(), Some(&roster), Some(1));
+                    show(ui.ctx(), Some(&roster), Some(1), &mut Picker::default());
                 },
             );
             rects = output
@@ -550,7 +669,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    show(ui.ctx(), Some(&roster), Some(1));
+                    show(ui.ctx(), Some(&roster), Some(1), &mut Picker::default());
                 },
             );
             rects = output
@@ -586,5 +705,164 @@ mod tests {
         let ctx = egui::Context::default();
         texts(&ctx, None);
         assert!(texts(&ctx, None).iter().any(|t| t == "Loading workspaces…"));
+    }
+
+    /// Runs one frame of the picker with `events` and returns its outcome
+    /// and the texts it drew.
+    fn frame(
+        ctx: &egui::Context,
+        picker: &mut Picker,
+        roster: &[Summary],
+        events: Vec<egui::Event>,
+    ) -> (Outcome, Vec<String>) {
+        let mut outcome = Outcome::default();
+        let output = crate::test_support::run(
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| outcome = show(ui.ctx(), Some(roster), Some(1), picker),
+        );
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        (outcome, texts)
+    }
+
+    /// The first frame only measures a new overlay, and buttons are found
+    /// where the frame before the latest one put them.
+    fn settle(ctx: &egui::Context, picker: &mut Picker, roster: &[Summary]) {
+        for _ in 0..3 {
+            frame(ctx, picker, roster, vec![]);
+        }
+    }
+
+    fn click(ctx: &egui::Context, picker: &mut Picker, roster: &[Summary], id: egui::Id) {
+        let pos = ctx
+            .read_response(id)
+            .expect("the button was drawn last frame")
+            .rect
+            .center();
+        for pressed in [true, false] {
+            frame(
+                ctx,
+                picker,
+                roster,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn any_row_can_be_renamed_in_place_and_committed_with_enter() {
+        let ctx = egui::Context::default();
+        let mut picker = Picker::default();
+        let named = Summary {
+            name: Some("dotfiles".into()),
+            ..summary(1, Some(9), 1, 1)
+        };
+        // Held by another window, so it cannot be chosen, but it can be
+        // renamed.
+        let roster = [named, summary(2, Some(4), 1, 1)];
+        settle(&ctx, &mut picker, &roster);
+        click(&ctx, &mut picker, &roster, rename_button(2));
+        let (_, texts) = frame(&ctx, &mut picker, &roster, vec![]);
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t == "Workspace 00000000000000000000000000000002"),
+            "the field replaces the title: {texts:?}"
+        );
+        let (outcome, _) = frame(
+            &ctx,
+            &mut picker,
+            &roster,
+            vec![egui::Event::Text("notes".into())],
+        );
+        assert_eq!(outcome, Outcome::default());
+        let (outcome, texts) = frame(&ctx, &mut picker, &roster, vec![key(egui::Key::Enter)]);
+        assert_eq!(outcome.renamed, Some((2, "notes".into())));
+        assert!(!outcome.dismissed, "renaming keeps the list open");
+        assert!(texts.iter().any(|t| t == "dotfiles"), "{texts:?}");
+
+        click(&ctx, &mut picker, &roster, rename_button(1));
+        let (_, texts) = frame(&ctx, &mut picker, &roster, vec![]);
+        assert!(
+            texts.iter().any(|t| t == "dotfiles"),
+            "the field starts from the current name: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn escape_abandons_a_rename_without_closing_the_list() {
+        let ctx = egui::Context::default();
+        let mut picker = Picker::default();
+        let roster = [summary(1, Some(9), 1, 1)];
+        settle(&ctx, &mut picker, &roster);
+        click(&ctx, &mut picker, &roster, rename_button(1));
+        frame(
+            &ctx,
+            &mut picker,
+            &roster,
+            vec![egui::Event::Text("notes".into())],
+        );
+        let (outcome, _) = frame(&ctx, &mut picker, &roster, vec![key(egui::Key::Escape)]);
+        assert_eq!(outcome, Outcome::default());
+        let (_, texts) = frame(&ctx, &mut picker, &roster, vec![]);
+        assert!(
+            texts
+                .iter()
+                .any(|t| t == "Workspace 00000000000000000000000000000001"),
+            "{texts:?}"
+        );
+        let (outcome, _) = frame(&ctx, &mut picker, &roster, vec![key(egui::Key::Escape)]);
+        assert!(outcome.dismissed, "a second Escape closes the list");
+    }
+
+    #[test]
+    fn the_rename_button_takes_the_markers_place_on_the_row_under_the_pointer() {
+        let ctx = egui::Context::default();
+        let mut picker = Picker::default();
+        let roster = [summary(1, None, 1, 1)];
+        settle(&ctx, &mut picker, &roster);
+        let (_, texts) = frame(&ctx, &mut picker, &roster, vec![]);
+        assert!(texts.iter().any(|t| t == "Current"), "{texts:?}");
+        let pos = ctx.read_response(rename_button(1)).unwrap().rect.center();
+        frame(
+            &ctx,
+            &mut picker,
+            &roster,
+            vec![egui::Event::PointerMoved(pos)],
+        );
+        let (_, texts) = frame(&ctx, &mut picker, &roster, vec![]);
+        assert!(!texts.iter().any(|t| t == "Current"), "{texts:?}");
     }
 }

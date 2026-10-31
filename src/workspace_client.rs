@@ -25,6 +25,7 @@ pub enum Operation {
     Disconnected,
     Save,
     List,
+    Rename,
     Prepare,
     Finish,
 }
@@ -39,6 +40,7 @@ pub struct Event {
 pub enum Command {
     Save(Snapshot),
     List,
+    Rename { id: u128, name: String },
     Finish { snapshot: Option<Snapshot> },
 }
 
@@ -47,6 +49,7 @@ impl Command {
         match self {
             Self::Save(_) => Operation::Save,
             Self::List => Operation::List,
+            Self::Rename { .. } => Operation::Rename,
             Self::Finish { .. } => Operation::Finish,
         }
     }
@@ -55,6 +58,7 @@ impl Command {
         match self {
             Self::Save(snapshot) => Request::Save(snapshot),
             Self::List => Request::List,
+            Self::Rename { id, name } => Request::Rename { id, name },
             Self::Finish { snapshot } => Request::Finish { snapshot },
         }
     }
@@ -658,6 +662,25 @@ mod tests {
         assert!(!reconnect.start(now + Duration::from_secs(3600)));
         reconnect.retry_now();
         assert!(reconnect.start(std::time::Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn renames_reach_the_daemon_and_report_back() {
+        let (mut client, mut daemon) = opened().await;
+        client
+            .send(Command::Rename {
+                id: 7,
+                name: "dotfiles".into(),
+            })
+            .unwrap();
+        assert!(matches!(
+            receive(&mut daemon).await,
+            Some(Request::Rename { id: 7, name }) if name == "dotfiles"
+        ));
+        respond(&mut daemon, Ok(Payload::Done)).await;
+        let event = client.events.recv().await.unwrap();
+        assert_eq!(event.operation, Operation::Rename);
+        assert!(event.result.is_ok());
     }
 
     #[tokio::test]

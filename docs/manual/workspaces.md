@@ -29,6 +29,13 @@ connect, for example because its felis session is gone, shows its error and
 you can close it. If no pane connects, you stay in the current workspace; a new workspace,
 whose shell starts after the switch, switches regardless.
 
+## Naming
+
+Name a workspace to tell it apart: in the workspace list, point at its row
+and click the pencil, type the name and press Enter. An empty name removes
+it; Escape leaves the name as it was. You can also rename a workspace another
+window has open, or rename from the [command line](#from-the-command-line).
+
 ## From the command line
 
 ```sh
