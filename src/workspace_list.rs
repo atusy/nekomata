@@ -115,6 +115,7 @@ mod tests {
             panes,
             last_used: 0,
             instance: String::new(),
+            name: None,
         }
     }
 

@@ -728,6 +728,7 @@ mod tests {
             panes: 1,
             last_used: 1,
             instance: "current".into(),
+            name: None,
         }];
         assert_eq!(
             window_of_workspace(&workspaces, 1, Some("current")).unwrap(),

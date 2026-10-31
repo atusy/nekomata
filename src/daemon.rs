@@ -79,13 +79,24 @@ pub enum Selection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
-    Open { window: u32 },
+    Open {
+        window: u32,
+    },
     Save(Snapshot),
     List,
     Prepare(Selection),
-    Finish { snapshot: Option<Snapshot> },
+    Finish {
+        snapshot: Option<Snapshot>,
+    },
     Stop,
     Detach,
+    /// Names a workspace, or clears its name when `name` is blank. Any
+    /// connection may send it, with or without a window.
+    Rename {
+        #[serde(with = "workspace_id")]
+        id: u128,
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +110,9 @@ pub struct Summary {
     /// Identifies the daemon that issued `id`; empty from older daemons.
     #[serde(default)]
     pub instance: String,
+    /// Unset for unnamed workspaces and from older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +186,25 @@ struct Record {
     snapshot: Snapshot,
     owner: Option<(u64, u32)>,
     last_used: u64,
+    name: Option<String>,
+}
+
+/// Longest workspace name, in characters.
+const MAX_NAME: usize = 64;
+
+/// The name `text` asks for: `None` clears it. Control characters would
+/// break the CLI's table and the picker's single-line rows.
+fn workspace_name(text: &str) -> Result<Option<String>> {
+    let name = text.trim();
+    ensure!(
+        !name.chars().any(char::is_control),
+        "workspace names cannot contain control characters"
+    );
+    ensure!(
+        name.chars().count() <= MAX_NAME,
+        "workspace names are at most {MAX_NAME} characters"
+    );
+    Ok((!name.is_empty()).then(|| name.to_owned()))
 }
 
 #[derive(Default)]
@@ -219,6 +252,7 @@ impl Registry {
                     snapshot: Snapshot::default(),
                     owner: None,
                     last_used: 0,
+                    name: None,
                 },
             );
             id
@@ -276,6 +310,7 @@ impl Registry {
                 panes: record.snapshot.panes.len(),
                 last_used: record.last_used,
                 instance: self.instance.clone(),
+                name: record.name.clone(),
             })
             .collect();
         workspaces.sort_by_key(|s| std::cmp::Reverse((s.last_used, s.id)));
@@ -596,6 +631,15 @@ fn handle(
             *window = None;
             Ok(Payload::Done)
         }
+        Request::Rename { id, name } => {
+            let name = workspace_name(&name)?;
+            registry
+                .workspaces
+                .get_mut(&id)
+                .context("workspace not found")?
+                .name = name;
+            Ok(Payload::Done)
+        }
         Request::Stop => {
             ensure!(
                 registry.workspaces.values().all(|s| s.owner.is_none()),
@@ -676,6 +720,25 @@ mod tests {
             None
         );
         assert_eq!(workspace_id::parse("7"), None);
+    }
+
+    #[test]
+    fn rosters_of_daemons_without_names_still_decode() {
+        let older = serde_json::json!({
+            "id": "00000000000000000000000000000003",
+            "window": null,
+            "tabs": 1,
+            "panes": 1,
+            "last_used": 0,
+            "instance": "",
+        });
+        let summary: Summary = serde_json::from_value(older.clone()).unwrap();
+        assert_eq!(summary.name, None);
+        assert_eq!(
+            serde_json::to_value(&summary).unwrap(),
+            older,
+            "an unnamed workspace is listed as an older daemon lists it"
+        );
     }
 
     #[test]
@@ -1005,6 +1068,126 @@ mod tests {
         drop(second);
         let _ = first_task.await;
         let _ = second_task.await;
+    }
+
+    fn names(registry: &Arc<Mutex<Registry>>) -> Vec<Option<String>> {
+        registry
+            .lock()
+            .unwrap()
+            .list()
+            .into_iter()
+            .map(|summary| summary.name)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn any_client_names_a_workspace_without_disturbing_its_window() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut holder, holder_task) = connection(&registry, 1);
+        let (id, _) = workspace(
+            exchange(&mut holder, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        exchange(&mut holder, Request::Save(one_pane(21.0)))
+            .await
+            .unwrap();
+        let (mut cli, cli_task) = connection(&registry, 2);
+        exchange(
+            &mut cli,
+            Request::Rename {
+                id,
+                name: "  dotfiles  ".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(names(&registry), [Some("dotfiles".into())], "trimmed");
+        exchange(&mut holder, Request::Save(one_pane(22.0)))
+            .await
+            .unwrap();
+        assert_eq!(
+            names(&registry),
+            [Some("dotfiles".into())],
+            "a save keeps the name"
+        );
+        {
+            let registry = registry.lock().unwrap();
+            let record = &registry.workspaces[&id];
+            assert_eq!(record.owner, Some((1, 11)), "renaming keeps the lease");
+            assert_eq!(record.snapshot.window.font_size, 22.0);
+        }
+        exchange(
+            &mut cli,
+            Request::Rename {
+                id,
+                name: " ".into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(names(&registry), [None], "a blank name clears it");
+        drop(holder);
+        drop(cli);
+        let _ = holder_task.await;
+        let _ = cli_task.await;
+    }
+
+    #[tokio::test]
+    async fn names_that_would_break_a_listing_are_refused() {
+        let registry = Arc::new(Mutex::new(Registry::default()));
+        let (mut holder, holder_task) = connection(&registry, 1);
+        let (id, _) = workspace(
+            exchange(&mut holder, Request::Open { window: 11 })
+                .await
+                .unwrap(),
+        );
+        exchange(&mut holder, Request::Save(one_pane(21.0)))
+            .await
+            .unwrap();
+        for name in [
+            "two\tcolumns",
+            "two\nlines",
+            "\u{1b}[31mred",
+            &"x".repeat(65),
+        ] {
+            assert!(
+                exchange(
+                    &mut holder,
+                    Request::Rename {
+                        id,
+                        name: name.into()
+                    }
+                )
+                .await
+                .is_err(),
+                "{name:?}"
+            );
+        }
+        exchange(
+            &mut holder,
+            Request::Rename {
+                id,
+                name: "日本語".repeat(21) + "x",
+            },
+        )
+        .await
+        .expect("64 characters, not bytes");
+        assert!(
+            exchange(
+                &mut holder,
+                Request::Rename {
+                    id: id.wrapping_add(1),
+                    name: "missing".into()
+                }
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("workspace not found")
+        );
+        drop(holder);
+        let _ = holder_task.await;
     }
 
     #[tokio::test]
