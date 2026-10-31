@@ -49,7 +49,9 @@ felis daemon.
 
 ## Names
 
-- A workspace may have a name. New workspaces have none.
+- A workspace may have a name. New workspaces have none. The workspace list
+  in a window titles each workspace by its name, or by its full ID when it
+  has none.
 - A name is trimmed of surrounding whitespace, is at most 64 characters and
   contains no control characters; a name that breaks these rules is refused.
   Setting a blank name removes it.

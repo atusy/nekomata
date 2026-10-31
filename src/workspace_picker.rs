@@ -45,6 +45,14 @@ fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
+/// The first line of a workspace's row.
+fn title(workspace: &Summary) -> String {
+    workspace
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("Workspace {:032x}", workspace.id))
+}
+
 /// The detail line under a workspace's name.
 fn detail(workspace: &Summary) -> String {
     let contents = format!(
@@ -211,7 +219,7 @@ pub(crate) fn show(
                     for workspace in ordered(workspaces, current) {
                         let held = workspace.window.is_some();
                         let unavailable = held && Some(workspace.id) != current;
-                        let text = egui::RichText::new(format!("Workspace {:032x}", workspace.id));
+                        let text = egui::RichText::new(title(workspace));
                         let detail = egui::RichText::new(detail(workspace))
                             .size(theme::ui_size(ui.style(), 12.0))
                             .color(theme::TAB_INACTIVE_FG);
@@ -300,6 +308,19 @@ mod tests {
             instance: String::new(),
             name: None,
         }
+    }
+
+    #[test]
+    fn rows_are_titled_by_name_or_else_by_id() {
+        assert_eq!(
+            title(&summary(1, None, 1, 1)),
+            "Workspace 00000000000000000000000000000001"
+        );
+        let named = Summary {
+            name: Some("dotfiles".into()),
+            ..summary(1, None, 1, 1)
+        };
+        assert_eq!(title(&named), "dotfiles");
     }
 
     #[test]
