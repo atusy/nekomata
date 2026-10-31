@@ -65,7 +65,14 @@ fn main() -> eframe::Result {
         cli::Command::WorkspacesList { json } => {
             match daemon::list() {
                 Ok(workspaces) if json => println!("{}", workspace_list::json(&workspaces)),
-                Ok(workspaces) => println!("{}", workspace_list::human(&workspaces)),
+                Ok(workspaces) => {
+                    use std::io::IsTerminal;
+                    let color = workspace_list::color(
+                        std::io::stdout().is_terminal(),
+                        std::env::var_os("NO_COLOR"),
+                    );
+                    println!("{}", workspace_list::human(&workspaces, color))
+                }
                 Err(error) => {
                     eprintln!("{error:#}");
                     std::process::exit(1);

@@ -143,7 +143,12 @@ nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]   # switch a window
 `workspaces list` lists the workspaces most recently used first. The human
 format, the default, is a table with a header row and the columns
 `WORKSPACE`, `WINDOW` (`-` when no window has the workspace), `TABS` and
-`PANES`; it is for reading, not parsing. `--format json` prints one object,
+`PANES`; it is for reading, not parsing. `WORKSPACE` shows every ID cut to
+the same length: the fewest leading digits that keep all listed IDs
+distinct, but at least 8. On a terminal, unless `NO_COLOR` is set to a
+non-empty value, each ID highlights its shortest prefix that no other listed
+ID starts with. Both depend on which workspaces exist, so store only full
+IDs. `--format json` prints one object,
 `{"v":1,"workspaces":[…]}`, whose entries carry:
 
 | Key       | Type             | Value                                       |
