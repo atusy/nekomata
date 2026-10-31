@@ -614,22 +614,7 @@ pub fn command(stop: bool) -> Result<String> {
             return Ok("Stopped nekomata daemon".into());
         }
         match exchange(&mut connect().await?, Request::List).await? {
-            Payload::Workspaces(workspaces) => {
-                let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
-                for workspace in workspaces {
-                    output.push_str(&format!(
-                        "{:032x}\t{}\t{}\t{}\n",
-                        workspace.id,
-                        workspace
-                            .window
-                            .map(|w| w.to_string())
-                            .unwrap_or_else(|| "-".into()),
-                        workspace.tabs,
-                        workspace.panes
-                    ));
-                }
-                Ok(output.trim_end().into())
-            }
+            Payload::Workspaces(workspaces) => Ok(crate::workspace_list::human(&workspaces)),
             _ => bail!("unexpected nekomata daemon response"),
         }
     })

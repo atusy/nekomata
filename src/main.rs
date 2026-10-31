@@ -30,6 +30,7 @@ mod theme;
 mod ui_font;
 mod workspace;
 mod workspace_client;
+mod workspace_list;
 mod workspace_picker;
 mod workspace_switch;
 
