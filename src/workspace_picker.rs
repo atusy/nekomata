@@ -1,4 +1,4 @@
-//! The workspace list that `Workspaces…` opens.
+//! The workspace list that `Workspace: Manage…` opens.
 use crate::{daemon::Summary, theme};
 use eframe::egui;
 

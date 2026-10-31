@@ -464,7 +464,7 @@ mod tests {
         ];
         const VERBS: &[&str] = &[
             "Attach", "Change", "Close", "Copy", "Create", "Decrease", "Find", "Focus", "Increase",
-            "Jump", "Paste", "Reset", "Scroll", "Show", "Split", "Switch",
+            "Jump", "Manage", "Paste", "Reset", "Scroll", "Show", "Split", "Switch",
         ];
         for command in commands() {
             let label = command.label();
@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(label(Action::NewTab), "Tab: Create");
         assert_eq!(label(Action::NextTab), "Tab: Switch to next");
         assert_eq!(label(Action::Split(Axis::Vertical)), "Pane: Split below");
-        assert_eq!(label(Action::OpenWorkspaces), "Workspace: Switch…");
+        assert_eq!(label(Action::OpenWorkspaces), "Workspace: Manage…");
     }
 
     #[test]
@@ -543,6 +543,8 @@ mod tests {
         assert_eq!(actions("search"), [Action::Search]);
         assert_eq!(actions("pane detach"), [Action::ClosePane]);
         assert_eq!(actions("tab next"), [Action::NextTab]);
+        assert_eq!(actions("switch workspace"), [Action::OpenWorkspaces]);
+        assert_eq!(actions("rename workspace"), [Action::OpenWorkspaces]);
         assert!(actions("tab zzz").is_empty());
         assert_eq!(matching("  ").len(), commands().len());
     }

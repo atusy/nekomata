@@ -21,7 +21,8 @@ away from another window.
 In the command palette (the cat button):
 
 - `Workspace: Create` switches to a fresh workspace.
-- `Workspace: Switch…` picks an existing one.
+- `Workspace: Manage…` lists the workspaces: pick one to switch to it, or
+  [rename](#naming) them.
 
 nekomata switches once the panes of the workspace you switch to have
 connected. A pane whose shell has ended is dropped; a pane that cannot
