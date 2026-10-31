@@ -33,6 +33,7 @@ whose shell starts after the switch, switches regardless.
 
 ```sh
 nekomata workspaces list                  # workspaces and the windows showing them
+nekomata workspaces list --format json    # the same, for scripts
 nekomata workspaces new                   # switch this window to a new workspace
 nekomata workspaces attach WORKSPACE_ID   # switch to an ID from the WORKSPACE column
 ```

@@ -135,10 +135,23 @@ there. Shells started afterwards carry the new ID.
 ## CLI
 
 ```sh
-nekomata workspaces list                                       # workspaces and the window each is attached to
+nekomata workspaces list [--format human|json]                # workspaces and the window each is attached to
 nekomata workspaces new [--window WINDOW_ID]                   # switch a window to a new workspace
 nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]   # switch a window to this workspace
 ```
+
+`workspaces list` lists the workspaces most recently used first. The human
+format, the default, is a table with a header row and the columns
+`WORKSPACE`, `WINDOW` (`-` when no window has the workspace), `TABS` and
+`PANES`; it is for reading, not parsing. `--format json` prints one object,
+`{"v":1,"workspaces":[…]}`, whose entries carry:
+
+| Key       | Type             | Value                                       |
+| --------- | ---------------- | ------------------------------------------- |
+| `id`      | string           | the full 32-digit workspace ID              |
+| `windows` | array of numbers | the windows showing the workspace, or empty |
+| `tabs`    | number           | how many tabs it has                        |
+| `panes`   | number           | how many panes it has                       |
 
 The target window is resolved as in [panes](panes.md#window-resolution).
 `nekomata sessions …` is a deprecated alias of `nekomata workspaces …` and

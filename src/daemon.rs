@@ -607,14 +607,16 @@ fn handle(
     }
 }
 
-pub fn command(stop: bool) -> Result<String> {
+pub fn stop() -> Result<()> {
+    tokio::runtime::Runtime::new()?
+        .block_on(async { request_stop(&mut UnixStream::connect(socket()?).await?).await })
+}
+
+/// The retained workspaces, starting the daemon if none is running.
+pub fn list() -> Result<Vec<Summary>> {
     tokio::runtime::Runtime::new()?.block_on(async {
-        if stop {
-            request_stop(&mut UnixStream::connect(socket()?).await?).await?;
-            return Ok("Stopped nekomata daemon".into());
-        }
         match exchange(&mut connect().await?, Request::List).await? {
-            Payload::Workspaces(workspaces) => Ok(crate::workspace_list::human(&workspaces)),
+            Payload::Workspaces(workspaces) => Ok(workspaces),
             _ => bail!("unexpected nekomata daemon response"),
         }
     })

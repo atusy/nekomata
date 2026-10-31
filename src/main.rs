@@ -52,9 +52,20 @@ fn main() -> eframe::Result {
             }
             return Ok(());
         }
-        cli::Command::DaemonStop | cli::Command::WorkspacesList => {
-            match daemon::command(matches!(command, cli::Command::DaemonStop)) {
-                Ok(output) => println!("{output}"),
+        cli::Command::DaemonStop => {
+            match daemon::stop() {
+                Ok(()) => println!("Stopped nekomata daemon"),
+                Err(error) => {
+                    eprintln!("{error:#}");
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+        cli::Command::WorkspacesList { json } => {
+            match daemon::list() {
+                Ok(workspaces) if json => println!("{}", workspace_list::json(&workspaces)),
+                Ok(workspaces) => println!("{}", workspace_list::human(&workspaces)),
                 Err(error) => {
                     eprintln!("{error:#}");
                     std::process::exit(1);
