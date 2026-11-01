@@ -1,5 +1,5 @@
 //! The workspace list that `Workspaces…` opens.
-use crate::{daemon::Summary, theme};
+use crate::{daemon::Summary, theme, workspace_list};
 use eframe::egui;
 
 /// What the picker asks for this frame.
@@ -208,10 +208,14 @@ pub(crate) fn show(
                 .min_scrolled_height(list_height)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
+                    let digits = workspace_list::listed_digits(workspaces);
                     for workspace in ordered(workspaces, current) {
                         let held = workspace.window.is_some();
                         let unavailable = held && Some(workspace.id) != current;
-                        let text = egui::RichText::new(format!("Workspace {:032x}", workspace.id));
+                        let text = egui::RichText::new(format!(
+                            "Workspace {}",
+                            workspace_list::short_id(workspace.id, digits)
+                        ));
                         let detail = egui::RichText::new(detail(workspace))
                             .size(theme::ui_size(ui.style(), 12.0))
                             .color(theme::TAB_INACTIVE_FG);
@@ -396,18 +400,44 @@ mod tests {
     #[test]
     fn rows_show_name_detail_and_the_current_marker() {
         let ctx = egui::Context::default();
-        let roster = [summary(1, None, 2, 3), summary(2, Some(4), 1, 1)];
+        let roster = [summary(1, None, 2, 3), summary(2 << 124, Some(4), 1, 1)];
         texts(&ctx, Some(&roster));
         let shown = texts(&ctx, Some(&roster));
         for expected in [
-            "Workspace 00000000000000000000000000000001",
+            "Workspace 00000000",
             "2 tabs · 3 panes",
             "Current",
-            "Workspace 00000000000000000000000000000002",
+            "Workspace 20000000",
             "1 tab · 1 pane · in window 4",
         ] {
             assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
         }
+    }
+
+    #[test]
+    fn names_share_the_id_length_that_tells_every_workspace_apart() {
+        let ctx = egui::Context::default();
+        let close = 0x3f2a_91bc_04e7 << 80;
+        let roster = [
+            summary(close, None, 1, 1),
+            summary(close | 1 << 79, Some(2), 1, 1),
+            summary(0xa0 << 120, None, 1, 1),
+        ];
+        texts(&ctx, Some(&roster));
+        let mut names: Vec<_> = texts(&ctx, Some(&roster))
+            .into_iter()
+            .filter(|text| text.starts_with("Workspace "))
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "Workspace 3f2a91bc04e70",
+                "Workspace 3f2a91bc04e78",
+                "Workspace a000000000000",
+            ],
+            "the IDs `workspaces list` shows, whichever row comes first"
+        );
     }
 
     #[test]
@@ -441,10 +471,7 @@ mod tests {
                     _ => None,
                 })
             };
-            (
-                find("Workspace 00000000000000000000000000000001"),
-                find("2 tabs · 3 panes"),
-            )
+            (find("Workspace 00000000"), find("2 tabs · 3 panes"))
         };
         bounds(&ctx);
         let (name, detail) = bounds(&ctx);
@@ -463,7 +490,8 @@ mod tests {
                 .text_styles
                 .insert(egui::TextStyle::Body, egui::FontId::proportional(21.0));
         });
-        let roster = [summary(1, None, 2, 3)];
+        // IDs this close are shown in full, the longest a name gets.
+        let roster = [summary(1, None, 2, 3), summary(0, None, 1, 1)];
         let mut rects = Vec::new();
         for _ in 0..2 {
             let output = crate::test_support::run(
