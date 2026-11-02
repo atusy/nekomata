@@ -257,11 +257,7 @@ pub(crate) fn show(
                         // they keep apart whatever the body size.
                         let name = elided(
                             painter,
-                            &[
-                                ("Workspace ", ink),
-                                (prefix, prefix_ink),
-                                (rest, detail_ink),
-                            ],
+                            &[(prefix, prefix_ink), (rest, detail_ink)],
                             theme::ui_size(ui.style(), 14.0),
                             room,
                         );
@@ -299,6 +295,11 @@ pub(crate) fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether `text` is a name in the list, which is the workspace's ID.
+    fn is_id(text: &str) -> bool {
+        !text.is_empty() && text.chars().all(|c| c.is_ascii_hexdigit())
+    }
 
     fn summary(id: u128, window: Option<u32>, tabs: usize, panes: usize) -> Summary {
         Summary {
@@ -368,7 +369,7 @@ mod tests {
                 .iter()
                 .filter_map(|shape| match &shape.shape {
                     egui::Shape::Text(text)
-                        if text.galley.text() == "Workspace 00000000000000000000000000000001" =>
+                        if text.galley.text() == "00000000000000000000000000000001" =>
                     {
                         Some(shape.clip_rect.height())
                     }
@@ -410,10 +411,10 @@ mod tests {
         texts(&ctx, Some(&roster));
         let shown = texts(&ctx, Some(&roster));
         for expected in [
-            "Workspace 00000000",
+            "00000000",
             "2 tabs · 3 panes",
             "Current",
-            "Workspace 20000000",
+            "20000000",
             "1 tab · 1 pane · in window 4",
         ] {
             assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
@@ -432,16 +433,12 @@ mod tests {
         texts(&ctx, Some(&roster));
         let mut names: Vec<_> = texts(&ctx, Some(&roster))
             .into_iter()
-            .filter(|text| text.starts_with("Workspace "))
+            .filter(|text| is_id(text))
             .collect();
         names.sort();
         assert_eq!(
             names,
-            [
-                "Workspace 3f2a91bc04e70",
-                "Workspace 3f2a91bc04e78",
-                "Workspace a000000000000",
-            ],
+            ["3f2a91bc04e70", "3f2a91bc04e78", "a000000000000",],
             "the IDs `workspaces list` shows, whichever row comes first"
         );
     }
@@ -472,7 +469,7 @@ mod tests {
                 .shapes
                 .iter()
                 .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) if text.galley.text().starts_with("Workspace ") => {
+                    egui::Shape::Text(text) if is_id(text.galley.text()) => {
                         let job = &text.galley.job;
                         Some(
                             job.sections
@@ -506,19 +503,18 @@ mod tests {
                 .clone()
         };
         assert_eq!(
-            parts(&rows, "Workspace 3f2a0000"),
+            parts(&rows, "3f2a0000"),
             [
-                ("Workspace ".to_owned(), theme::FG),
                 ("3f2a".to_owned(), theme::ACCENT),
                 ("0000".to_owned(), theme::TAB_INACTIVE_FG),
             ]
         );
-        let held = parts(&rows, "Workspace 91bc0000");
+        let held = parts(&rows, "91bc0000");
         assert_eq!(
             held.iter()
                 .map(|(text, _)| text.as_str())
                 .collect::<Vec<_>>(),
-            ["Workspace ", "9", "1bc0000"],
+            ["9", "1bc0000"],
             "a workspace another window holds still shows its prefix"
         );
     }
@@ -554,7 +550,7 @@ mod tests {
                     _ => None,
                 })
             };
-            (find("Workspace 00000000"), find("2 tabs · 3 panes"))
+            (find("00000000"), find("2 tabs · 3 panes"))
         };
         bounds(&ctx);
         let (name, detail) = bounds(&ctx);
@@ -595,8 +591,7 @@ mod tests {
                 .iter()
                 .filter_map(|shape| match &shape.shape {
                     egui::Shape::Text(text)
-                        if text.galley.text().starts_with("Workspace 0")
-                            || text.galley.text() == "Current" =>
+                        if is_id(text.galley.text()) || text.galley.text() == "Current" =>
                     {
                         Some((text.galley.text().to_owned(), text.visual_bounding_rect()))
                     }
@@ -611,7 +606,7 @@ mod tests {
                 .unwrap()
                 .1
         };
-        let (name, current) = (find("Workspace 0"), find("Current"));
+        let (name, current) = (find("0"), find("Current"));
         assert!(
             name.right() < current.left(),
             "{name:?} runs into {current:?}"
