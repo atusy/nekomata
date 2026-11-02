@@ -53,7 +53,7 @@ pub fn color(terminal: bool, no_color: Option<std::ffi::OsString>) -> bool {
 }
 
 /// How many leading digits tell `id` apart from every other listed ID.
-fn identifying_digits(id: u128, workspaces: &[Summary]) -> usize {
+pub(crate) fn identifying_digits(id: u128, workspaces: &[Summary]) -> usize {
     let shared = workspaces
         .iter()
         .filter(|other| other.id != id)
@@ -63,23 +63,31 @@ fn identifying_digits(id: u128, workspaces: &[Summary]) -> usize {
     (shared + 1).min(ID_DIGITS)
 }
 
+/// How many digits every listed ID shows: the fewest that keep all of them
+/// distinct, but at least eight.
+pub(crate) fn listed_digits(workspaces: &[Summary]) -> usize {
+    workspaces
+        .iter()
+        .map(|workspace| identifying_digits(workspace.id, workspaces))
+        .fold(MIN_LISTED_DIGITS, usize::max)
+}
+
+/// The first `digits` hexadecimal digits of `id`.
+pub(crate) fn short_id(id: u128, digits: usize) -> String {
+    format!("{id:032x}")[..digits].to_owned()
+}
+
 /// The table shown to people, one workspace per row in the daemon's order.
 /// IDs are cut to one length that keeps all of them distinct; with `color`,
 /// each row highlights the shorter prefix that alone identifies it and dims
 /// the digits after it.
 pub fn human(workspaces: &[Summary], color: bool) -> String {
-    let identifying: Vec<_> = workspaces
-        .iter()
-        .map(|workspace| identifying_digits(workspace.id, workspaces))
-        .collect();
-    let width = identifying
-        .iter()
-        .copied()
-        .fold(MIN_LISTED_DIGITS, usize::max);
+    let width = listed_digits(workspaces);
     let mut output = String::from("WORKSPACE\tWINDOW\tTABS\tPANES\n");
-    for (workspace, identifying) in workspaces.iter().zip(identifying) {
-        let id = format!("{:032x}", workspace.id);
+    for workspace in workspaces {
         let id = if color {
+            let id = format!("{:032x}", workspace.id);
+            let identifying = identifying_digits(workspace.id, workspaces);
             let rest = &id[identifying..width];
             let rest = if rest.is_empty() {
                 String::new()
@@ -88,7 +96,7 @@ pub fn human(workspaces: &[Summary], color: bool) -> String {
             };
             format!("{HIGHLIGHT}{}{RESET}{rest}", &id[..identifying])
         } else {
-            id[..width].to_owned()
+            short_id(workspace.id, width)
         };
         output.push_str(&format!(
             "{id}\t{}\t{}\t{}\n",

@@ -21,7 +21,9 @@ away from another window.
 In the command palette (the cat button):
 
 - `Workspace: Create` switches to a fresh workspace.
-- `Workspace: Switch…` picks an existing one.
+- `Workspace: Switch…` picks an existing one, shown by the same shortened ID
+  as in `nekomata workspaces list`, with the part enough for `attach`
+  highlighted.
 
 nekomata switches once the panes of the workspace you switch to have
 connected. A pane whose shell has ended is dropped; a pane that cannot
@@ -81,4 +83,5 @@ A UI-only update does not need a daemon restart.
 
 See the [workspace specification](../spec/workspaces.md) for the exact rules.
 
-Workspace IDs are 32-digit hexadecimal strings generated randomly. Use the full ID when attaching.
+Workspace IDs are 32-digit hexadecimal strings generated randomly. `attach`
+accepts the full ID or any start of it that no other workspace's ID shares.

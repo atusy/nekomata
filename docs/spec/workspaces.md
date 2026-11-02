@@ -92,6 +92,11 @@ If the daemon refuses a step, or no destination pane connects and none is
 waiting to start a shell, the reservation is cancelled and the window keeps its current workspace.
 Interrupting a CLI that requested the switch does not cancel it.
 
+`Workspace: Switch…` names each workspace by its ID cut to the length
+`workspaces list` uses (see [CLI](#cli)), and, as that table does on a
+terminal, highlights the shortest prefix no other workspace's ID starts with
+and dims the digits after it.
+
 ## Closing panes and tabs
 
 Closing a pane or tab removes it from the layout and detaches its felis
