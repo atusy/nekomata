@@ -83,4 +83,5 @@ A UI-only update does not need a daemon restart.
 
 See the [workspace specification](../spec/workspaces.md) for the exact rules.
 
-Workspace IDs are 32-digit hexadecimal strings generated randomly. Use the full ID when attaching.
+Workspace IDs are 32-digit hexadecimal strings generated randomly. `attach`
+accepts the full ID or any start of it that no other workspace's ID shares.
