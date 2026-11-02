@@ -75,19 +75,22 @@ fn ordered(workspaces: &[Summary], current: Option<u128>) -> Vec<&Summary> {
     ordered
 }
 
-/// One line of `text`, cut with an ellipsis where it would pass `room`.
+/// One line of `parts`, each in its own color, cut with an ellipsis where it
+/// would pass `room`.
 fn elided(
     painter: &egui::Painter,
-    text: &str,
+    parts: &[(&str, egui::Color32)],
     size: f32,
-    color: egui::Color32,
     room: f32,
 ) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        text.to_owned(),
-        egui::FontId::proportional(size),
-        color,
-    );
+    let mut job = egui::text::LayoutJob::default();
+    for &(text, color) in parts {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat::simple(egui::FontId::proportional(size), color),
+        );
+    }
     job.wrap = egui::text::TextWrapping {
         max_width: room.max(0.0),
         max_rows: 1,
@@ -212,13 +215,10 @@ pub(crate) fn show(
                     for workspace in ordered(workspaces, current) {
                         let held = workspace.window.is_some();
                         let unavailable = held && Some(workspace.id) != current;
-                        let text = egui::RichText::new(format!(
-                            "Workspace {}",
-                            workspace_list::short_id(workspace.id, digits)
-                        ));
-                        let detail = egui::RichText::new(detail(workspace))
-                            .size(theme::ui_size(ui.style(), 12.0))
-                            .color(theme::TAB_INACTIVE_FG);
+                        let id = workspace_list::short_id(workspace.id, digits);
+                        let identifying =
+                            workspace_list::identifying_digits(workspace.id, workspaces);
+                        let (prefix, rest) = id.split_at(identifying);
                         let row = ui.add_enabled_ui(!held, |ui| {
                             ui.add_sized(
                                 [ui.available_width(), detail_row_height],
@@ -228,13 +228,17 @@ pub(crate) fn show(
                         });
                         let rect = row.inner.rect;
                         let painter = ui.painter();
-                        let (ink, detail_ink) = if unavailable {
+                        // As `workspaces list` does on a terminal, the prefix
+                        // that alone identifies the workspace stands out and
+                        // the digits after it recede.
+                        let (ink, prefix_ink, detail_ink) = if unavailable {
                             (
                                 theme::TAB_INACTIVE_FG.gamma_multiply(0.7),
+                                theme::ACCENT.gamma_multiply(0.7),
                                 theme::TAB_INACTIVE_FG.gamma_multiply(0.5),
                             )
                         } else {
-                            (theme::FG, theme::TAB_INACTIVE_FG)
+                            (theme::FG, theme::ACCENT, theme::TAB_INACTIVE_FG)
                         };
                         let x = rect.left() + 10.0;
                         let marker = (Some(workspace.id) == current).then(|| {
@@ -253,16 +257,18 @@ pub(crate) fn show(
                         // they keep apart whatever the body size.
                         let name = elided(
                             painter,
-                            text.text(),
+                            &[
+                                ("Workspace ", ink),
+                                (prefix, prefix_ink),
+                                (rest, detail_ink),
+                            ],
                             theme::ui_size(ui.style(), 14.0),
-                            ink,
                             room,
                         );
                         let detail = elided(
                             painter,
-                            detail.text(),
+                            &[(&detail(workspace), detail_ink)],
                             theme::ui_size(ui.style(), 12.0),
-                            detail_ink,
                             room,
                         );
                         let top = rect.center().y - (name.size().y + detail.size().y) / 2.0;
@@ -437,6 +443,83 @@ mod tests {
                 "Workspace a000000000000",
             ],
             "the IDs `workspaces list` shows, whichever row comes first"
+        );
+    }
+
+    #[test]
+    fn names_mark_the_prefix_that_identifies_each_workspace_and_dim_the_rest() {
+        let ctx = egui::Context::default();
+        let roster = [
+            summary(0x3f2a << 112, None, 1, 1),
+            summary(0x3f2b << 112, None, 1, 1),
+            summary(0x91bc << 112, Some(2), 1, 1),
+        ];
+        let colored = |ctx: &egui::Context| {
+            let output = crate::test_support::run(
+                ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    show(ui.ctx(), Some(&roster), Some(0x3f2a << 112));
+                },
+            );
+            output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().starts_with("Workspace ") => {
+                        let job = &text.galley.job;
+                        Some(
+                            job.sections
+                                .iter()
+                                .map(|section| {
+                                    (
+                                        job.text
+                                            [section.byte_range.start.0..section.byte_range.end.0]
+                                            .to_owned(),
+                                        section.format.color,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        colored(&ctx);
+        let rows = colored(&ctx);
+        let parts = |rows: &[Vec<(String, egui::Color32)>], wanted: &str| {
+            rows.iter()
+                .find(|row| {
+                    row.iter()
+                        .map(|(text, _)| text.as_str())
+                        .collect::<String>()
+                        == wanted
+                })
+                .unwrap_or_else(|| panic!("{wanted}: {rows:?}"))
+                .clone()
+        };
+        assert_eq!(
+            parts(&rows, "Workspace 3f2a0000"),
+            [
+                ("Workspace ".to_owned(), theme::FG),
+                ("3f2a".to_owned(), theme::ACCENT),
+                ("0000".to_owned(), theme::TAB_INACTIVE_FG),
+            ]
+        );
+        let held = parts(&rows, "Workspace 91bc0000");
+        assert_eq!(
+            held.iter()
+                .map(|(text, _)| text.as_str())
+                .collect::<Vec<_>>(),
+            ["Workspace ", "9", "1bc0000"],
+            "a workspace another window holds still shows its prefix"
         );
     }
 

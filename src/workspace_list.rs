@@ -53,7 +53,7 @@ pub fn color(terminal: bool, no_color: Option<std::ffi::OsString>) -> bool {
 }
 
 /// How many leading digits tell `id` apart from every other listed ID.
-fn identifying_digits(id: u128, workspaces: &[Summary]) -> usize {
+pub(crate) fn identifying_digits(id: u128, workspaces: &[Summary]) -> usize {
     let shared = workspaces
         .iter()
         .filter(|other| other.id != id)
