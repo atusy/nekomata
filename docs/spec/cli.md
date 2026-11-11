@@ -22,3 +22,15 @@ with the behavior they control: workspaces and the nekomata daemon in
 starts the daemon this way on demand, as specified in
 [workspaces](workspaces.md#the-nekomata-daemon), so the command is not listed
 in the usage and is not meant to be run by hand.
+
+## Frontend diagnostics
+
+`nekomata doctor [--json]` probes GPU device creation, clipboard backend
+initialization, and terminal font resolution without starting a daemon or
+reading or writing clipboard contents. JSON includes the shared felis probe
+report, `issues`, and `clipboard_status` (`available`, `unavailable`, or
+`unverified`). On Wayland, a failed standalone clipboard probe is unverified
+because the native clipboard requires a window; that alone is not a failure.
+The command exits 0 when the GPU and fonts are available and the clipboard is
+not unavailable, 1 on a failed probe or execution error, and 2 on invalid
+arguments. It does not test native surface presentation or clipboard transfer.

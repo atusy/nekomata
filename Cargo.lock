@@ -2016,6 +2016,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "directories",
+ "arboard",
  "eframe",
  "felis-client-core",
  "felis-grid",

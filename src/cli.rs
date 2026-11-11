@@ -1,6 +1,9 @@
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Gui,
+    Doctor {
+        json: bool,
+    },
     DaemonRun,
     DaemonStop,
     WorkspacesList {
@@ -34,6 +37,7 @@ pub const HELP: &str = "nekomata\n\
 nekomata workspaces list [--format human|json]\n\
 nekomata workspaces new [--window WINDOW_ID]\n\
 nekomata workspaces attach WORKSPACE_ID [--window WINDOW_ID]\n\
+nekomata doctor [--json]\n\
 nekomata daemon stop\n\
 nekomata felis sessions list [--format human|json]\n\
 nekomata panes list [--window WINDOW_ID]\n\
@@ -55,6 +59,9 @@ pub fn parse(args: &[String]) -> Result<Command, &'static str> {
     }
     match args.as_slice() {
         [] => Ok(Command::Gui),
+        ["doctor"] => Ok(Command::Doctor { json: false }),
+        ["doctor", "--json"] => Ok(Command::Doctor { json: true }),
+        ["doctor", "--help" | "-h"] => Ok(Command::Help),
         ["daemon", "run"] => Ok(Command::DaemonRun),
         ["daemon", "stop"] => Ok(Command::DaemonStop),
         ["workspaces", "--help" | "-h"]
@@ -186,6 +193,17 @@ fn parse_pane(verb: &str, options: &[&str]) -> Result<Command, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doctor_accepts_human_and_json_output_but_rejects_unknown_flags() {
+        for (args, json) in [(vec!["doctor"], false), (vec!["doctor", "--json"], true)] {
+            assert_eq!(
+                parse(&args.into_iter().map(String::from).collect::<Vec<_>>()),
+                Ok(Command::Doctor { json })
+            );
+        }
+        assert!(parse(&["doctor", "--verbose"].map(String::from)).is_err());
+    }
 
     #[test]
     fn ssh_attach_accepts_a_remote_daemon_socket() {
