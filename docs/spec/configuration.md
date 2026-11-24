@@ -94,6 +94,9 @@ dialogs. It never affects terminal text.
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
   built-in font. A configured family leads proportional UI text and the
   default faces remain its fallbacks.
+- A character none of these faces has, such as the `✳` Claude Code puts
+  before its titles, is drawn with egui's bundled monochrome emoji fonts in
+  the text's color, or failing that with an installed font that has it.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
   font size (14 px), regardless of the configured terminal size.
   Values outside 4–72 are clamped into range; zero, negative and non-finite
