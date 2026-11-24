@@ -458,6 +458,19 @@ mod tests {
         });
     }
     #[test]
+    fn tab_titles_cover_the_status_marker_agents_put_before_them() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            // Claude Code titles an idle session "✳ <topic>".
+            assert!(ui.fonts_mut(|fonts| {
+                fonts.has_glyphs(&egui::FontId::proportional(14.0), "✳ Kakehashi")
+            }));
+        });
+    }
+
+    #[test]
     #[cfg(target_os = "macos")]
     fn tab_titles_share_a_baseline_across_japanese_and_latin() {
         use eframe::egui;

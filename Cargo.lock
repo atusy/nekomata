@@ -2017,6 +2017,7 @@ dependencies = [
  "anyhow",
  "directories",
  "eframe",
+ "egui",
  "felis-client-core",
  "felis-grid",
  "felis-protocol",
