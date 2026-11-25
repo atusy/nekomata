@@ -7,6 +7,23 @@ use felis_protocol::messages::SessionInfo;
 
 type Roster = Arc<Mutex<Option<Result<Vec<SessionInfo>, String>>>>;
 
+/// A session's row: the short ID, the title its program set, and its size.
+/// The title can hold emoji, so the row is laid out by presentation, in the
+/// color the selectable label gives it.
+fn row(
+    id: &str,
+    title: &str,
+    cols: impl std::fmt::Display,
+    rows: impl std::fmt::Display,
+    size: f32,
+) -> egui::text::LayoutJob {
+    crate::theme::presented(
+        &format!("{}  ·  {title}  ·  {cols}×{rows}", &id[..8]),
+        size,
+        egui::Color32::PLACEHOLDER,
+    )
+}
+
 #[derive(Default)]
 pub struct SessionPicker {
     query: String,
@@ -84,12 +101,12 @@ impl SessionPicker {
                             .show(ui, |ui| {
                                 for session in sessions {
                                     let id = format!("{:032x}", session.id);
-                                    let label = format!(
-                                        "{}  ·  {}  ·  {}×{}",
-                                        &id[..8],
+                                    let label = row(
+                                        &id,
                                         session.title.as_deref().unwrap_or("Terminal"),
                                         session.dims.cols,
-                                        session.dims.rows
+                                        session.dims.rows,
+                                        egui::TextStyle::Button.resolve(ui.style()).size,
                                     );
                                     if ui
                                         .selectable_label(false, label)
@@ -125,6 +142,27 @@ impl Drop for SessionPicker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_keep_emoji_in_titles_colored_and_the_rest_in_the_label_color() {
+        let job = row("0123456789abcdef", "✳ 😀", 80, 24, 14.0);
+        assert_eq!(job.text, "01234567  ·  ✳ 😀  ·  80×24");
+        let emoji: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|section| {
+                section.format.font_id.family == egui::FontFamily::Name("emoji".into())
+            })
+            .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+            .collect();
+        assert_eq!(emoji, ["😀"]);
+        assert!(
+            job.sections
+                .iter()
+                .all(|section| section.format.color == egui::Color32::PLACEHOLDER),
+            "rows take the color the selectable label gives them"
+        );
+    }
 
     #[test]
     fn attaching_closes_the_picker() {
