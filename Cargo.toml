@@ -14,8 +14,10 @@ members = ["vendor/felis-render-wgpu"]
 [dependencies]
 anyhow = "1"
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "persistence", "system_fonts", "wgpu", "wayland", "x11"] }
-# Only for its bundled monochrome emoji fonts, which eframe does not forward.
+# Only for features eframe does not forward: bundled monochrome emoji fonts,
+# and drawing color glyphs such as emoji.
 egui = { version = "0.37", default-features = false, features = ["monochrome_emoji_fonts"] }
+epaint = { version = "0.37", default-features = false, features = ["color_fonts"] }
 felis-client-core = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
 felis-grid = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
 felis-protocol = { git = "https://git.natsukium.com/felis-terminal/felis", rev = "2a3030b237947497708b962ba6be8c2adade4951" }
@@ -29,6 +31,7 @@ directories = "6"
 libc = "0.2"
 memmap2 = "0.9"
 swash = "0.2"
+unicode-segmentation = "1"
 toml = "1"
 gethostname = "1"
 getrandom = "0.4"

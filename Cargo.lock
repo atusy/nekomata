@@ -2057,6 +2057,7 @@ dependencies = [
  "directories",
  "eframe",
  "egui",
+ "epaint",
  "felis-client-core",
  "felis-grid",
  "felis-protocol",
@@ -2077,6 +2078,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "unicode-segmentation",
  "yeslogic-fontconfig-sys",
 ]
 
