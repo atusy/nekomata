@@ -165,6 +165,77 @@ mod tests {
     }
 
     #[test]
+    fn the_picker_lays_session_rows_out_by_presentation_at_the_button_size() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::chrome_fonts(None));
+        let mut picker = SessionPicker::default();
+        *picker.roster.lock().unwrap() = Some(Ok(vec![SessionInfo {
+            id: 1,
+            dims: felis_protocol::messages::GridDims {
+                rows: 24,
+                cols: 80,
+                pixel_w: 0,
+                pixel_h: 0,
+            },
+            title: Some("✳ 😀".into()),
+            cwd: None,
+            idle_seconds: None,
+            tags: vec![],
+            last_notification: None,
+            foreground: None,
+            exited: false,
+            last_exit_code: None,
+            attachments: vec![],
+            sequence: std::num::NonZeroU64::MIN,
+            program_status: vec![],
+            spawn_cwd: None,
+            terminal_progress: None,
+        }]));
+        let mut open = true;
+        let mut sections = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                picker.show(&runtime, ui.ctx(), &mut open);
+            });
+            sections = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().contains("😀") => {
+                        let job = &text.galley.job;
+                        Some(
+                            job.sections
+                                .iter()
+                                .map(|section| {
+                                    (
+                                        job.text
+                                            [section.byte_range.start.0..section.byte_range.end.0]
+                                            .to_owned(),
+                                        section.format.font_id.clone(),
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+        }
+        let size = egui::TextStyle::Button.resolve(&ctx.global_style()).size;
+        let font = |family: &str| egui::FontId::new(size, egui::FontFamily::Name(family.into()));
+        assert_eq!(
+            sections,
+            [
+                ("00000000  ·  ✳ ".to_owned(), font("text")),
+                ("😀".to_owned(), font("emoji")),
+                ("  ·  80×24".to_owned(), font("text")),
+            ]
+        );
+    }
+
+    #[test]
     fn attaching_closes_the_picker() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let ctx = egui::Context::default();
