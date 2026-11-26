@@ -623,36 +623,46 @@ mod tests {
         use eframe::egui;
         let ctx = egui::Context::default();
         ctx.set_fonts(super::chrome_fonts(None));
-        let mut glyphs = Vec::new();
-        for _ in 0..2 {
-            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
-                super::tab_button(ui, "✳ 😀 確認", true);
-            });
-            glyphs = output
-                .shapes
-                .iter()
-                .filter_map(|shape| match &shape.shape {
-                    egui::Shape::Text(text) => Some(
-                        text.galley
-                            .rows
-                            .iter()
-                            .flat_map(|row| row.glyphs.iter())
-                            .filter(|glyph| !glyph.chr.is_whitespace())
-                            .map(|glyph| (glyph.chr, glyph.is_color))
-                            .collect::<Vec<_>>(),
-                    ),
-                    _ => None,
-                })
-                .flatten()
-                .collect();
+        for (selected, ink) in [(true, super::FG), (false, super::TAB_INACTIVE_FG)] {
+            let mut glyphs = Vec::new();
+            let mut inks = Vec::new();
+            for _ in 0..2 {
+                let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                    super::tab_button(ui, "✳ 😀 確認", selected);
+                });
+                (glyphs, inks) = (Vec::new(), Vec::new());
+                for shape in &output.shapes {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        glyphs.extend(
+                            text.galley
+                                .rows
+                                .iter()
+                                .flat_map(|row| row.glyphs.iter())
+                                .filter(|glyph| !glyph.chr.is_whitespace())
+                                .map(|glyph| (glyph.chr, glyph.is_color)),
+                        );
+                        inks.extend(
+                            text.galley
+                                .job
+                                .sections
+                                .iter()
+                                .map(|section| section.format.color),
+                        );
+                    }
+                }
+            }
+            assert_eq!(
+                glyphs,
+                [('✳', false), ('😀', true), ('確', false), ('認', false)],
+                "emoji keep their own colors, while a symbol that defaults to \
+                 text presentation, like the ✳ Claude Code puts before its \
+                 titles, is an outline the tab's ink colors"
+            );
+            assert!(
+                !inks.is_empty() && inks.iter().all(|color| *color == ink),
+                "selected={selected}: {inks:?}"
+            );
         }
-        assert_eq!(
-            glyphs,
-            [('✳', false), ('😀', true), ('確', false), ('認', false)],
-            "emoji keep their own colors, while a symbol that defaults to text \
-             presentation, like the ✳ Claude Code puts before its titles, \
-             follows the tab's text color"
-        );
     }
 
     #[test]
