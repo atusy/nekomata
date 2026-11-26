@@ -423,6 +423,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fontconfig_locates_a_color_emoji_family() {
+        let Some(font) = std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") else {
+            eprintln!("skipped: NEKOMATA_COLOR_EMOJI_FONT is unset outside nix develop");
+            return;
+        };
+        let Some(lib) = fontconfig::library() else {
+            assert!(
+                std::env::var_os("NEKOMATA_REQUIRE_FONTCONFIG").is_none(),
+                "libfontconfig is not loadable"
+            );
+            eprintln!("skipped: libfontconfig is not loadable");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let emoji = dir.path().join("emoji.ttf");
+        std::fs::copy(font, &emoji).unwrap();
+        let path = std::ffi::CString::new(dir.path().as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: the config is created, filled and destroyed here.
+        let candidates = unsafe {
+            let config = (lib.FcConfigCreate)();
+            assert!((lib.FcConfigAppFontAddDir)(config, path.as_ptr().cast()) != 0);
+            let candidates = fontconfig::candidates(Some(config), "Noto Color Emoji");
+            (lib.FcConfigDestroy)(config);
+            candidates
+        };
+        // A face without Latin letters still matches its family.
+        assert_eq!(select(&candidates, "Noto Color Emoji"), Some((emoji, 0)));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn coretext_matches_a_bundled_family_ignoring_case() {

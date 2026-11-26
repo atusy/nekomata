@@ -454,7 +454,8 @@ mod tests {
         let text = family(FontFamily::Name(super::TEXT_FAMILY.into()));
         assert_eq!(at(text, "color-emoji"), None);
         if !fonts.font_data.contains_key("color-emoji") {
-            return; // No color emoji font is installed here.
+            eprintln!("skipped: no color emoji font is installed here");
+            return;
         }
         for kind in [FontFamily::Proportional, FontFamily::Monospace] {
             let names = family(kind.clone());
