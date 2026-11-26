@@ -76,7 +76,12 @@ fn on_sealed_system_volume(file: &std::fs::File) -> bool {
 /// Whether `file` is the file at `path`, which a retargeted link may no
 /// longer lead to.
 fn same_file(file: &std::fs::File, path: &Path) -> bool {
-    std::fs::File::open(path).is_ok_and(|found| identity(file) == identity(&found))
+    std::fs::File::open(path).is_ok_and(|found| identical(identity(file), identity(&found)))
+}
+
+/// Whether two identities are known and equal; failed lookups match nothing.
+fn identical<T: PartialEq>(a: Option<T>, b: Option<T>) -> bool {
+    matches!((a, b), (Some(a), Some(b)) if a == b)
 }
 
 /// What identifies an open file across volumes: the device number alone does
@@ -627,6 +632,15 @@ mod tests {
             None => eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset"),
         }
         assert!(load(&writable.path().with_extension("missing")).is_none());
+    }
+
+    #[test]
+    fn files_whose_identity_is_unknown_are_never_the_same() {
+        let known = Some((1, 2, 3));
+        assert!(identical(known, known));
+        assert!(!identical(known, Some((1, 2, 4))));
+        assert!(!identical(known, None));
+        assert!(!identical(None, None), "two failed lookups prove nothing");
     }
 
     #[test]
