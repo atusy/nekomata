@@ -239,11 +239,21 @@ pub fn tab_button(
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let color = if selected { FG } else { TAB_INACTIVE_FG };
     let size = TextStyle::Button.resolve(ui.style()).size;
-    let mut job = presented(title, size, title_line_height(ui, size), color);
     // A newline a program put in its title would make this tab taller than
-    // the rest of the bar, so tabs keep titles on one row, unlike other text.
-    job.break_on_newline = false;
-    let galley = ui.painter().layout_job(job);
+    // the rest of the bar, and some faces draw control characters as boxes,
+    // so tabs show them as spaces, unlike other text.
+    let shown: std::borrow::Cow<'_, str> = if title.contains(char::is_control) {
+        title
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .into()
+    } else {
+        title.into()
+    };
+    let galley =
+        ui.painter()
+            .layout_job(presented(&shown, size, title_line_height(ui, size), color));
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response
@@ -729,6 +739,25 @@ mod tests {
             heights.iter().all(|height| *height == heights[0]),
             "{heights:?}"
         );
+    }
+
+    #[test]
+    fn tabs_show_control_characters_in_titles_as_spaces() {
+        use eframe::egui;
+        // egui's bundled faces alone, as on a system without the optional
+        // fonts, draw a missing-glyph box for a newline.
+        let ctx = egui::Context::default();
+        let shown: Vec<_> = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            super::tab_button(ui, "build\nfailed\r\tagain", false);
+        })
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect();
+        assert_eq!(shown, ["build failed  again"]);
     }
 
     #[test]
