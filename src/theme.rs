@@ -896,6 +896,47 @@ mod tests {
     }
 
     #[test]
+    fn noto_color_emoji_draws_title_emoji_in_color_on_any_platform() {
+        use eframe::egui;
+        let Some(font) = std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") else {
+            eprintln!("skipped: NEKOMATA_COLOR_EMOJI_FONT is unset outside nix develop");
+            return;
+        };
+        let noto = egui::FontData::from_owned(std::fs::read(font).unwrap());
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts_with(None, Some(noto)));
+        let mut glyphs = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                super::tab_button(ui, "✳ 😀", true);
+            });
+            glyphs = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(
+                        text.galley
+                            .rows
+                            .iter()
+                            .flat_map(|row| row.glyphs.iter())
+                            .filter(|glyph| !glyph.chr.is_whitespace())
+                            .map(|glyph| (glyph.chr, glyph.is_color, glyph.uv_rect.is_nothing()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+        }
+        assert_eq!(
+            glyphs,
+            [('✳', false, false), ('😀', true, false)],
+            "Noto Color Emoji's bitmap glyphs draw emoji in color, with pixels, \
+             while ✳ keeps an outline in the tab's ink"
+        );
+    }
+
+    #[test]
     #[cfg(target_os = "macos")]
     fn tab_titles_draw_emoji_in_color_and_symbols_in_the_title_ink() {
         use eframe::egui;
