@@ -589,11 +589,15 @@ mod tests {
         let sealed = String::from_utf8_lossy(&mounts.stdout)
             .lines()
             .any(|line| line.contains(" on / (") && line.contains("sealed"));
+        if !sealed {
+            // An unsealed system volume may or may not be a snapshot.
+            eprintln!("skipped: / is not sealed here");
+            return;
+        }
         let chosen = locate("Apple Color Emoji").unwrap();
-        assert_eq!(
+        assert!(
             matches!(*chosen.bytes, FontBytes::Mapped(_)),
-            sealed,
-            "a font on the sealed system volume is mapped, and read elsewhere"
+            "a font on the sealed system volume is mapped"
         );
     }
 
