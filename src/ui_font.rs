@@ -66,6 +66,38 @@ fn on_read_only_volume(file: &std::fs::File) -> bool {
     }
 }
 
+/// A font file's bytes, mapped when nothing can rewrite the file and read
+/// otherwise, since a file rewritten under a live map breaks the map's
+/// contract and a truncation faults whoever reads it next.
+pub(crate) enum FontBytes {
+    Mapped(memmap2::Mmap),
+    Read(Vec<u8>),
+}
+
+impl AsRef<[u8]> for FontBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Mapped(map) => map,
+            Self::Read(bytes) => bytes,
+        }
+    }
+}
+
+/// The bytes of the font file at `path`; see [`FontBytes`].
+pub(crate) fn load(path: &Path) -> Option<FontBytes> {
+    let mut file = std::fs::File::open(path).ok()?;
+    if immutable_font(path, &file) {
+        // SAFETY: nothing rewrites the file (see `immutable_font`), so the
+        // bytes stay valid for as long as the map lives.
+        return unsafe { memmap2::Mmap::map(&file) }
+            .ok()
+            .map(FontBytes::Mapped);
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+    Some(FontBytes::Read(bytes))
+}
+
 /// A face the platform matched to a family, before its file is read.
 #[derive(Debug, Clone, PartialEq)]
 struct Candidate {
@@ -116,25 +148,19 @@ fn rank(font: &FontRef<'_>, family: &str) -> Rank {
 fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
     let family = family.to_lowercase();
     let mut best: Option<(Rank, &Path, u32)> = None;
-    let mut mapped: Option<(&Path, memmap2::Mmap)> = None;
+    let mut loaded: Option<(&Path, FontBytes)> = None;
     for candidate in candidates {
-        if mapped
+        if loaded
             .as_ref()
             .is_none_or(|(path, _)| *path != candidate.path)
         {
-            let Ok(file) = std::fs::File::open(&candidate.path) else {
+            let Some(data) = load(&candidate.path) else {
                 continue;
             };
-            // SAFETY: installed fonts are not rewritten while mapped; a
-            // truncation would at worst fault this startup read, the
-            // hazard felis-shaping accepts for the same files.
-            let Ok(data) = (unsafe { memmap2::Mmap::map(&file) }) else {
-                continue;
-            };
-            mapped = Some((&candidate.path, data));
+            loaded = Some((&candidate.path, data));
         }
-        let Some((_, data)) = &mapped else { continue };
-        let Some(collection) = swash::FontDataRef::new(data) else {
+        let Some((_, data)) = &loaded else { continue };
+        let Some(collection) = swash::FontDataRef::new(data.as_ref()) else {
             continue;
         };
         let found = match &candidate.face {
@@ -547,6 +573,21 @@ mod tests {
         let (path, _) = locate("Apple Color Emoji").unwrap();
         let file = std::fs::File::open(&path).unwrap();
         assert!(immutable_font(&path, &file), "{path:?}");
+    }
+
+    #[test]
+    fn fonts_that_can_change_are_read_and_the_rest_mapped() {
+        use std::io::Write as _;
+        let mut writable = tempfile::NamedTempFile::new().unwrap();
+        writable.write_all(b"font bytes").unwrap();
+        let bytes = load(writable.path()).unwrap();
+        assert!(matches!(bytes, FontBytes::Read(_)));
+        assert_eq!(bytes.as_ref(), b"font bytes");
+        match std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") {
+            Some(font) => assert!(matches!(load(Path::new(&font)), Some(FontBytes::Mapped(_)))),
+            None => eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset"),
+        }
+        assert!(load(&writable.path().with_extension("missing")).is_none());
     }
 
     #[test]

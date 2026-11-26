@@ -369,27 +369,18 @@ fn before_emoji(
 }
 
 /// The platform's color emoji font, found by family name. Apple Color Emoji
-/// alone is close to 200 MB, so a font on a read-only volume is mapped
-/// rather than read; any other, such as one a user installed, is read, since
-/// a font manager could rewrite it in place under a live map.
+/// alone is close to 200 MB, so it stays mapped where nothing can rewrite it
+/// (see `ui_font::load`), and a font a user installed is read instead.
 fn color_emoji() -> Option<eframe::egui::FontData> {
     ["Apple Color Emoji", "Noto Color Emoji"]
         .into_iter()
         .find_map(|family| {
             let (path, index) = crate::ui_font::locate(family)?;
-            let mut file = std::fs::File::open(&path).ok()?;
-            let font: eframe::egui::epaint::text::Blob =
-                if crate::ui_font::immutable_font(&path, &file) {
-                    // SAFETY: nothing rewrites the file (see
-                    // `ui_font::immutable_font`), so the bytes stay valid for
-                    // as long as the process keeps the map.
-                    std::sync::Arc::new(unsafe { memmap2::Mmap::map(&file) }.ok()?)
-                } else {
-                    let mut bytes = Vec::new();
-                    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
-                    std::sync::Arc::new(bytes)
-                };
-            Some(eframe::egui::FontData::from_blob(font, index))
+            let font = crate::ui_font::load(&path)?;
+            Some(eframe::egui::FontData::from_blob(
+                std::sync::Arc::new(font),
+                index,
+            ))
         })
 }
 
