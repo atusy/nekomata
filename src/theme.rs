@@ -299,11 +299,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
                 .entry(FontFamily::Proportional)
                 .or_default()
                 .insert(0, "cjk".into());
-            fonts
-                .families
-                .entry(FontFamily::Monospace)
-                .or_default()
-                .push("cjk".into());
+            before_emoji(&mut fonts, FontFamily::Monospace, "cjk");
             break;
         }
     }
@@ -319,14 +315,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
                 .font_data
                 .insert("symbols".into(), FontData::from_owned(bytes).into());
             for kind in [FontFamily::Monospace, FontFamily::Proportional] {
-                // Ahead of egui's emoji fonts, which share symbols such as ⚙
-                // but draw them as emoji.
-                let family = fonts.families.entry(kind).or_default();
-                let at = family
-                    .iter()
-                    .position(|name| name == "NotoEmoji-Regular")
-                    .unwrap_or(family.len());
-                family.insert(at, "symbols".into());
+                before_emoji(&mut fonts, kind, "symbols");
             }
             break;
         }
@@ -349,12 +338,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
         // itself, such as typed input, shows emoji the text faces lack in
         // color too.
         for kind in [FontFamily::Monospace, FontFamily::Proportional] {
-            let family = fonts.families.entry(kind).or_default();
-            let at = family
-                .iter()
-                .position(|name| name == "NotoEmoji-Regular")
-                .unwrap_or(family.len());
-            family.insert(at, "color-emoji".into());
+            before_emoji(&mut fonts, kind, "color-emoji");
         }
         emoji.insert(0, "color-emoji".into());
     }
@@ -365,6 +349,22 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
         .families
         .insert(FontFamily::Name(EMOJI_FAMILY.into()), emoji);
     fonts
+}
+
+/// Adds `name` to `kind` after the faces added before it but ahead of egui's
+/// bundled emoji fonts, which share many symbols, such as ⚙, with system
+/// faces but draw them as emoji.
+fn before_emoji(
+    fonts: &mut eframe::egui::FontDefinitions,
+    kind: eframe::egui::FontFamily,
+    name: &str,
+) {
+    let family = fonts.families.entry(kind).or_default();
+    let at = family
+        .iter()
+        .position(|face| face == "NotoEmoji-Regular")
+        .unwrap_or(family.len());
+    family.insert(at, name.into());
 }
 
 /// The platform's color emoji font, found by family name and mapped rather
@@ -473,6 +473,25 @@ mod tests {
             family(FontFamily::Name(super::EMOJI_FAMILY.into()))[0],
             "color-emoji"
         );
+    }
+
+    #[test]
+    fn system_faces_precede_egui_emoji_fonts_in_both_families() {
+        use eframe::egui::FontFamily;
+        let fonts = super::chrome_fonts(None);
+        for kind in [FontFamily::Proportional, FontFamily::Monospace] {
+            let names = &fonts.families[&kind];
+            // The faces installed here, in the order each family must try them.
+            let order: Vec<_> = ["cjk", "symbols", "color-emoji", "NotoEmoji-Regular"]
+                .into_iter()
+                .filter(|name| fonts.font_data.contains_key(*name))
+                .map(|name| names.iter().position(|n| n == name))
+                .collect();
+            assert!(
+                order.iter().all(Option::is_some) && order.is_sorted(),
+                "{kind:?}: {names:?}"
+            );
+        }
     }
 
     #[test]
