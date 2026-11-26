@@ -51,8 +51,19 @@ pub(crate) fn locate(family: &str) -> Option<(PathBuf, u32)> {
 /// is writable and a store path can link elsewhere; nor is a read-only mount
 /// on Linux, where a bind mount can be read-only over a writable source.
 pub(crate) fn immutable_font(path: &std::path::Path, file: &std::fs::File) -> bool {
-    let in_nix_store = std::fs::canonicalize(path).is_ok_and(|real| real.starts_with("/nix/store"));
+    let in_nix_store = std::fs::canonicalize(path)
+        .is_ok_and(|real| real.starts_with("/nix/store") && same_file(file, &real));
     in_nix_store || (cfg!(target_os = "macos") && on_read_only_volume(file))
+}
+
+/// Whether `file` is the file at `path`, which a retargeted link may no
+/// longer lead to.
+fn same_file(file: &std::fs::File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    match (file.metadata(), std::fs::metadata(path)) {
+        (Ok(opened), Ok(found)) => (opened.dev(), opened.ino()) == (found.dev(), found.ino()),
+        _ => false,
+    }
 }
 
 fn on_read_only_volume(file: &std::fs::File) -> bool {
@@ -562,6 +573,9 @@ mod tests {
             let link = dir.path().join("emoji.ttf");
             std::os::unix::fs::symlink(&font, &link).unwrap();
             assert!(immutable_font(&link, &file), "{font:?}");
+            // The file opened must be the one the path now leads to, as a
+            // link can be retargeted between opening and checking.
+            assert!(!immutable_font(&link, writable.as_file()));
         } else {
             eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset");
         }
