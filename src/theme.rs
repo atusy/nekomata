@@ -213,7 +213,7 @@ pub(crate) fn presented(
         run.clear();
     };
     for cluster in text.graphemes(true) {
-        let emoji = has_emoji_presentation(cluster);
+        let emoji = has_emoji_presentation(cluster) || is_keycap(cluster);
         if emoji != run_is_emoji {
             flush(&mut job, &mut run, run_is_emoji);
             run_is_emoji = emoji;
@@ -222,6 +222,18 @@ pub(crate) fn presented(
     }
     flush(&mut job, &mut run, run_is_emoji);
     job
+}
+
+/// Whether `cluster` is a keycap, such as 1️⃣, which Unicode lists as emoji
+/// even without the emoji presentation selector that
+/// `has_emoji_presentation` looks for; a text presentation selector keeps it
+/// text.
+fn is_keycap(cluster: &str) -> bool {
+    let mut chars = cluster.chars();
+    chars
+        .next()
+        .is_some_and(|base| base.is_ascii_digit() || base == '#' || base == '*')
+        && matches!(chars.as_str(), "\u{20E3}" | "\u{FE0F}\u{20E3}")
 }
 
 /// The height of a row of text-family faces at `size`, which titles laid out
@@ -782,6 +794,37 @@ mod tests {
                 (" ok", family(super::TEXT_FAMILY)),
             ],
             "an emoji presentation selector makes its whole cluster emoji"
+        );
+    }
+
+    #[test]
+    fn keycaps_are_emoji_with_or_without_a_selector() {
+        use eframe::egui::FontFamily;
+        let job = super::presented(
+            "1 1\u{20E3}#\u{FE0F}\u{20E3} *2\u{FE0E}\u{20E3}",
+            14.0,
+            21.0,
+            super::FG,
+        );
+        let sections: Vec<_> = job
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.font_id.family.clone(),
+                )
+            })
+            .collect();
+        let family = |name: &str| FontFamily::Name(name.into());
+        assert_eq!(
+            sections,
+            [
+                ("1 ", family(super::TEXT_FAMILY)),
+                ("1\u{20E3}#\u{FE0F}\u{20E3}", family(super::EMOJI_FAMILY)),
+                (" *2\u{FE0E}\u{20E3}", family(super::TEXT_FAMILY)),
+            ],
+            "a text presentation selector keeps a keycap text"
         );
     }
 
