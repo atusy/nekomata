@@ -94,9 +94,8 @@ dialogs. It never affects terminal text.
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
   built-in font. A configured family leads proportional UI text and the
   default faces remain its fallbacks.
-- Emoji are drawn in color with `/System/Library/Fonts/Apple Color Emoji.ttc`
-  on macOS or `/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf` on Linux,
-  when present. In tab titles and the session picker, which show text that
+- Emoji are drawn in color with the installed Apple Color Emoji or Noto Color
+  Emoji family, found through the OS font matcher, when present. In tab titles and the session picker, which show text that
   programs set, each character takes its Unicode default presentation: a
   symbol that defaults to text, such as the `✳` Claude Code puts before its
   titles, is drawn in the text's color with egui's bundled monochrome emoji

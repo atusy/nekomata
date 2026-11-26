@@ -31,11 +31,17 @@ pub fn default_size_px() -> f32 {
 /// the app is created opening the window has already paid it, so this
 /// does not wait on it there.
 pub fn find(family: &str) -> Option<Face> {
-    let (path, index) = select(&platform::candidates(family), family)?;
+    let (path, index) = locate(family)?;
     Some(Face {
         bytes: std::fs::read(path).ok()?,
         index,
     })
+}
+
+/// The file and face index of the face [`find`] would read, for a caller
+/// that maps the file instead, as for fonts too large to copy.
+pub(crate) fn locate(family: &str) -> Option<(PathBuf, u32)> {
+    select(&platform::candidates(family), family)
 }
 
 /// A face the platform matched to a family, before its file is read.
@@ -442,6 +448,14 @@ mod tests {
             japanese.map(|face| face.index),
             english.map(|face| face.index)
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn coretext_locates_a_color_emoji_font_without_reading_it() {
+        // A face without Latin letters still matches its family.
+        let (path, _) = locate("Apple Color Emoji").unwrap();
+        assert_eq!(path.file_name().unwrap(), "Apple Color Emoji.ttc");
     }
 
     #[test]

@@ -348,27 +348,24 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
     fonts
 }
 
-/// The platform's color emoji font, mapped rather than read: Apple Color
-/// Emoji alone is close to 200 MB.
+/// The platform's color emoji font, found by family name and mapped rather
+/// than read: Apple Color Emoji alone is close to 200 MB.
 fn color_emoji() -> Option<eframe::egui::FontData> {
-    for path in [
-        "/System/Library/Fonts/Apple Color Emoji.ttc",
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-    ] {
-        let Ok(file) = std::fs::File::open(path) else {
-            continue;
-        };
-        // SAFETY: installed fonts are not rewritten while mapped, as
-        // `ui_font` already relies on.
-        let Ok(map) = (unsafe { memmap2::Mmap::map(&file) }) else {
-            continue;
-        };
-        return Some(eframe::egui::FontData::from_blob(
-            std::sync::Arc::new(map),
-            0,
-        ));
-    }
-    None
+    ["Apple Color Emoji", "Noto Color Emoji"]
+        .into_iter()
+        .find_map(|family| {
+            let (path, index) = crate::ui_font::locate(family)?;
+            let file = std::fs::File::open(path).ok()?;
+            // SAFETY: installed fonts are not rewritten while mapped; a
+            // truncation would fault whichever later frame rasterizes from
+            // it. The map lives as long as the process, as the system font
+            // fallback's maps of the same files do.
+            let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
+            Some(eframe::egui::FontData::from_blob(
+                std::sync::Arc::new(map),
+                index,
+            ))
+        })
 }
 
 #[cfg(test)]
