@@ -44,16 +44,13 @@ pub(crate) fn locate(family: &str) -> Option<(PathBuf, u32)> {
     select(&platform::candidates(family), family)
 }
 
-/// Whether nothing rewrites `file`, opened from `path`, while the system
-/// runs: the file `path` leads to is in the Nix store, whose paths never
-/// change once built, or it is on macOS's sealed system volume. A path alone
-/// is not enough, as `/System/Volumes/Data` is writable and a store path can
-/// link elsewhere; nor is a read-only mount, which can be a network share or,
-/// on Linux, a read-only bind mount over a writable source.
-pub(crate) fn immutable_font(path: &std::path::Path, file: &std::fs::File) -> bool {
-    let in_nix_store = std::fs::canonicalize(path)
-        .is_ok_and(|real| real.starts_with("/nix/store") && same_file(file, &real));
-    in_nix_store || (cfg!(target_os = "macos") && on_sealed_system_volume(file))
+/// Whether nothing rewrites `file` while the system runs, which holds for
+/// fonts on macOS's sealed system volume. Neither a path nor a read-only mount
+/// proves it: `/System/Volumes/Data` is writable, a read-only mount can be a
+/// network share or a bind mount over a writable source, and a Nix store
+/// path can be made writable by the store's owner.
+fn immutable_font(file: &std::fs::File) -> bool {
+    cfg!(target_os = "macos") && on_sealed_system_volume(file)
 }
 
 /// Whether `file` is on the volume mounted read-only at `/`, which on macOS is
@@ -71,29 +68,6 @@ fn on_sealed_system_volume(file: &std::fs::File) -> bool {
         }
         _ => false,
     }
-}
-
-/// Whether `file` is the file at `path`, which a retargeted link may no
-/// longer lead to.
-fn same_file(file: &std::fs::File, path: &Path) -> bool {
-    std::fs::File::open(path).is_ok_and(|found| identical(identity(file), identity(&found)))
-}
-
-/// Whether two identities are known and equal; failed lookups match nothing.
-fn identical<T: PartialEq>(a: Option<T>, b: Option<T>) -> bool {
-    matches!((a, b), (Some(a), Some(b)) if a == b)
-}
-
-/// What identifies an open file across volumes: the device number alone does
-/// not on APFS, so the file system ID joins it and the inode.
-fn identity(file: &std::fs::File) -> Option<(u64, u64, libc::c_ulong)> {
-    use std::os::unix::fs::MetadataExt as _;
-    let metadata = file.metadata().ok()?;
-    Some((
-        metadata.dev(),
-        metadata.ino(),
-        volume(file)?.f_fsid as libc::c_ulong,
-    ))
 }
 
 /// The file system `file` is on, as `fstatvfs` reports it.
@@ -127,7 +101,7 @@ impl AsRef<[u8]> for FontBytes {
 /// The bytes of the font file at `path`; see [`FontBytes`].
 pub(crate) fn load(path: &Path) -> Option<FontBytes> {
     let mut file = std::fs::File::open(path).ok()?;
-    if immutable_font(path, &file) {
+    if immutable_font(&file) {
         // SAFETY: nothing rewrites the file (see `immutable_font`), so the
         // bytes stay valid for as long as the map lives.
         return unsafe { memmap2::Mmap::map(&file) }
@@ -578,71 +552,29 @@ mod tests {
     }
 
     #[test]
-    fn only_fonts_nothing_rewrites_are_kept_mapped() {
-        use std::path::Path;
-        let writable = tempfile::NamedTempFile::new().unwrap();
-        assert!(
-            !immutable_font(writable.path(), writable.as_file()),
-            "a font on a writable volume can be rewritten under a map"
-        );
-        for path in [
-            "/nix/store/../home/me/.local/share/fonts/NotoColorEmoji.ttf",
-            "relative/nix/store/NotoColorEmoji.ttf",
-        ] {
-            assert!(
-                !immutable_font(Path::new(path), writable.as_file()),
-                "{path}"
-            );
-        }
-        // Where a path leads decides, not how it reads: a store path can be a
-        // link to a writable file, and a link elsewhere can lead into the
-        // store.
-        if let Some(font) = std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") {
-            let file = std::fs::File::open(&font).unwrap();
-            let dir = tempfile::tempdir().unwrap();
-            let link = dir.path().join("emoji.ttf");
-            std::os::unix::fs::symlink(&font, &link).unwrap();
-            assert!(immutable_font(&link, &file), "{font:?}");
-            // The file opened must be the one the path now leads to, as a
-            // link can be retargeted between opening and checking.
-            assert!(!immutable_font(&link, writable.as_file()));
-        } else {
-            eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset");
-        }
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
-        let (path, _) = locate("Apple Color Emoji").unwrap();
-        let file = std::fs::File::open(&path).unwrap();
-        assert!(immutable_font(&path, &file), "{path:?}");
-    }
-
-    #[test]
-    fn fonts_that_can_change_are_read_and_the_rest_mapped() {
+    fn fonts_that_can_change_are_read() {
         use std::io::Write as _;
         let mut writable = tempfile::NamedTempFile::new().unwrap();
         writable.write_all(b"font bytes").unwrap();
         let bytes = load(writable.path()).unwrap();
         assert!(matches!(bytes, FontBytes::Read(_)));
         assert_eq!(bytes.as_ref(), b"font bytes");
+        // A store path can be made writable or lie under a writable mount, so
+        // only the sealed system volume proves a font cannot change.
         match std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") {
-            Some(font) => assert!(matches!(load(Path::new(&font)), Some(FontBytes::Mapped(_)))),
+            Some(font) => assert!(matches!(load(Path::new(&font)), Some(FontBytes::Read(_)))),
             None => eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset"),
         }
         assert!(load(&writable.path().with_extension("missing")).is_none());
     }
 
     #[test]
-    fn files_whose_identity_is_unknown_are_never_the_same() {
-        let known = Some((1, 2, 3));
-        assert!(identical(known, known));
-        assert!(!identical(known, Some((1, 2, 4))));
-        assert!(!identical(known, None));
+    #[cfg(target_os = "macos")]
+    fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
+        let (path, _) = locate("Apple Color Emoji").unwrap();
         assert!(
-            !identical::<(u64, u64, u64)>(None, None),
-            "two failed lookups prove nothing"
+            matches!(load(&path), Some(FontBytes::Mapped(_))),
+            "{path:?}"
         );
     }
 
