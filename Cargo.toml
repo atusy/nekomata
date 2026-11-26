@@ -33,6 +33,7 @@ libc = "0.2"
 memmap2 = "0.9"
 swash = "0.2"
 unicode-segmentation = "1"
+unicode-properties = { version = "0.1.4", default-features = false, features = ["emoji"] }
 toml = "1"
 gethostname = "1"
 getrandom = "0.4"

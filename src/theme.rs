@@ -209,7 +209,8 @@ pub(crate) fn presented(
     let mut run_start = 0;
     let mut run_is_emoji = false;
     for (at, cluster) in text.grapheme_indices(true) {
-        let emoji = has_emoji_presentation(cluster) || is_keycap(cluster);
+        let emoji =
+            has_emoji_presentation(cluster) || is_keycap(cluster) || is_emoji_zwj_sequence(cluster);
         if emoji != run_is_emoji {
             if at > run_start {
                 let format = if run_is_emoji {
@@ -244,6 +245,27 @@ fn is_keycap(cluster: &str) -> bool {
         .next()
         .is_some_and(|base| base.is_ascii_digit() || base == '#' || base == '*')
         && matches!(chars.as_str(), "\u{20E3}" | "\u{FE0F}\u{20E3}")
+}
+
+/// Whether `cluster` joins emoji with zero width joiners, such as 👁‍🗨,
+/// which Unicode lists as emoji even when the symbols joined default to text
+/// and no emoji presentation selector follows them. A script's own joiner
+/// inside a word, as in Devanagari, joins no emoji, and a text presentation
+/// selector keeps the sequence text.
+fn is_emoji_zwj_sequence(cluster: &str) -> bool {
+    use unicode_properties::UnicodeEmoji as _;
+    const ZWJ: char = '\u{200D}';
+    let mut joined = 0;
+    cluster.contains(ZWJ)
+        && !cluster.contains('\u{FE0E}')
+        && cluster
+            .chars()
+            .filter(|c| !matches!(*c, ZWJ | '\u{FE0F}'))
+            .all(|c| {
+                joined += 1;
+                !c.is_ascii() && c.is_emoji_char()
+            })
+        && joined >= 2
 }
 
 /// The height of a row of text-family faces at `size`, which titles laid out
@@ -804,6 +826,32 @@ mod tests {
                 (" ok", family(super::TEXT_FAMILY)),
             ],
             "an emoji presentation selector makes its whole cluster emoji"
+        );
+    }
+
+    #[test]
+    fn emoji_joined_without_selectors_are_emoji() {
+        use eframe::egui::FontFamily;
+        let job = super::presented("👁 👁\u{200D}🗨⛹\u{200D}♀ क्\u{200D}ष", 14.0, 21.0, super::FG);
+        let sections: Vec<_> = job
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.font_id.family.clone(),
+                )
+            })
+            .collect();
+        let family = |name: &str| FontFamily::Name(name.into());
+        assert_eq!(
+            sections,
+            [
+                ("👁 ", family(super::TEXT_FAMILY)),
+                ("👁\u{200D}🗨⛹\u{200D}♀", family(super::EMOJI_FAMILY)),
+                (" क्\u{200D}ष", family(super::TEXT_FAMILY)),
+            ],
+            "a lone text-default symbol stays text, and so does a script's own joiner"
         );
     }
 
