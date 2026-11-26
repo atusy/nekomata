@@ -581,6 +581,16 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
+        let (path, _) = select(
+            &platform::candidates("Apple Color Emoji"),
+            "Apple Color Emoji",
+        )
+        .unwrap();
+        if !immutable_font(&std::fs::File::open(&path).unwrap()) {
+            // A Mac whose system volume is not sealed reads the font instead.
+            eprintln!("skipped: {path:?} is not on a mounted snapshot here");
+            return;
+        }
         let chosen = locate("Apple Color Emoji").unwrap();
         assert!(matches!(*chosen.bytes, FontBytes::Mapped(_)));
     }
