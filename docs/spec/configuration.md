@@ -106,13 +106,12 @@ dialogs. It never affects terminal text.
   fonts.
 - Tab titles and session picker rows show text that programs set, so each
   grapheme cluster there takes the presentation Unicode gives it, including
-  through an emoji or text presentation selector: emoji are drawn in color
-  when a color emoji font is present, otherwise with the bundled monochrome
-  emoji fonts, and a symbol that defaults to text, such as the `✳` Claude
-  Code puts before its titles, is drawn in the text's color by the first face
-  that has it, or the bundled monochrome emoji fonts. Elsewhere, such as in
-  typed text, a symbol the text faces lack is drawn in color when the color
-  emoji font has it.
+  through an emoji or text presentation selector. An emoji tries the color
+  emoji font first, when one was found, then the faces other text uses; a
+  symbol that defaults to text, such as the `✳` Claude Code puts before its
+  titles, skips the color emoji font, so the first other face that has it
+  draws it in the text's color. Elsewhere, such as in typed text, a symbol
+  the text faces lack is drawn in color when the color emoji font has it.
 - A character none of these faces has is drawn with an installed font that
   has it, which can be a color font even for a symbol that defaults to text.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
