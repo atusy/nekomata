@@ -179,22 +179,22 @@ pub fn presented(text: &str, size: f32, color: Color32) -> eframe::egui::text::L
     let mut job = eframe::egui::text::LayoutJob::default();
     let mut run = String::new();
     let mut run_is_emoji = false;
+    let format = |family: &str| TextFormat {
+        // Each family's line height comes from its first face, and the color
+        // emoji font's is shorter than the text faces'; centering keeps emoji
+        // where a single family would place them instead of dropping them to
+        // the row's bottom.
+        valign: eframe::egui::Align::Center,
+        ..TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color)
+    };
     let flush = |job: &mut eframe::egui::text::LayoutJob, run: &mut String, emoji: bool| {
         if run.is_empty() {
             return;
         }
-        let family = if emoji { EMOJI_FAMILY } else { TEXT_FAMILY };
         job.append(
             run,
             0.0,
-            TextFormat {
-                // Each family's line height comes from its first face, and
-                // the color emoji font's is shorter than the text faces';
-                // centering keeps emoji where a single family would place
-                // them instead of dropping them to the row's bottom.
-                valign: eframe::egui::Align::Center,
-                ..TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color)
-            },
+            format(if emoji { EMOJI_FAMILY } else { TEXT_FAMILY }),
         );
         run.clear();
     };
@@ -217,11 +217,16 @@ pub fn tab_button(
 ) -> eframe::egui::Response {
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let color = if selected { FG } else { TAB_INACTIVE_FG };
-    let galley = ui.painter().layout_job(presented(
-        title,
-        TextStyle::Button.resolve(ui.style()).size,
-        color,
-    ));
+    let size = TextStyle::Button.resolve(ui.style()).size;
+    let mut job = presented(title, size, color);
+    // A title that is empty or only emoji is as tall as any other.
+    job.first_row_min_height = ui.fonts_mut(|fonts| {
+        fonts.row_height(&egui::FontId::new(
+            size,
+            egui::FontFamily::Name(TEXT_FAMILY.into()),
+        ))
+    });
+    let galley = ui.painter().layout_job(job);
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response
@@ -563,6 +568,23 @@ mod tests {
                 fonts.has_glyphs(&egui::FontId::proportional(14.0), "✳ Kakehashi")
             }));
         });
+    }
+
+    #[test]
+    fn titles_without_text_keep_the_tab_as_tall_as_its_neighbors() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        let mut heights = Vec::new();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            for title in ["", "😀", "nekomata"] {
+                heights.push(super::tab_button(ui, title, false).rect.height());
+            }
+        });
+        assert!(
+            heights.iter().all(|height| *height == heights[2]),
+            "a title without text, or with only emoji, must not shrink its tab: {heights:?}"
+        );
     }
 
     #[test]
