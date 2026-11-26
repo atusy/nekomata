@@ -562,11 +562,14 @@ mod tests {
         use eframe::egui;
         let ctx = egui::Context::default();
         ctx.set_fonts(super::chrome_fonts(None));
+        let family = |name: &str| egui::FontId::new(14.0, egui::FontFamily::Name(name.into()));
         let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
-            // Claude Code titles an idle session "✳ <topic>".
-            assert!(ui.fonts_mut(|fonts| {
-                fonts.has_glyphs(&egui::FontId::proportional(14.0), "✳ Kakehashi")
-            }));
+            // Claude Code titles an idle session "✳ <topic>". Tabs lay its
+            // text out in the text family, which has no color emoji font.
+            assert!(
+                ui.fonts_mut(|fonts| fonts.has_glyphs(&family(super::TEXT_FAMILY), "✳ Kakehashi"))
+            );
+            assert!(ui.fonts_mut(|fonts| fonts.has_glyphs(&family(super::EMOJI_FAMILY), "😀")));
         });
     }
 
