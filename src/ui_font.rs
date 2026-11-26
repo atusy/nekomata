@@ -44,6 +44,28 @@ pub(crate) fn locate(family: &str) -> Option<(PathBuf, u32)> {
     select(&platform::candidates(family), family)
 }
 
+/// Whether nothing rewrites `file`, opened from `path`, while the system
+/// runs: the file `path` leads to is in the Nix store, whose paths never
+/// change once built, or it is on macOS's sealed system volume, which is
+/// mounted read-only. A path alone is not enough, as `/System/Volumes/Data`
+/// is writable and a store path can link elsewhere; nor is a read-only mount
+/// on Linux, where a bind mount can be read-only over a writable source.
+pub(crate) fn immutable_font(path: &std::path::Path, file: &std::fs::File) -> bool {
+    let in_nix_store = std::fs::canonicalize(path).is_ok_and(|real| real.starts_with("/nix/store"));
+    in_nix_store || (cfg!(target_os = "macos") && on_read_only_volume(file))
+}
+
+fn on_read_only_volume(file: &std::fs::File) -> bool {
+    use std::os::fd::AsRawFd as _;
+    let mut volume = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `file` is open for the call and `volume` is written in full on
+    // success, the only case in which it is read.
+    unsafe {
+        libc::fstatvfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0
+            && volume.assume_init().f_flag & libc::ST_RDONLY != 0
+    }
+}
+
 /// A face the platform matched to a family, before its file is read.
 #[derive(Debug, Clone, PartialEq)]
 struct Candidate {
@@ -486,6 +508,45 @@ mod tests {
         // A face without Latin letters still matches its family.
         let (path, _) = locate("Apple Color Emoji").unwrap();
         assert_eq!(path.file_name().unwrap(), "Apple Color Emoji.ttc");
+    }
+
+    #[test]
+    fn only_fonts_nothing_rewrites_are_kept_mapped() {
+        use std::path::Path;
+        let writable = tempfile::NamedTempFile::new().unwrap();
+        assert!(
+            !immutable_font(writable.path(), writable.as_file()),
+            "a font on a writable volume can be rewritten under a map"
+        );
+        for path in [
+            "/nix/store/../home/me/.local/share/fonts/NotoColorEmoji.ttf",
+            "relative/nix/store/NotoColorEmoji.ttf",
+        ] {
+            assert!(
+                !immutable_font(Path::new(path), writable.as_file()),
+                "{path}"
+            );
+        }
+        // Where a path leads decides, not how it reads: a store path can be a
+        // link to a writable file, and a link elsewhere can lead into the
+        // store.
+        if let Some(font) = std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") {
+            let file = std::fs::File::open(&font).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let link = dir.path().join("emoji.ttf");
+            std::os::unix::fs::symlink(&font, &link).unwrap();
+            assert!(immutable_font(&link, &file), "{font:?}");
+        } else {
+            eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset");
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
+        let (path, _) = locate("Apple Color Emoji").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        assert!(immutable_font(&path, &file), "{path:?}");
     }
 
     #[test]
