@@ -187,7 +187,14 @@ pub fn presented(text: &str, size: f32, color: Color32) -> eframe::egui::text::L
         job.append(
             run,
             0.0,
-            TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color),
+            TextFormat {
+                // Each family's line height comes from its first face, and
+                // the color emoji font's is shorter than the text faces';
+                // centering keeps emoji where a single family would place
+                // them instead of dropping them to the row's bottom.
+                valign: eframe::egui::Align::Center,
+                ..TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color)
+            },
         );
         run.clear();
     };
@@ -620,6 +627,38 @@ mod tests {
              presentation, like the ✳ Claude Code puts before its titles, \
              follows the tab's text color"
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn emoji_in_presented_titles_sit_where_plain_text_places_them() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            let title = "H😀確";
+            let plain = ui.painter().layout_no_wrap(
+                title.into(),
+                egui::FontId::proportional(14.0),
+                egui::Color32::WHITE,
+            );
+            let presented =
+                ui.painter()
+                    .layout_job(super::presented(title, 14.0, egui::Color32::WHITE));
+            let tops = |galley: &egui::Galley| {
+                galley.rows[0]
+                    .glyphs
+                    .iter()
+                    .map(|glyph| (glyph.chr, glyph.pos.y))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                tops(&presented),
+                tops(&plain),
+                "the color emoji font's shorter line must not push emoji down"
+            );
+            assert_eq!(presented.size().y, plain.size().y);
+        });
     }
 
     #[test]
