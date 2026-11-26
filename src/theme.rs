@@ -420,6 +420,13 @@ mod tests {
             fonts.families[&FontFamily::Monospace],
             default.families[&FontFamily::Monospace]
         );
+        // Titles laid out by presentation use the configured face too; only
+        // the color emoji font may come before it, for emoji.
+        let named = |name: &str| &fonts.families[&FontFamily::Name(name.into())];
+        assert_eq!(named(super::TEXT_FAMILY)[0], "configured");
+        let emoji = named(super::EMOJI_FAMILY);
+        let lead = usize::from(emoji[0] == "color-emoji");
+        assert_eq!(emoji[lead], "configured");
     }
 
     #[test]
