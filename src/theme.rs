@@ -177,7 +177,7 @@ const TEXT_FAMILY: &str = "text";
 ///
 /// Every row is `line_height` tall, usually [`title_line_height`], whatever
 /// the faces drawing it, so emoji neither heighten nor shorten it.
-pub fn presented(
+pub(crate) fn presented(
     text: &str,
     size: f32,
     line_height: f32,
@@ -227,7 +227,7 @@ pub fn presented(
 
 /// The height of a row of text-family faces at `size`, which titles laid out
 /// by [`presented`] keep whatever emoji they hold.
-pub fn title_line_height(ui: &eframe::egui::Ui, size: f32) -> f32 {
+pub(crate) fn title_line_height(ui: &eframe::egui::Ui, size: f32) -> f32 {
     use eframe::egui::{FontFamily, FontId};
     ui.fonts_mut(|fonts| fonts.row_height(&FontId::new(size, FontFamily::Name(TEXT_FAMILY.into()))))
 }
