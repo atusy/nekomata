@@ -46,34 +46,59 @@ pub(crate) fn locate(family: &str) -> Option<(PathBuf, u32)> {
 
 /// Whether nothing rewrites `file`, opened from `path`, while the system
 /// runs: the file `path` leads to is in the Nix store, whose paths never
-/// change once built, or it is on macOS's sealed system volume, which is
-/// mounted read-only. A path alone is not enough, as `/System/Volumes/Data`
-/// is writable and a store path can link elsewhere; nor is a read-only mount
-/// on Linux, where a bind mount can be read-only over a writable source.
+/// change once built, or it is on macOS's sealed system volume. A path alone
+/// is not enough, as `/System/Volumes/Data` is writable and a store path can
+/// link elsewhere; nor is a read-only mount, which can be a network share or,
+/// on Linux, a read-only bind mount over a writable source.
 pub(crate) fn immutable_font(path: &std::path::Path, file: &std::fs::File) -> bool {
     let in_nix_store = std::fs::canonicalize(path)
         .is_ok_and(|real| real.starts_with("/nix/store") && same_file(file, &real));
-    in_nix_store || (cfg!(target_os = "macos") && on_read_only_volume(file))
+    in_nix_store || (cfg!(target_os = "macos") && on_sealed_system_volume(file))
+}
+
+/// Whether `file` is on the volume mounted read-only at `/`, which on macOS is
+/// the sealed system volume. Other read-only mounts, such as a network share,
+/// can still change on the server.
+fn on_sealed_system_volume(file: &std::fs::File) -> bool {
+    let Ok(root) = std::fs::File::open("/") else {
+        return false;
+    };
+    match (volume(file), volume(&root)) {
+        // APFS gives every volume of a container the same device number, so
+        // only the file system ID tells the system volume from the data one.
+        (Some(font), Some(system)) => {
+            font.f_fsid == system.f_fsid && system.f_flag & libc::ST_RDONLY != 0
+        }
+        _ => false,
+    }
 }
 
 /// Whether `file` is the file at `path`, which a retargeted link may no
 /// longer lead to.
 fn same_file(file: &std::fs::File, path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-    match (file.metadata(), std::fs::metadata(path)) {
-        (Ok(opened), Ok(found)) => (opened.dev(), opened.ino()) == (found.dev(), found.ino()),
-        _ => false,
-    }
+    std::fs::File::open(path).is_ok_and(|found| identity(file) == identity(&found))
 }
 
-fn on_read_only_volume(file: &std::fs::File) -> bool {
+/// What identifies an open file across volumes: the device number alone does
+/// not on APFS, so the file system ID joins it and the inode.
+fn identity(file: &std::fs::File) -> Option<(u64, u64, libc::c_ulong)> {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = file.metadata().ok()?;
+    Some((
+        metadata.dev(),
+        metadata.ino(),
+        volume(file)?.f_fsid as libc::c_ulong,
+    ))
+}
+
+/// The file system `file` is on, as `fstatvfs` reports it.
+fn volume(file: &std::fs::File) -> Option<libc::statvfs> {
     use std::os::fd::AsRawFd as _;
     let mut volume = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     // SAFETY: `file` is open for the call and `volume` is written in full on
     // success, the only case in which it is read.
     unsafe {
-        libc::fstatvfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0
-            && volume.assume_init().f_flag & libc::ST_RDONLY != 0
+        (libc::fstatvfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0).then(|| volume.assume_init())
     }
 }
 
