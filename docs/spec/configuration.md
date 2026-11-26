@@ -109,8 +109,9 @@ dialogs. It never affects terminal text.
   through an emoji or text presentation selector. An emoji tries the color
   emoji font first, when one was found, then the faces other text uses; a
   symbol that defaults to text, such as the `✳` Claude Code puts before its
-  titles, skips the color emoji font, so the first other face that has it
-  draws it in the text's color. Elsewhere, such as in typed text, a symbol
+  titles, skips that color emoji font, so the first other face that has it
+  draws it, in the text's color unless that face is itself a color font,
+  such as a color emoji family configured as the UI font. Elsewhere, such as in typed text, a symbol
   the text faces lack is drawn in color when the color emoji font has it.
   A tab shows control characters in its title, such as a newline, as
   spaces, so the title stays on one row and the tab as tall as the others;
