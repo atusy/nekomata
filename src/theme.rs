@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn presented_text_gives_emoji_clusters_the_emoji_family() {
         use eframe::egui::FontFamily;
-        let job = super::presented("✳ 😀👍🏻 ok", 14.0, super::FG);
+        let job = super::presented("✳ ✳\u{FE0F}😀 ok", 14.0, super::FG);
         let sections: Vec<_> = job
             .sections
             .iter()
@@ -643,10 +643,10 @@ mod tests {
             sections,
             [
                 ("✳ ", family(super::TEXT_FAMILY)),
-                ("😀👍🏻", family(super::EMOJI_FAMILY)),
+                ("✳\u{FE0F}😀", family(super::EMOJI_FAMILY)),
                 (" ok", family(super::TEXT_FAMILY)),
             ],
-            "a skin-tone sequence stays one emoji cluster"
+            "an emoji presentation selector makes its whole cluster emoji"
         );
     }
 
