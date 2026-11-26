@@ -174,20 +174,31 @@ const TEXT_FAMILY: &str = "text";
 ///
 /// For text that comes from programs, such as terminal titles; egui itself
 /// picks a font per character regardless of presentation.
-pub fn presented(text: &str, size: f32, color: Color32) -> eframe::egui::text::LayoutJob {
+///
+/// Every row is `line_height` tall, usually [`title_line_height`], whatever
+/// the faces drawing it, so emoji neither heighten nor shorten it.
+pub fn presented(
+    text: &str,
+    size: f32,
+    line_height: f32,
+    color: Color32,
+) -> eframe::egui::text::LayoutJob {
     use eframe::egui::{FontFamily, FontId, TextFormat, epaint::text::has_emoji_presentation};
     use unicode_segmentation::UnicodeSegmentation as _;
     let mut job = eframe::egui::text::LayoutJob {
         break_on_newline: false,
+        // Text without sections, such as an empty title, still takes a row.
+        first_row_min_height: line_height,
         ..Default::default()
     };
     let mut run = String::new();
     let mut run_is_emoji = false;
     let format = |family: &str| TextFormat {
-        // Each family's line height comes from its first face, and the color
-        // emoji font's is shorter than the text faces'; centering keeps emoji
-        // where a single family would place them instead of dropping them to
-        // the row's bottom.
+        // Each family's line height would otherwise come from its first face,
+        // and the color emoji font's differs from the text faces'. One height
+        // for every section, with each centered in it, keeps emoji where a
+        // single family would place them.
+        line_height: Some(line_height),
         valign: eframe::egui::Align::Center,
         ..TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color)
     };
@@ -214,6 +225,13 @@ pub fn presented(text: &str, size: f32, color: Color32) -> eframe::egui::text::L
     job
 }
 
+/// The height of a row of text-family faces at `size`, which titles laid out
+/// by [`presented`] keep whatever emoji they hold.
+pub fn title_line_height(ui: &eframe::egui::Ui, size: f32) -> f32 {
+    use eframe::egui::{FontFamily, FontId};
+    ui.fonts_mut(|fonts| fonts.row_height(&FontId::new(size, FontFamily::Name(TEXT_FAMILY.into()))))
+}
+
 pub fn tab_button(
     ui: &mut eframe::egui::Ui,
     title: &str,
@@ -222,15 +240,9 @@ pub fn tab_button(
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let color = if selected { FG } else { TAB_INACTIVE_FG };
     let size = TextStyle::Button.resolve(ui.style()).size;
-    let mut job = presented(title, size, color);
-    // A title that is empty or only emoji is as tall as any other.
-    job.first_row_min_height = ui.fonts_mut(|fonts| {
-        fonts.row_height(&egui::FontId::new(
-            size,
-            egui::FontFamily::Name(TEXT_FAMILY.into()),
-        ))
-    });
-    let galley = ui.painter().layout_job(job);
+    let galley =
+        ui.painter()
+            .layout_job(presented(title, size, title_line_height(ui, size), color));
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response
@@ -629,9 +641,32 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn an_emoji_does_not_heighten_a_tab_under_a_short_configured_face() {
+        use eframe::egui;
+        // Helvetica's line is shorter than the color emoji font's.
+        let face = crate::ui_font::find("Helvetica").unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(Some(face)));
+        let mut heights = Vec::new();
+        for _ in 0..2 {
+            heights.clear();
+            let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                for title in ["abc", "abc 😀", "😀", ""] {
+                    heights.push(super::tab_button(ui, title, false).rect.height());
+                }
+            });
+        }
+        assert!(
+            heights.iter().all(|height| *height == heights[0]),
+            "{heights:?}"
+        );
+    }
+
+    #[test]
     fn presented_text_gives_emoji_clusters_the_emoji_family() {
         use eframe::egui::FontFamily;
-        let job = super::presented("✳ ✳\u{FE0F}😀 ok", 14.0, super::FG);
+        let job = super::presented("✳ ✳\u{FE0F}😀 ok", 14.0, 21.0, super::FG);
         let sections: Vec<_> = job
             .sections
             .iter()
@@ -715,9 +750,12 @@ mod tests {
                 egui::FontId::proportional(14.0),
                 egui::Color32::WHITE,
             );
-            let presented =
-                ui.painter()
-                    .layout_job(super::presented(title, 14.0, egui::Color32::WHITE));
+            let presented = ui.painter().layout_job(super::presented(
+                title,
+                14.0,
+                super::title_line_height(ui, 14.0),
+                egui::Color32::WHITE,
+            ));
             let tops = |galley: &egui::Galley| {
                 galley.rows[0]
                     .glyphs

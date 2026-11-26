@@ -16,10 +16,12 @@ fn row(
     cols: impl std::fmt::Display,
     rows: impl std::fmt::Display,
     size: f32,
+    line_height: f32,
 ) -> egui::text::LayoutJob {
     crate::theme::presented(
         &format!("{}  ·  {title}  ·  {cols}×{rows}", &id[..8]),
         size,
+        line_height,
         egui::Color32::PLACEHOLDER,
     )
 }
@@ -99,6 +101,7 @@ impl SessionPicker {
                         egui::ScrollArea::vertical()
                             .max_height(360.0)
                             .show(ui, |ui| {
+                                let size = egui::TextStyle::Button.resolve(ui.style()).size;
                                 for session in sessions {
                                     let id = format!("{:032x}", session.id);
                                     let label = row(
@@ -106,7 +109,11 @@ impl SessionPicker {
                                         session.title.as_deref().unwrap_or("Terminal"),
                                         session.dims.cols,
                                         session.dims.rows,
-                                        egui::TextStyle::Button.resolve(ui.style()).size,
+                                        size,
+                                        // The spacing egui adds to plain
+                                        // label text, which rows were before.
+                                        crate::theme::title_line_height(ui, size)
+                                            + ui.spacing().extra_text_line_spacing,
                                     );
                                     if ui
                                         .selectable_label(false, label)
@@ -145,7 +152,7 @@ mod tests {
 
     #[test]
     fn rows_keep_emoji_in_titles_colored_and_the_rest_in_the_label_color() {
-        let job = row("0123456789abcdef", "✳ 😀", 80, 24, 14.0);
+        let job = row("0123456789abcdef", "✳ 😀", 80, 24, 14.0, 21.0);
         assert_eq!(job.text, "01234567  ·  ✳ 😀  ·  80×24");
         let emoji: Vec<_> = job
             .sections
@@ -213,6 +220,7 @@ mod tests {
                                             [section.byte_range.start.0..section.byte_range.end.0]
                                             .to_owned(),
                                         section.format.font_id.clone(),
+                                        section.format.line_height,
                                     )
                                 })
                                 .collect::<Vec<_>>(),
@@ -223,14 +231,18 @@ mod tests {
                 .flatten()
                 .collect();
         }
-        let size = egui::TextStyle::Button.resolve(&ctx.global_style()).size;
+        let style = ctx.global_style();
+        let size = egui::TextStyle::Button.resolve(&style).size;
         let font = |family: &str| egui::FontId::new(size, egui::FontFamily::Name(family.into()));
+        // As tall as the plain label text rows were, whatever the emoji.
+        let line = ctx.fonts_mut(|fonts| fonts.row_height(&font("text")))
+            + style.spacing.extra_text_line_spacing;
         assert_eq!(
             sections,
             [
-                ("00000000  ·  ✳ ".to_owned(), font("text")),
-                ("😀".to_owned(), font("emoji")),
-                ("  ·  80×24".to_owned(), font("text")),
+                ("00000000  ·  ✳ ".to_owned(), font("text"), Some(line)),
+                ("😀".to_owned(), font("emoji"), Some(line)),
+                ("  ·  80×24".to_owned(), font("text"), Some(line)),
             ]
         );
     }
