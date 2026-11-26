@@ -337,6 +337,15 @@ pub fn tab_button(
 /// monochrome emoji, and the text and emoji families that [`presented`]
 /// lays titles out in follow the same order without and with it first.
 pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::FontDefinitions {
+    chrome_fonts_with(primary, color_emoji())
+}
+
+/// [`chrome_fonts`] with `color` as the color emoji font, which tests pass
+/// to draw with a known one.
+fn chrome_fonts_with(
+    primary: Option<crate::ui_font::Face>,
+    color: Option<eframe::egui::FontData>,
+) -> eframe::egui::FontDefinitions {
     use eframe::egui::{FontData, FontDefinitions, FontFamily};
     let mut fonts = FontDefinitions::default();
     for path in [
@@ -387,7 +396,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
     }
     let text = fonts.families[&FontFamily::Proportional].clone();
     let mut emoji = text.clone();
-    if let Some(data) = color_emoji() {
+    if let Some(data) = color {
         fonts.font_data.insert("color-emoji".into(), data.into());
         // Ahead of the monochrome emoji, so that text egui lays out by
         // itself, such as typed input, shows emoji the text faces lack in
