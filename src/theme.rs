@@ -266,7 +266,9 @@ pub fn tab_button(
 
 /// Application fonts are independent of terminal configuration. A
 /// configured `primary` leads proportional text; the system faces stay as
-/// its fallbacks.
+/// its fallbacks. The color emoji font, when installed, precedes the
+/// monochrome emoji, and the text and emoji families that [`presented`]
+/// lays titles out in follow the same order without and with it first.
 pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::FontDefinitions {
     use eframe::egui::{FontData, FontDefinitions, FontFamily};
     let mut fonts = FontDefinitions::default();
