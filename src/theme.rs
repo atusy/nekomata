@@ -176,7 +176,10 @@ const TEXT_FAMILY: &str = "text";
 pub fn presented(text: &str, size: f32, color: Color32) -> eframe::egui::text::LayoutJob {
     use eframe::egui::{FontFamily, FontId, TextFormat, epaint::text::has_emoji_presentation};
     use unicode_segmentation::UnicodeSegmentation as _;
-    let mut job = eframe::egui::text::LayoutJob::default();
+    let mut job = eframe::egui::text::LayoutJob {
+        break_on_newline: false,
+        ..Default::default()
+    };
     let mut run = String::new();
     let mut run_is_emoji = false;
     let format = |family: &str| TextFormat {
@@ -571,19 +574,20 @@ mod tests {
     }
 
     #[test]
-    fn titles_without_text_keep_the_tab_as_tall_as_its_neighbors() {
+    fn every_title_keeps_its_tab_one_row_tall() {
         use eframe::egui;
         let ctx = egui::Context::default();
         ctx.set_fonts(super::chrome_fonts(None));
         let mut heights = Vec::new();
         let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
-            for title in ["", "😀", "nekomata"] {
+            for title in ["", "😀", "neko\nmata", "nekomata"] {
                 heights.push(super::tab_button(ui, title, false).rect.height());
             }
         });
         assert!(
-            heights.iter().all(|height| *height == heights[2]),
-            "a title without text, or with only emoji, must not shrink its tab: {heights:?}"
+            heights.iter().all(|height| *height == heights[3]),
+            "a title without text or with only emoji must not shrink its tab, \
+             nor a newline grow it: {heights:?}"
         );
     }
 
