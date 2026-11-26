@@ -367,28 +367,63 @@ fn before_emoji(
     family.insert(at, name.into());
 }
 
-/// The platform's color emoji font, found by family name and mapped rather
-/// than read: Apple Color Emoji alone is close to 200 MB.
+/// The platform's color emoji font, found by family name. Apple Color Emoji
+/// alone is close to 200 MB, so a font on a read-only volume is mapped
+/// rather than read; any other, such as one a user installed, is read, since
+/// a font manager could rewrite it in place under a live map.
 fn color_emoji() -> Option<eframe::egui::FontData> {
     ["Apple Color Emoji", "Noto Color Emoji"]
         .into_iter()
         .find_map(|family| {
             let (path, index) = crate::ui_font::locate(family)?;
-            let file = std::fs::File::open(path).ok()?;
-            // SAFETY: installed fonts are not rewritten while mapped; a
-            // truncation would fault whichever later frame rasterizes from
-            // it. The map lives as long as the process, as the system font
-            // fallback's maps of the same files do.
-            let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
-            Some(eframe::egui::FontData::from_blob(
-                std::sync::Arc::new(map),
-                index,
-            ))
+            let font: eframe::egui::epaint::text::Blob = if immutable_font(&path) {
+                let file = std::fs::File::open(&path).ok()?;
+                // SAFETY: nothing rewrites files on a read-only volume (see
+                // `immutable_font`), so the bytes stay valid for as long as
+                // the process keeps the map.
+                std::sync::Arc::new(unsafe { memmap2::Mmap::map(&file) }.ok()?)
+            } else {
+                std::sync::Arc::new(std::fs::read(&path).ok()?)
+            };
+            Some(eframe::egui::FontData::from_blob(font, index))
         })
+}
+
+/// Whether `path` lies on a volume nothing writes to while the system runs:
+/// macOS's sealed system volume, or the Nix store.
+fn immutable_font(path: &std::path::Path) -> bool {
+    use std::path::Component;
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|component| component == Component::ParentDir)
+        && (path.starts_with("/System") || path.starts_with("/nix/store"))
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_fonts_on_read_only_volumes_are_kept_mapped() {
+        use std::path::Path;
+        for (path, mapped) in [
+            ("/System/Library/Fonts/Apple Color Emoji.ttc", true),
+            (
+                "/nix/store/abc-noto-fonts-color-emoji/NotoColorEmoji.ttf",
+                true,
+            ),
+            ("/usr/share/fonts/noto/NotoColorEmoji.ttf", false),
+            ("/home/me/.local/share/fonts/NotoColorEmoji.ttf", false),
+            ("/Users/me/Library/Fonts/NotoColorEmoji.ttf", false),
+            (
+                "/System/../Users/me/Library/Fonts/NotoColorEmoji.ttf",
+                false,
+            ),
+            ("relative/System/Library/Fonts/a.ttc", false),
+        ] {
+            assert_eq!(super::immutable_font(Path::new(path)), mapped, "{path}");
+        }
+    }
+
     #[test]
     fn chrome_text_sizes_and_rows_follow_the_configured_body() {
         use eframe::egui::{FontId, Style, TextStyle};
