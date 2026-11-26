@@ -112,8 +112,11 @@ dialogs. It never affects terminal text.
   titles, skips the color emoji font, so the first other face that has it
   draws it in the text's color. Elsewhere, such as in typed text, a symbol
   the text faces lack is drawn in color when the color emoji font has it.
-- A character none of these faces has is drawn with an installed font that
-  has it, which can be a color font even for a symbol that defaults to text.
+- For a character none of these faces has, nekomata asks the system font
+  fallback for an installed font that has it. The fallback searches the
+  platform's generic families rather than every installed font, so it can
+  find none and leave a missing-glyph box, and what it finds can be a color
+  font even for a symbol that defaults to text.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
   font size (14 px), regardless of the configured terminal size.
   Values outside 4–72 are clamped into range; zero, negative and non-finite
