@@ -430,6 +430,32 @@ mod tests {
     }
 
     #[test]
+    fn the_color_emoji_font_precedes_monochrome_emoji_except_for_text() {
+        use eframe::egui::FontFamily;
+        let fonts = super::chrome_fonts(None);
+        let family = |family: FontFamily| &fonts.families[&family];
+        let at = |names: &[String], name: &str| names.iter().position(|n| n == name);
+        let text = family(FontFamily::Name(super::TEXT_FAMILY.into()));
+        assert_eq!(at(text, "color-emoji"), None);
+        if !fonts.font_data.contains_key("color-emoji") {
+            return; // No color emoji font is installed here.
+        }
+        for kind in [FontFamily::Proportional, FontFamily::Monospace] {
+            let names = family(kind.clone());
+            let color = at(names, "color-emoji").unwrap();
+            assert_eq!(
+                Some(color + 1),
+                at(names, "NotoEmoji-Regular"),
+                "{kind:?}: {names:?}"
+            );
+        }
+        assert_eq!(
+            family(FontFamily::Name(super::EMOJI_FAMILY.into()))[0],
+            "color-emoji"
+        );
+    }
+
+    #[test]
     fn palette_button_matches_tab_ink_and_shows_its_open_state() {
         use eframe::egui::{self, epaint::Shape};
         for font_size in [4.0, 10.0, 14.0, 24.0, 48.0, 72.0] {
