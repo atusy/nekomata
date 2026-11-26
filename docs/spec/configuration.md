@@ -117,14 +117,15 @@ dialogs. It never affects terminal text.
   A tab shows control characters in its title, such as a newline, as
   spaces, so the title stays on one row and the tab as tall as the others;
   session picker rows break at a newline.
-- For a character none of these faces has, nekomata asks the system font
-  fallback for an installed font that has it. The fallback searches the
-  platform's generic family for the text, sans-serif or monospace, and then
-  its fallback fonts for the character's script, or, for a character of no
+- Faces are chosen per grapheme cluster by its first character: a cluster
+  whose first character none of these faces has is looked up through the
+  system font fallback, while marks combined with a character a face has
+  are drawn by that face alone. The fallback searches the platform's
+  generic family for the text, sans-serif or monospace, and then its
+  fallback fonts for the character's script, or, for a character of no
   script, such as a symbol, its generic families, rather than every
-  installed font, so it can find
-  none and leave a missing-glyph box, and what it finds can be a color font
-  even for a symbol that defaults to text.
+  installed font, so it can find none and leave a missing-glyph box, and
+  what it finds can be a color font even for a symbol that defaults to text.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
   font size (14 px), regardless of the configured terminal size.
   Values outside 4–72 are clamped into range; zero, negative and non-finite
