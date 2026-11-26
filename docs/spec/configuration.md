@@ -112,6 +112,8 @@ dialogs. It never affects terminal text.
   titles, skips the color emoji font, so the first other face that has it
   draws it in the text's color. Elsewhere, such as in typed text, a symbol
   the text faces lack is drawn in color when the color emoji font has it.
+  A tab keeps its title on one row even when the title holds a newline, so
+  the tab is as tall as the others; session picker rows break there.
 - For a character none of these faces has, nekomata asks the system font
   fallback for an installed font that has it. The fallback searches the
   platform's generic families rather than every installed font, so it can
