@@ -319,11 +319,14 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
                 .font_data
                 .insert("symbols".into(), FontData::from_owned(bytes).into());
             for kind in [FontFamily::Monospace, FontFamily::Proportional] {
-                fonts
-                    .families
-                    .entry(kind)
-                    .or_default()
-                    .push("symbols".into());
+                // Ahead of egui's emoji fonts, which share symbols such as ⚙
+                // but draw them as emoji.
+                let family = fonts.families.entry(kind).or_default();
+                let at = family
+                    .iter()
+                    .position(|name| name == "NotoEmoji-Regular")
+                    .unwrap_or(family.len());
+                family.insert(at, "symbols".into());
             }
             break;
         }
@@ -470,6 +473,54 @@ mod tests {
             family(FontFamily::Name(super::EMOJI_FAMILY.into()))[0],
             "color-emoji"
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn symbols_keep_their_monochrome_face_ahead_of_the_emoji_fonts() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        let mut fonts = super::chrome_fonts(None);
+        fonts.families.insert(
+            egui::FontFamily::Name("symbols-only".into()),
+            vec!["symbols".into()],
+        );
+        ctx.set_fonts(fonts);
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            for family in [
+                egui::FontFamily::Proportional,
+                egui::FontFamily::Name(super::TEXT_FAMILY.into()),
+            ] {
+                // Apple Symbols has the gear, as do both emoji fonts.
+                let galley = ui.painter().layout_no_wrap(
+                    "⚙".into(),
+                    egui::FontId::new(14.0, family.clone()),
+                    egui::Color32::WHITE,
+                );
+                let glyph = &galley.rows[0].glyphs[0];
+                assert!(!glyph.is_color, "{family:?}");
+                let face = |glyph: &egui::epaint::text::Glyph| {
+                    (glyph.advance_width, glyph.font_face_height)
+                };
+                assert_eq!(
+                    face(glyph),
+                    face(
+                        &ui.painter()
+                            .layout_no_wrap(
+                                "⚙".into(),
+                                egui::FontId::new(
+                                    14.0,
+                                    egui::FontFamily::Name("symbols-only".into())
+                                ),
+                                egui::Color32::WHITE,
+                            )
+                            .rows[0]
+                            .glyphs[0]
+                    ),
+                    "{family:?} draws the gear with the symbols face"
+                );
+            }
+        });
     }
 
     #[test]
