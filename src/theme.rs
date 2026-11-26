@@ -190,8 +190,6 @@ pub(crate) fn presented(
         first_row_min_height: line_height,
         ..Default::default()
     };
-    let mut run = String::new();
-    let mut run_is_emoji = false;
     let format = |family: &str| TextFormat {
         // Each family's line height would otherwise come from its first face,
         // and the color emoji font's differs from the text faces'. One height
@@ -201,26 +199,38 @@ pub(crate) fn presented(
         valign: eframe::egui::Align::Center,
         ..TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color)
     };
-    let flush = |job: &mut eframe::egui::text::LayoutJob, run: &mut String, emoji: bool| {
-        if run.is_empty() {
-            return;
-        }
-        job.append(
-            run,
-            0.0,
-            format(if emoji { EMOJI_FAMILY } else { TEXT_FAMILY }),
-        );
-        run.clear();
-    };
-    for cluster in text.graphemes(true) {
+    let text_format = format(TEXT_FAMILY);
+    // Tabs lay their titles out every frame; ASCII has no emoji to find.
+    if text.is_ascii() {
+        job.append(text, 0.0, text_format);
+        return job;
+    }
+    let emoji_format = format(EMOJI_FAMILY);
+    let mut run_start = 0;
+    let mut run_is_emoji = false;
+    for (at, cluster) in text.grapheme_indices(true) {
         let emoji = has_emoji_presentation(cluster) || is_keycap(cluster);
         if emoji != run_is_emoji {
-            flush(&mut job, &mut run, run_is_emoji);
+            if at > run_start {
+                let format = if run_is_emoji {
+                    &emoji_format
+                } else {
+                    &text_format
+                };
+                job.append(&text[run_start..at], 0.0, format.clone());
+            }
+            run_start = at;
             run_is_emoji = emoji;
         }
-        run.push_str(cluster);
     }
-    flush(&mut job, &mut run, run_is_emoji);
+    if text.len() > run_start {
+        let format = if run_is_emoji {
+            emoji_format
+        } else {
+            text_format
+        };
+        job.append(&text[run_start..], 0.0, format);
+    }
     job
 }
 
