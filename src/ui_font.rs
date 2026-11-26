@@ -56,41 +56,27 @@ pub(crate) struct Chosen {
     pub(crate) bytes: std::sync::Arc<FontBytes>,
 }
 
-/// Whether nothing rewrites `file` while the system runs, which holds for
-/// fonts on macOS's sealed system volume. Neither a path nor a read-only mount
-/// proves it: `/System/Volumes/Data` is writable, a read-only mount can be a
-/// network share or a bind mount over a writable source, and a Nix store
-/// path can be made writable by the store's owner.
+/// Whether nothing rewrites `file` while the system runs, which holds for a
+/// file on a mounted APFS snapshot, such as macOS's sealed system volume.
+/// Neither a path nor a read-only mount proves it: `/System/Volumes/Data` is
+/// writable, a read-only mount can be a network share, a bind mount over a
+/// writable source or an unsealed system volume an administrator can remount
+/// writable, and a Nix store path can be made writable by the store's owner.
+#[cfg(target_os = "macos")]
 fn immutable_font(file: &std::fs::File) -> bool {
-    cfg!(target_os = "macos") && on_sealed_system_volume(file)
-}
-
-/// Whether `file` is on the volume mounted read-only at `/`, which on macOS is
-/// the sealed system volume. Other read-only mounts, such as a network share,
-/// can still change on the server.
-fn on_sealed_system_volume(file: &std::fs::File) -> bool {
-    let Ok(root) = std::fs::File::open("/") else {
-        return false;
-    };
-    match (volume(file), volume(&root)) {
-        // APFS gives every volume of a container the same device number, so
-        // only the file system ID tells the system volume from the data one.
-        (Some(font), Some(system)) => {
-            font.f_fsid == system.f_fsid && system.f_flag & libc::ST_RDONLY != 0
-        }
-        _ => false,
-    }
-}
-
-/// The file system `file` is on, as `fstatvfs` reports it.
-fn volume(file: &std::fs::File) -> Option<libc::statvfs> {
     use std::os::fd::AsRawFd as _;
-    let mut volume = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    let mut volume = std::mem::MaybeUninit::<libc::statfs>::uninit();
     // SAFETY: `file` is open for the call and `volume` is written in full on
     // success, the only case in which it is read.
     unsafe {
-        (libc::fstatvfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0).then(|| volume.assume_init())
+        libc::fstatfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0
+            && volume.assume_init().f_flags & libc::MNT_SNAPSHOT as u32 != 0
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn immutable_font(_file: &std::fs::File) -> bool {
+    false
 }
 
 /// A font file's bytes, mapped when nothing can rewrite the file and read
