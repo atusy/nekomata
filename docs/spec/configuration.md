@@ -94,6 +94,38 @@ dialogs. It never affects terminal text.
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
   built-in font. A configured family leads proportional UI text and the
   default faces remain its fallbacks.
+- A symbol face follows them, for Braille spinners and other symbols:
+  `/System/Library/Fonts/Apple Symbols.ttf` on macOS, and the first present
+  of `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` and
+  `/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf` on Linux.
+  Outside tab titles and session picker rows, it draws even emoji it has,
+  such as `☕`, in the text's color.
+- A character none of these faces has is next tried in the installed Apple
+  Color Emoji or Noto Color Emoji family, found through the OS font matcher,
+  which draws its emoji in color, then in egui's bundled monochrome emoji
+  fonts, which draw in the text's color, then through the system font
+  fallback below.
+- Tab titles and session picker rows show text that programs set, so each
+  grapheme cluster there takes the presentation Unicode gives it, including
+  through an emoji or text presentation selector. An emoji tries the color
+  emoji font first, when one was found, then the faces other text uses; a
+  symbol that defaults to text, such as the `✳` Claude Code puts before its
+  titles, skips that color emoji font, so the first other face that has it
+  draws it, in the text's color unless that face is itself a color font,
+  such as a color emoji family configured as the UI font. Elsewhere, such as in typed text, a symbol
+  the text faces lack is drawn in color when the color emoji font has it.
+  A tab shows control characters in its title, such as a newline, as
+  spaces, so the title stays on one row and the tab as tall as the others;
+  session picker rows break at a newline.
+- Faces are chosen per grapheme cluster by its first character: a cluster
+  whose first character none of these faces has is looked up through the
+  system font fallback, while marks combined with a character a face has
+  are drawn by that face alone. The fallback searches the platform's
+  generic family for the text, sans-serif or monospace, and then its
+  fallback fonts for the character's script, or, for a character of no
+  script, such as a symbol, its generic families, rather than every
+  installed font, so it can find none and leave a missing-glyph box, and
+  what it finds can be a color font even for a symbol that defaults to text.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
   font size (14 px), regardless of the configured terminal size.
   Values outside 4–72 are clamped into range; zero, negative and non-finite

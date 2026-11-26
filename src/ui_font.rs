@@ -31,11 +31,84 @@ pub fn default_size_px() -> f32 {
 /// the app is created opening the window has already paid it, so this
 /// does not wait on it there.
 pub fn find(family: &str) -> Option<Face> {
-    let (path, index) = select(&platform::candidates(family), family)?;
+    let chosen = locate(family)?;
+    let bytes = match std::sync::Arc::try_unwrap(chosen.bytes) {
+        Ok(FontBytes::Read(bytes)) => bytes,
+        Ok(mapped) => mapped.as_ref().to_vec(),
+        Err(shared) => shared.as_ref().as_ref().to_vec(),
+    };
     Some(Face {
-        bytes: std::fs::read(path).ok()?,
-        index,
+        bytes,
+        index: chosen.index,
     })
+}
+
+/// The face [`find`] would copy, with the very bytes it was chosen from, for a
+/// caller that keeps a mapped font as it is, as for fonts too large to copy.
+pub(crate) fn locate(family: &str) -> Option<Chosen> {
+    select(&platform::candidates(family), family).map(|(_, chosen)| chosen)
+}
+
+/// The face chosen for a family and the bytes it was chosen from, so that a
+/// font rewritten after the choice cannot hand its caller other contents.
+pub(crate) struct Chosen {
+    pub(crate) index: u32,
+    pub(crate) bytes: std::sync::Arc<FontBytes>,
+}
+
+/// Whether nothing rewrites `file` while the system runs, which holds for a
+/// file on a mounted APFS snapshot, such as macOS's sealed system volume.
+/// Neither a path nor a read-only mount proves it: `/System/Volumes/Data` is
+/// writable, a read-only mount can be a network share, a bind mount over a
+/// writable source or an unsealed system volume an administrator can remount
+/// writable, and a Nix store path can be made writable by the store's owner.
+#[cfg(target_os = "macos")]
+fn immutable_font(file: &std::fs::File) -> bool {
+    use std::os::fd::AsRawFd as _;
+    let mut volume = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `file` is open for the call and `volume` is written in full on
+    // success, the only case in which it is read.
+    unsafe {
+        libc::fstatfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0
+            && volume.assume_init().f_flags & libc::MNT_SNAPSHOT as u32 != 0
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn immutable_font(_file: &std::fs::File) -> bool {
+    false
+}
+
+/// A font file's bytes, mapped when nothing can rewrite the file and read
+/// otherwise, since a file rewritten under a live map breaks the map's
+/// contract and a truncation faults whoever reads it next.
+pub(crate) enum FontBytes {
+    Mapped(memmap2::Mmap),
+    Read(Vec<u8>),
+}
+
+impl AsRef<[u8]> for FontBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Mapped(map) => map,
+            Self::Read(bytes) => bytes,
+        }
+    }
+}
+
+/// The bytes of the font file at `path`; see [`FontBytes`].
+pub(crate) fn load(path: &Path) -> Option<FontBytes> {
+    let mut file = std::fs::File::open(path).ok()?;
+    if immutable_font(&file) {
+        // SAFETY: nothing rewrites the file (see `immutable_font`), so the
+        // bytes stay valid for as long as the map lives.
+        return unsafe { memmap2::Mmap::map(&file) }
+            .ok()
+            .map(FontBytes::Mapped);
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+    Some(FontBytes::Read(bytes))
 }
 
 /// A face the platform matched to a family, before its file is read.
@@ -85,28 +158,23 @@ fn rank(font: &FontRef<'_>, family: &str) -> Rank {
     )
 }
 
-fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
+/// The best candidate's file and the face chosen from it.
+fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, Chosen)> {
     let family = family.to_lowercase();
-    let mut best: Option<(Rank, &Path, u32)> = None;
-    let mut mapped: Option<(&Path, memmap2::Mmap)> = None;
+    let mut best: Option<(Rank, &Path, u32, std::sync::Arc<FontBytes>)> = None;
+    let mut loaded: Option<(&Path, std::sync::Arc<FontBytes>)> = None;
     for candidate in candidates {
-        if mapped
+        if loaded
             .as_ref()
             .is_none_or(|(path, _)| *path != candidate.path)
         {
-            let Ok(file) = std::fs::File::open(&candidate.path) else {
+            let Some(data) = load(&candidate.path) else {
                 continue;
             };
-            // SAFETY: installed fonts are not rewritten while mapped; a
-            // truncation would at worst fault this startup read, the
-            // hazard felis-shaping accepts for the same files.
-            let Ok(data) = (unsafe { memmap2::Mmap::map(&file) }) else {
-                continue;
-            };
-            mapped = Some((&candidate.path, data));
+            loaded = Some((&candidate.path, std::sync::Arc::new(data)));
         }
-        let Some((_, data)) = &mapped else { continue };
-        let Some(collection) = swash::FontDataRef::new(data) else {
+        let Some((_, data)) = &loaded else { continue };
+        let Some(collection) = swash::FontDataRef::new(data.as_ref().as_ref()) else {
             continue;
         };
         let found = match &candidate.face {
@@ -124,10 +192,10 @@ fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
         let Some((index, font)) = found else { continue };
         let rank = rank(&font, &family);
         if best.as_ref().is_none_or(|(at, ..)| rank < *at) {
-            best = Some((rank, &candidate.path, index));
+            best = Some((rank, &candidate.path, index, data.clone()));
         }
     }
-    best.map(|(_, path, index)| (path.to_path_buf(), index))
+    best.map(|(_, path, index, bytes)| (path.to_path_buf(), Chosen { index, bytes }))
 }
 
 #[cfg(target_os = "macos")]
@@ -340,7 +408,7 @@ mod tests {
             return skip();
         };
         assert_eq!(
-            select(&candidates, "UDev Gothic NF"),
+            select(&candidates, "UDev Gothic NF").map(|(path, chosen)| (path, chosen.index)),
             Some((dir.path().join("c-regular.ttf"), 0))
         );
     }
@@ -363,10 +431,10 @@ mod tests {
             face: FaceRef::PostScript(name.into()),
         };
         assert_eq!(
-            select(&[named(&name)], "UDEV Gothic NF"),
+            select(&[named(&name)], "UDEV Gothic NF").map(|(path, chosen)| (path, chosen.index)),
             Some((path.clone(), 0))
         );
-        assert_eq!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF"), None);
+        assert!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF").is_none());
     }
 
     #[test]
@@ -384,7 +452,7 @@ mod tests {
                 face: FaceRef::Index(0),
             },
         ];
-        assert_eq!(select(&candidates, "Anything"), None);
+        assert!(select(&candidates, "Anything").is_none());
     }
 
     #[test]
@@ -417,6 +485,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fontconfig_locates_a_color_emoji_family() {
+        let Some(font) = std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") else {
+            eprintln!("skipped: NEKOMATA_COLOR_EMOJI_FONT is unset outside nix develop");
+            return;
+        };
+        let Some(lib) = fontconfig::library() else {
+            assert!(
+                std::env::var_os("NEKOMATA_REQUIRE_FONTCONFIG").is_none(),
+                "libfontconfig is not loadable"
+            );
+            eprintln!("skipped: libfontconfig is not loadable");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let emoji = dir.path().join("emoji.ttf");
+        std::fs::copy(font, &emoji).unwrap();
+        let path = std::ffi::CString::new(dir.path().as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: the config is created, filled and destroyed here.
+        let candidates = unsafe {
+            let config = (lib.FcConfigCreate)();
+            assert!((lib.FcConfigAppFontAddDir)(config, path.as_ptr().cast()) != 0);
+            let candidates = fontconfig::candidates(Some(config), "Noto Color Emoji");
+            (lib.FcConfigDestroy)(config);
+            candidates
+        };
+        // A face without Latin letters still matches its family.
+        let (path, chosen) = select(&candidates, "Noto Color Emoji").unwrap();
+        assert_eq!((path, chosen.index), (emoji.clone(), 0));
+        // The bytes come from the selection itself, so a font rewritten after
+        // it was chosen cannot hand the caller other contents.
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&emoji, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&emoji, b"").unwrap();
+        assert!(swash::FontRef::from_index(chosen.bytes.as_ref().as_ref(), 0).is_some());
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn coretext_matches_a_bundled_family_ignoring_case() {
@@ -441,6 +546,58 @@ mod tests {
         assert_eq!(
             japanese.map(|face| face.index),
             english.map(|face| face.index)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn coretext_locates_a_color_emoji_font_without_reading_it() {
+        // A face without Latin letters still matches its family.
+        let (path, _) = select(
+            &platform::candidates("Apple Color Emoji"),
+            "Apple Color Emoji",
+        )
+        .unwrap();
+        assert_eq!(path.file_name().unwrap(), "Apple Color Emoji.ttc");
+    }
+
+    #[test]
+    fn fonts_that_can_change_are_read() {
+        use std::io::Write as _;
+        let mut writable = tempfile::NamedTempFile::new().unwrap();
+        writable.write_all(b"font bytes").unwrap();
+        let bytes = load(writable.path()).unwrap();
+        assert!(matches!(bytes, FontBytes::Read(_)));
+        assert_eq!(bytes.as_ref(), b"font bytes");
+        // A store path can be made writable or lie under a writable mount, so
+        // only the sealed system volume proves a font cannot change.
+        match std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") {
+            Some(font) => assert!(matches!(load(Path::new(&font)), Some(FontBytes::Read(_)))),
+            None => eprintln!("skipped store check: NEKOMATA_COLOR_EMOJI_FONT is unset"),
+        }
+        assert!(load(&writable.path().with_extension("missing")).is_none());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
+        // Ask mount(8), not the check under test, whether / is sealed.
+        let Ok(mounts) = std::process::Command::new("/sbin/mount").output() else {
+            eprintln!("skipped: /sbin/mount cannot run here");
+            return;
+        };
+        let sealed = String::from_utf8_lossy(&mounts.stdout)
+            .lines()
+            .any(|line| line.contains(" on / (") && line.contains("sealed"));
+        if !sealed {
+            // An unsealed system volume may or may not be a snapshot.
+            eprintln!("skipped: / is not sealed here");
+            return;
+        }
+        let chosen = locate("Apple Color Emoji").unwrap();
+        assert!(
+            matches!(*chosen.bytes, FontBytes::Mapped(_)),
+            "a font on the sealed system volume is mapped"
         );
     }
 

@@ -160,6 +160,121 @@ pub fn palette_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Re
     response
 }
 
+/// The family that draws emoji in color where an installed font can.
+const EMOJI_FAMILY: &str = "emoji";
+/// The proportional fonts without the color emoji font, for symbols that
+/// default to text presentation. A symbol none of them has can still come
+/// from a color font the system fallback finds, rather than show as a box.
+const TEXT_FAMILY: &str = "text";
+
+/// `text` laid out without wrapping so that each grapheme cluster takes the
+/// presentation Unicode gives it: emoji such as 😀 keep their own colors,
+/// while symbols such as ✳, which also have color emoji glyphs, are drawn in
+/// `color` like the letters around them.
+///
+/// For text that comes from programs, such as terminal titles; egui itself
+/// picks a font per character regardless of presentation.
+///
+/// Every row is `line_height` tall, usually [`title_line_height`], whatever
+/// the faces drawing it, so emoji neither heighten nor shorten it.
+pub(crate) fn presented(
+    text: &str,
+    size: f32,
+    line_height: f32,
+    color: Color32,
+) -> eframe::egui::text::LayoutJob {
+    use eframe::egui::{FontFamily, FontId, TextFormat, epaint::text::has_emoji_presentation};
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let mut job = eframe::egui::text::LayoutJob {
+        // Text without sections, such as an empty title, still takes a row.
+        first_row_min_height: line_height,
+        ..Default::default()
+    };
+    let format = |family: &str| TextFormat {
+        // Each family's line height would otherwise come from its first face,
+        // and the color emoji font's differs from the text faces'. One height
+        // for every section, with each centered in it, keeps emoji where a
+        // single family would place them.
+        line_height: Some(line_height),
+        valign: eframe::egui::Align::Center,
+        ..TextFormat::simple(FontId::new(size, FontFamily::Name(family.into())), color)
+    };
+    let text_format = format(TEXT_FAMILY);
+    // Tabs lay their titles out every frame; ASCII has no emoji to find.
+    if text.is_ascii() {
+        job.append(text, 0.0, text_format);
+        return job;
+    }
+    let emoji_format = format(EMOJI_FAMILY);
+    let mut run_start = 0;
+    let mut run_is_emoji = false;
+    for (at, cluster) in text.grapheme_indices(true) {
+        let emoji =
+            has_emoji_presentation(cluster) || is_keycap(cluster) || is_emoji_zwj_sequence(cluster);
+        if emoji != run_is_emoji {
+            if at > run_start {
+                let format = if run_is_emoji {
+                    &emoji_format
+                } else {
+                    &text_format
+                };
+                job.append(&text[run_start..at], 0.0, format.clone());
+            }
+            run_start = at;
+            run_is_emoji = emoji;
+        }
+    }
+    if text.len() > run_start {
+        let format = if run_is_emoji {
+            emoji_format
+        } else {
+            text_format
+        };
+        job.append(&text[run_start..], 0.0, format);
+    }
+    job
+}
+
+/// Whether `cluster` is a keycap, such as 1️⃣, which Unicode lists as emoji
+/// even without the emoji presentation selector that
+/// `has_emoji_presentation` looks for; a text presentation selector keeps it
+/// text.
+fn is_keycap(cluster: &str) -> bool {
+    let mut chars = cluster.chars();
+    chars
+        .next()
+        .is_some_and(|base| base.is_ascii_digit() || base == '#' || base == '*')
+        && matches!(chars.as_str(), "\u{20E3}" | "\u{FE0F}\u{20E3}")
+}
+
+/// Whether `cluster` joins emoji with zero width joiners, such as 👁‍🗨,
+/// which Unicode lists as emoji even when the symbols joined default to text
+/// and no emoji presentation selector follows them. A script's own joiner
+/// inside a word, as in Devanagari, joins no emoji, and a text presentation
+/// selector keeps the sequence text.
+fn is_emoji_zwj_sequence(cluster: &str) -> bool {
+    use unicode_properties::UnicodeEmoji as _;
+    const ZWJ: char = '\u{200D}';
+    let mut joined = 0;
+    cluster.contains(ZWJ)
+        && !cluster.contains('\u{FE0E}')
+        && cluster
+            .chars()
+            .filter(|c| !matches!(*c, ZWJ | '\u{FE0F}'))
+            .all(|c| {
+                joined += 1;
+                !c.is_ascii() && c.is_emoji_char()
+            })
+        && joined >= 2
+}
+
+/// The height of a row of text-family faces at `size`, which titles laid out
+/// by [`presented`] keep whatever emoji they hold.
+pub(crate) fn title_line_height(ui: &eframe::egui::Ui, size: f32) -> f32 {
+    use eframe::egui::{FontFamily, FontId};
+    ui.fonts_mut(|fonts| fonts.row_height(&FontId::new(size, FontFamily::Name(TEXT_FAMILY.into()))))
+}
+
 pub fn tab_button(
     ui: &mut eframe::egui::Ui,
     title: &str,
@@ -167,15 +282,27 @@ pub fn tab_button(
 ) -> eframe::egui::Response {
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let color = if selected { FG } else { TAB_INACTIVE_FG };
-    let galley = ui.painter().layout_no_wrap(
-        title.to_owned(),
-        TextStyle::Button.resolve(ui.style()),
-        color,
-    );
+    let size = TextStyle::Button.resolve(ui.style()).size;
+    // A newline a program put in its title would make this tab taller than
+    // the rest of the bar, and some faces draw control characters as boxes,
+    // so tabs show them as spaces, unlike other text.
+    let shown: std::borrow::Cow<'_, str> = if title.contains(char::is_control) {
+        title
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .into()
+    } else {
+        title.into()
+    };
+    let galley =
+        ui.painter()
+            .layout_job(presented(&shown, size, title_line_height(ui, size), color));
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    response
-        .widget_info(|| WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, title));
+    response.widget_info(|| {
+        WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &shown)
+    });
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
         ui.painter().rect_filled(
@@ -207,8 +334,19 @@ pub fn tab_button(
 
 /// Application fonts are independent of terminal configuration. A
 /// configured `primary` leads proportional text; the system faces stay as
-/// its fallbacks.
+/// its fallbacks. The color emoji font, when installed, precedes the
+/// monochrome emoji, and the text and emoji families that [`presented`]
+/// lays titles out in follow the same order without and with it first.
 pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::FontDefinitions {
+    chrome_fonts_with(primary, color_emoji())
+}
+
+/// [`chrome_fonts`] with `color` as the color emoji font, which tests pass
+/// to draw with a known one.
+fn chrome_fonts_with(
+    primary: Option<crate::ui_font::Face>,
+    color: Option<eframe::egui::FontData>,
+) -> eframe::egui::FontDefinitions {
     use eframe::egui::{FontData, FontDefinitions, FontFamily};
     let mut fonts = FontDefinitions::default();
     for path in [
@@ -226,11 +364,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
                 .entry(FontFamily::Proportional)
                 .or_default()
                 .insert(0, "cjk".into());
-            fonts
-                .families
-                .entry(FontFamily::Monospace)
-                .or_default()
-                .push("cjk".into());
+            before_emoji(&mut fonts, FontFamily::Monospace, "cjk");
             break;
         }
     }
@@ -246,11 +380,7 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
                 .font_data
                 .insert("symbols".into(), FontData::from_owned(bytes).into());
             for kind in [FontFamily::Monospace, FontFamily::Proportional] {
-                fonts
-                    .families
-                    .entry(kind)
-                    .or_default()
-                    .push("symbols".into());
+                before_emoji(&mut fonts, kind, "symbols");
             }
             break;
         }
@@ -265,7 +395,56 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
             .or_default()
             .insert(0, "configured".into());
     }
+    let text = fonts.families[&FontFamily::Proportional].clone();
+    let mut emoji = text.clone();
+    if let Some(data) = color {
+        fonts.font_data.insert("color-emoji".into(), data.into());
+        // Ahead of the monochrome emoji, so that text egui lays out by
+        // itself, such as typed input, shows emoji the text faces lack in
+        // color too.
+        for kind in [FontFamily::Monospace, FontFamily::Proportional] {
+            before_emoji(&mut fonts, kind, "color-emoji");
+        }
+        emoji.insert(0, "color-emoji".into());
+    }
     fonts
+        .families
+        .insert(FontFamily::Name(TEXT_FAMILY.into()), text);
+    fonts
+        .families
+        .insert(FontFamily::Name(EMOJI_FAMILY.into()), emoji);
+    fonts
+}
+
+/// Adds `name` to `kind` after the faces added before it but ahead of egui's
+/// bundled emoji fonts, which share many symbols, such as ⚙, with system
+/// faces but draw them as emoji.
+fn before_emoji(
+    fonts: &mut eframe::egui::FontDefinitions,
+    kind: eframe::egui::FontFamily,
+    name: &str,
+) {
+    let family = fonts.families.entry(kind).or_default();
+    let at = family
+        .iter()
+        .position(|face| face == "NotoEmoji-Regular")
+        .unwrap_or(family.len());
+    family.insert(at, name.into());
+}
+
+/// The platform's color emoji font, found by family name. Apple Color Emoji
+/// alone is close to 200 MB, so it stays mapped where nothing can rewrite it
+/// (see `ui_font::load`), and a font a user installed is read instead.
+fn color_emoji() -> Option<eframe::egui::FontData> {
+    ["Apple Color Emoji", "Noto Color Emoji"]
+        .into_iter()
+        .find_map(|family| {
+            let chosen = crate::ui_font::locate(family)?;
+            Some(eframe::egui::FontData::from_blob(
+                chosen.bytes,
+                chosen.index,
+            ))
+        })
 }
 
 #[cfg(test)]
@@ -320,6 +499,107 @@ mod tests {
             fonts.families[&FontFamily::Monospace],
             default.families[&FontFamily::Monospace]
         );
+        // Titles laid out by presentation use the configured face too; only
+        // the color emoji font may come before it, for emoji.
+        let named = |name: &str| &fonts.families[&FontFamily::Name(name.into())];
+        assert_eq!(named(super::TEXT_FAMILY)[0], "configured");
+        let emoji = named(super::EMOJI_FAMILY);
+        let lead = usize::from(emoji[0] == "color-emoji");
+        assert_eq!(emoji[lead], "configured");
+    }
+
+    #[test]
+    fn the_color_emoji_font_precedes_monochrome_emoji_except_for_text() {
+        use eframe::egui::FontFamily;
+        let fonts = super::chrome_fonts(None);
+        let family = |family: FontFamily| &fonts.families[&family];
+        let at = |names: &[String], name: &str| names.iter().position(|n| n == name);
+        let text = family(FontFamily::Name(super::TEXT_FAMILY.into()));
+        assert_eq!(at(text, "color-emoji"), None);
+        if !fonts.font_data.contains_key("color-emoji") {
+            eprintln!("skipped: no color emoji font is installed here");
+            return;
+        }
+        for kind in [FontFamily::Proportional, FontFamily::Monospace] {
+            let names = family(kind.clone());
+            let color = at(names, "color-emoji").unwrap();
+            assert_eq!(
+                Some(color + 1),
+                at(names, "NotoEmoji-Regular"),
+                "{kind:?}: {names:?}"
+            );
+        }
+        assert_eq!(
+            family(FontFamily::Name(super::EMOJI_FAMILY.into()))[0],
+            "color-emoji"
+        );
+    }
+
+    #[test]
+    fn system_faces_precede_egui_emoji_fonts_in_both_families() {
+        use eframe::egui::FontFamily;
+        let fonts = super::chrome_fonts(None);
+        for kind in [FontFamily::Proportional, FontFamily::Monospace] {
+            let names = &fonts.families[&kind];
+            // The faces installed here, in the order each family must try them.
+            let order: Vec<_> = ["cjk", "symbols", "color-emoji", "NotoEmoji-Regular"]
+                .into_iter()
+                .filter(|name| fonts.font_data.contains_key(*name))
+                .map(|name| names.iter().position(|n| n == name))
+                .collect();
+            assert!(
+                order.iter().all(Option::is_some) && order.is_sorted(),
+                "{kind:?}: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn symbols_keep_their_monochrome_face_ahead_of_the_emoji_fonts() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        let mut fonts = super::chrome_fonts(None);
+        fonts.families.insert(
+            egui::FontFamily::Name("symbols-only".into()),
+            vec!["symbols".into()],
+        );
+        ctx.set_fonts(fonts);
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            for family in [
+                egui::FontFamily::Proportional,
+                egui::FontFamily::Name(super::TEXT_FAMILY.into()),
+            ] {
+                // Apple Symbols has the gear, as do both emoji fonts.
+                let galley = ui.painter().layout_no_wrap(
+                    "⚙".into(),
+                    egui::FontId::new(14.0, family.clone()),
+                    egui::Color32::WHITE,
+                );
+                let glyph = &galley.rows[0].glyphs[0];
+                assert!(!glyph.is_color, "{family:?}");
+                let face = |glyph: &egui::epaint::text::Glyph| {
+                    (glyph.advance_width, glyph.font_face_height)
+                };
+                assert_eq!(
+                    face(glyph),
+                    face(
+                        &ui.painter()
+                            .layout_no_wrap(
+                                "⚙".into(),
+                                egui::FontId::new(
+                                    14.0,
+                                    egui::FontFamily::Name("symbols-only".into())
+                                ),
+                                egui::Color32::WHITE,
+                            )
+                            .rows[0]
+                            .glyphs[0]
+                    ),
+                    "{family:?} draws the gear with the symbols face"
+                );
+            }
+        });
     }
 
     #[test]
@@ -457,6 +737,309 @@ mod tests {
             )));
         });
     }
+    #[test]
+    fn tab_titles_cover_the_status_marker_agents_put_before_them() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        let family = |name: &str| egui::FontId::new(14.0, egui::FontFamily::Name(name.into()));
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            // Claude Code titles an idle session "✳ <topic>". Tabs lay its
+            // text out in the text family, which has no color emoji font.
+            assert!(
+                ui.fonts_mut(|fonts| fonts.has_glyphs(&family(super::TEXT_FAMILY), "✳ Kakehashi"))
+            );
+            assert!(ui.fonts_mut(|fonts| fonts.has_glyphs(&family(super::EMOJI_FAMILY), "😀")));
+        });
+    }
+
+    #[test]
+    fn every_title_keeps_its_tab_one_row_tall() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        let mut heights = Vec::new();
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            for title in ["", "😀", "neko\nmata", "nekomata"] {
+                heights.push(super::tab_button(ui, title, false).rect.height());
+            }
+        });
+        assert!(
+            heights.iter().all(|height| *height == heights[3]),
+            "a title without text or with only emoji must not shrink its tab, \
+             nor a newline grow it: {heights:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn an_emoji_does_not_heighten_a_tab_under_a_short_configured_face() {
+        use eframe::egui;
+        // Helvetica's line is shorter than the color emoji font's.
+        let face = crate::ui_font::find("Helvetica").unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(Some(face)));
+        let mut heights = Vec::new();
+        for _ in 0..2 {
+            heights.clear();
+            let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                for title in ["abc", "abc 😀", "😀", ""] {
+                    heights.push(super::tab_button(ui, title, false).rect.height());
+                }
+            });
+        }
+        assert!(
+            heights.iter().all(|height| *height == heights[0]),
+            "{heights:?}"
+        );
+    }
+
+    #[test]
+    fn tabs_show_control_characters_in_titles_as_spaces() {
+        use eframe::egui;
+        // egui's bundled faces alone, as on a system without the optional
+        // fonts, draw a missing-glyph box for a newline.
+        let ctx = egui::Context::default();
+        let shown: Vec<_> = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            super::tab_button(ui, "build\nfailed\r\tagain", false);
+        })
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect();
+        assert_eq!(shown, ["build failed  again"]);
+    }
+
+    #[test]
+    fn a_tab_is_named_for_assistive_technology_as_it_is_shown() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            super::tab_button(ui, "build\nfailed", true);
+        });
+        let labels: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect();
+        assert_eq!(labels, ["build failed"]);
+    }
+
+    #[test]
+    fn presented_text_gives_emoji_clusters_the_emoji_family() {
+        use eframe::egui::FontFamily;
+        let job = super::presented("✳ ✳\u{FE0F}😀 ok", 14.0, 21.0, super::FG);
+        let sections: Vec<_> = job
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.font_id.family.clone(),
+                )
+            })
+            .collect();
+        let family = |name: &str| FontFamily::Name(name.into());
+        assert_eq!(
+            sections,
+            [
+                ("✳ ", family(super::TEXT_FAMILY)),
+                ("✳\u{FE0F}😀", family(super::EMOJI_FAMILY)),
+                (" ok", family(super::TEXT_FAMILY)),
+            ],
+            "an emoji presentation selector makes its whole cluster emoji"
+        );
+    }
+
+    #[test]
+    fn emoji_joined_without_selectors_are_emoji() {
+        use eframe::egui::FontFamily;
+        let job = super::presented("👁 👁\u{200D}🗨⛹\u{200D}♀ क्\u{200D}ष", 14.0, 21.0, super::FG);
+        let sections: Vec<_> = job
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.font_id.family.clone(),
+                )
+            })
+            .collect();
+        let family = |name: &str| FontFamily::Name(name.into());
+        assert_eq!(
+            sections,
+            [
+                ("👁 ", family(super::TEXT_FAMILY)),
+                ("👁\u{200D}🗨⛹\u{200D}♀", family(super::EMOJI_FAMILY)),
+                (" क्\u{200D}ष", family(super::TEXT_FAMILY)),
+            ],
+            "a lone text-default symbol stays text, and so does a script's own joiner"
+        );
+    }
+
+    #[test]
+    fn keycaps_are_emoji_with_or_without_a_selector() {
+        use eframe::egui::FontFamily;
+        let job = super::presented(
+            "1 1\u{20E3}#\u{FE0F}\u{20E3} *2\u{FE0E}\u{20E3}",
+            14.0,
+            21.0,
+            super::FG,
+        );
+        let sections: Vec<_> = job
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.font_id.family.clone(),
+                )
+            })
+            .collect();
+        let family = |name: &str| FontFamily::Name(name.into());
+        assert_eq!(
+            sections,
+            [
+                ("1 ", family(super::TEXT_FAMILY)),
+                ("1\u{20E3}#\u{FE0F}\u{20E3}", family(super::EMOJI_FAMILY)),
+                (" *2\u{FE0E}\u{20E3}", family(super::TEXT_FAMILY)),
+            ],
+            "a text presentation selector keeps a keycap text"
+        );
+    }
+
+    #[test]
+    fn noto_color_emoji_draws_title_emoji_in_color_on_any_platform() {
+        use eframe::egui;
+        let Some(font) = std::env::var_os("NEKOMATA_COLOR_EMOJI_FONT") else {
+            eprintln!("skipped: NEKOMATA_COLOR_EMOJI_FONT is unset outside nix develop");
+            return;
+        };
+        let noto = egui::FontData::from_owned(std::fs::read(font).unwrap());
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts_with(None, Some(noto)));
+        let mut glyphs = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                super::tab_button(ui, "✳ 😀", true);
+            });
+            glyphs = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) => Some(
+                        text.galley
+                            .rows
+                            .iter()
+                            .flat_map(|row| row.glyphs.iter())
+                            .filter(|glyph| !glyph.chr.is_whitespace())
+                            .map(|glyph| (glyph.chr, glyph.is_color, glyph.uv_rect.is_nothing()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+        }
+        assert_eq!(
+            glyphs,
+            [('✳', false, false), ('😀', true, false)],
+            "Noto Color Emoji's bitmap glyphs draw emoji in color, with pixels, \
+             while ✳ keeps an outline in the tab's ink"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tab_titles_draw_emoji_in_color_and_symbols_in_the_title_ink() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        for (selected, ink) in [(true, super::FG), (false, super::TAB_INACTIVE_FG)] {
+            let mut glyphs = Vec::new();
+            let mut inks = Vec::new();
+            for _ in 0..2 {
+                let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                    super::tab_button(ui, "✳ 😀 確認", selected);
+                });
+                (glyphs, inks) = (Vec::new(), Vec::new());
+                for shape in &output.shapes {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        glyphs.extend(
+                            text.galley
+                                .rows
+                                .iter()
+                                .flat_map(|row| row.glyphs.iter())
+                                .filter(|glyph| !glyph.chr.is_whitespace())
+                                .map(|glyph| (glyph.chr, glyph.is_color)),
+                        );
+                        inks.extend(
+                            text.galley
+                                .job
+                                .sections
+                                .iter()
+                                .map(|section| section.format.color),
+                        );
+                    }
+                }
+            }
+            assert_eq!(
+                glyphs,
+                [('✳', false), ('😀', true), ('確', false), ('認', false)],
+                "emoji keep their own colors, while a symbol that defaults to \
+                 text presentation, like the ✳ Claude Code puts before its \
+                 titles, is an outline the tab's ink colors"
+            );
+            assert!(
+                !inks.is_empty() && inks.iter().all(|color| *color == ink),
+                "selected={selected}: {inks:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn emoji_in_presented_titles_sit_where_plain_text_places_them() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::chrome_fonts(None));
+        let _ = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            let title = "H😀確";
+            let plain = ui.painter().layout_no_wrap(
+                title.into(),
+                egui::FontId::proportional(14.0),
+                egui::Color32::WHITE,
+            );
+            let presented = ui.painter().layout_job(super::presented(
+                title,
+                14.0,
+                super::title_line_height(ui, 14.0),
+                egui::Color32::WHITE,
+            ));
+            let tops = |galley: &egui::Galley| {
+                galley.rows[0]
+                    .glyphs
+                    .iter()
+                    .map(|glyph| (glyph.chr, glyph.pos.y))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                tops(&presented),
+                tops(&plain),
+                "the color emoji font's shorter line must not push emoji down"
+            );
+            assert_eq!(presented.size().y, plain.size().y);
+        });
+    }
+
     #[test]
     #[cfg(target_os = "macos")]
     fn tab_titles_share_a_baseline_across_japanese_and_latin() {

@@ -7,6 +7,25 @@ use felis_protocol::messages::SessionInfo;
 
 type Roster = Arc<Mutex<Option<Result<Vec<SessionInfo>, String>>>>;
 
+/// A session's row: the short ID, the title its program set, and its size.
+/// The title can hold emoji, so the row is laid out by presentation, in the
+/// color the selectable label gives it.
+fn row(
+    id: &str,
+    title: &str,
+    cols: impl std::fmt::Display,
+    rows: impl std::fmt::Display,
+    size: f32,
+    line_height: f32,
+) -> egui::text::LayoutJob {
+    crate::theme::presented(
+        &format!("{}  ·  {title}  ·  {cols}×{rows}", &id[..8]),
+        size,
+        line_height,
+        egui::Color32::PLACEHOLDER,
+    )
+}
+
 #[derive(Default)]
 pub struct SessionPicker {
     query: String,
@@ -82,14 +101,19 @@ impl SessionPicker {
                         egui::ScrollArea::vertical()
                             .max_height(360.0)
                             .show(ui, |ui| {
+                                let size = egui::TextStyle::Button.resolve(ui.style()).size;
                                 for session in sessions {
                                     let id = format!("{:032x}", session.id);
-                                    let label = format!(
-                                        "{}  ·  {}  ·  {}×{}",
-                                        &id[..8],
+                                    let label = row(
+                                        &id,
                                         session.title.as_deref().unwrap_or("Terminal"),
                                         session.dims.cols,
-                                        session.dims.rows
+                                        session.dims.rows,
+                                        size,
+                                        // The spacing egui adds to plain
+                                        // label text, which rows were before.
+                                        crate::theme::title_line_height(ui, size)
+                                            + ui.spacing().extra_text_line_spacing,
                                     );
                                     if ui
                                         .selectable_label(false, label)
@@ -125,6 +149,107 @@ impl Drop for SessionPicker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_keep_emoji_in_titles_colored_and_the_rest_in_the_label_color() {
+        let job = row("0123456789abcdef", "✳ 😀", 80, 24, 14.0, 21.0);
+        assert_eq!(job.text, "01234567  ·  ✳ 😀  ·  80×24");
+        assert!(
+            job.break_on_newline,
+            "rows break where a title has a newline, as plain label rows did"
+        );
+        let emoji: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|section| {
+                section.format.font_id.family == egui::FontFamily::Name("emoji".into())
+            })
+            .map(|section| &job.text[section.byte_range.start.0..section.byte_range.end.0])
+            .collect();
+        assert_eq!(emoji, ["😀"]);
+        assert!(
+            job.sections
+                .iter()
+                .all(|section| section.format.color == egui::Color32::PLACEHOLDER),
+            "rows take the color the selectable label gives them"
+        );
+    }
+
+    #[test]
+    fn the_picker_lays_session_rows_out_by_presentation_at_the_button_size() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::chrome_fonts(None));
+        let mut picker = SessionPicker::default();
+        *picker.roster.lock().unwrap() = Some(Ok(vec![SessionInfo {
+            id: 1,
+            dims: felis_protocol::messages::GridDims {
+                rows: 24,
+                cols: 80,
+                pixel_w: 0,
+                pixel_h: 0,
+            },
+            title: Some("✳ 😀".into()),
+            cwd: None,
+            idle_seconds: None,
+            tags: vec![],
+            last_notification: None,
+            foreground: None,
+            exited: false,
+            last_exit_code: None,
+            attachments: vec![],
+            sequence: std::num::NonZeroU64::MIN,
+            program_status: vec![],
+            spawn_cwd: None,
+            terminal_progress: None,
+        }]));
+        let mut open = true;
+        let mut sections = Vec::new();
+        for _ in 0..2 {
+            let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+                picker.show(&runtime, ui.ctx(), &mut open);
+            });
+            sections = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text().contains("😀") => {
+                        let job = &text.galley.job;
+                        Some(
+                            job.sections
+                                .iter()
+                                .map(|section| {
+                                    (
+                                        job.text
+                                            [section.byte_range.start.0..section.byte_range.end.0]
+                                            .to_owned(),
+                                        section.format.font_id.clone(),
+                                        section.format.line_height,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+        }
+        let style = ctx.global_style();
+        let size = egui::TextStyle::Button.resolve(&style).size;
+        let font = |family: &str| egui::FontId::new(size, egui::FontFamily::Name(family.into()));
+        // As tall as the plain label text rows were, whatever the emoji.
+        let line = ctx.fonts_mut(|fonts| fonts.row_height(&font("text")))
+            + style.spacing.extra_text_line_spacing;
+        assert_eq!(
+            sections,
+            [
+                ("00000000  ·  ✳ ".to_owned(), font("text"), Some(line)),
+                ("😀".to_owned(), font("emoji"), Some(line)),
+                ("  ·  80×24".to_owned(), font("text"), Some(line)),
+            ]
+        );
+    }
 
     #[test]
     fn attaching_closes_the_picker() {

@@ -128,6 +128,8 @@
               inherit cargoArtifacts;
               # Legacy rendering fixtures use an explicit font independent of user config.
               NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
+              # The color emoji family fontconfig lookup tests locate.
+              NEKOMATA_COLOR_EMOJI_FONT = "${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf";
               # Font lookup tests load fontconfig at runtime; fail rather than skip.
               NEKOMATA_REQUIRE_FONTCONFIG = "1";
               preCheck = fontconfigPath;
@@ -214,6 +216,7 @@
                 pkgs.xdg-utils
               ];
             NEKOMATA_FONT = "${pkgs.udev-gothic-nf}/share/fonts/truetype/UDEVGothicNF-Regular.ttf";
+            NEKOMATA_COLOR_EMOJI_FONT = "${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf";
             nativeBuildInputs = [ pkgs.pkg-config ];
             NEKOMATA_REQUIRE_FONTCONFIG = "1";
             shellHook = ''
