@@ -94,6 +94,12 @@ dialogs. It never affects terminal text.
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
   built-in font. A configured family leads proportional UI text and the
   default faces remain its fallbacks.
+- A symbol face follows them, for Braille spinners and other symbols:
+  `/System/Library/Fonts/Apple Symbols.ttf` on macOS, and the first present
+  of `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` and
+  `/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf` on Linux.
+  Outside tab titles and session picker rows, it draws even emoji it has,
+  such as `☕`, in the text's color.
 - Emoji that none of these faces has are drawn in color with the installed
   Apple Color Emoji or Noto Color Emoji family, found through the OS font
   matcher, when present; otherwise with egui's bundled monochrome emoji
