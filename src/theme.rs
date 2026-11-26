@@ -163,7 +163,8 @@ pub fn palette_button(ui: &mut eframe::egui::Ui, open: bool) -> eframe::egui::Re
 /// The family that draws emoji in color where an installed font can.
 const EMOJI_FAMILY: &str = "emoji";
 /// The proportional fonts without the color emoji font, for symbols that
-/// default to text presentation.
+/// default to text presentation. A symbol none of them has can still come
+/// from a color font the system fallback finds, rather than show as a box.
 const TEXT_FAMILY: &str = "text";
 
 /// `text` laid out on one line so that each grapheme cluster takes the
@@ -328,7 +329,8 @@ pub fn chrome_fonts(primary: Option<crate::ui_font::Face>) -> eframe::egui::Font
     if let Some(data) = color_emoji() {
         fonts.font_data.insert("color-emoji".into(), data.into());
         // Ahead of the monochrome emoji, so that text egui lays out by
-        // itself, such as typed input, shows emoji in color too.
+        // itself, such as typed input, shows emoji the text faces lack in
+        // color too.
         for kind in [FontFamily::Monospace, FontFamily::Proportional] {
             let family = fonts.families.entry(kind).or_default();
             let at = family

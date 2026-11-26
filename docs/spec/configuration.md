@@ -94,14 +94,19 @@ dialogs. It never affects terminal text.
   Debian and Ubuntu location) on Linux, when present; otherwise egui's
   built-in font. A configured family leads proportional UI text and the
   default faces remain its fallbacks.
-- Emoji are drawn in color with the installed Apple Color Emoji or Noto Color
-  Emoji family, found through the OS font matcher, when present. In tab titles and the session picker, which show text that
-  programs set, each character takes its Unicode default presentation: a
-  symbol that defaults to text, such as the `✳` Claude Code puts before its
-  titles, is drawn in the text's color with egui's bundled monochrome emoji
-  fonts instead.
+- Emoji that none of these faces has are drawn in color with the installed
+  Apple Color Emoji or Noto Color Emoji family, found through the OS font
+  matcher, when present; otherwise with egui's bundled monochrome emoji
+  fonts.
+- Tab titles and session picker rows show text that programs set, so each
+  grapheme cluster there takes the presentation Unicode gives it, including
+  through an emoji or text presentation selector: emoji are drawn in color,
+  and a symbol that defaults to text, such as the `✳` Claude Code puts
+  before its titles, is drawn in the text's color by the first face that has
+  it, or the bundled monochrome emoji fonts. Elsewhere, such as in typed
+  text, a symbol that only the color font has is drawn in color.
 - A character none of these faces has is drawn with an installed font that
-  has it.
+  has it, which can be a color font even for a symbol that defaults to text.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
   font size (14 px), regardless of the configured terminal size.
   Values outside 4–72 are clamped into range; zero, negative and non-finite
