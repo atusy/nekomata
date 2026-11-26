@@ -167,7 +167,7 @@ const EMOJI_FAMILY: &str = "emoji";
 /// from a color font the system fallback finds, rather than show as a box.
 const TEXT_FAMILY: &str = "text";
 
-/// `text` laid out on one line so that each grapheme cluster takes the
+/// `text` laid out without wrapping so that each grapheme cluster takes the
 /// presentation Unicode gives it: emoji such as 😀 keep their own colors,
 /// while symbols such as ✳, which also have color emoji glyphs, are drawn in
 /// `color` like the letters around them.
@@ -186,7 +186,6 @@ pub(crate) fn presented(
     use eframe::egui::{FontFamily, FontId, TextFormat, epaint::text::has_emoji_presentation};
     use unicode_segmentation::UnicodeSegmentation as _;
     let mut job = eframe::egui::text::LayoutJob {
-        break_on_newline: false,
         // Text without sections, such as an empty title, still takes a row.
         first_row_min_height: line_height,
         ..Default::default()
@@ -240,9 +239,11 @@ pub fn tab_button(
     use eframe::egui::{self, Sense, TextStyle, WidgetInfo};
     let color = if selected { FG } else { TAB_INACTIVE_FG };
     let size = TextStyle::Button.resolve(ui.style()).size;
-    let galley =
-        ui.painter()
-            .layout_job(presented(title, size, title_line_height(ui, size), color));
+    let mut job = presented(title, size, title_line_height(ui, size), color);
+    // A newline a program put in its title would make this tab taller than
+    // the rest of the bar, so tabs keep titles on one row, unlike other text.
+    job.break_on_newline = false;
+    let galley = ui.painter().layout_job(job);
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     response

@@ -154,6 +154,10 @@ mod tests {
     fn rows_keep_emoji_in_titles_colored_and_the_rest_in_the_label_color() {
         let job = row("0123456789abcdef", "✳ 😀", 80, 24, 14.0, 21.0);
         assert_eq!(job.text, "01234567  ·  ✳ 😀  ·  80×24");
+        assert!(
+            job.break_on_newline,
+            "rows break where a title has a newline, as plain label rows did"
+        );
         let emoji: Vec<_> = job
             .sections
             .iter()
