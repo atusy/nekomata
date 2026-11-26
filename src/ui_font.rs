@@ -31,17 +31,29 @@ pub fn default_size_px() -> f32 {
 /// the app is created opening the window has already paid it, so this
 /// does not wait on it there.
 pub fn find(family: &str) -> Option<Face> {
-    let (path, index) = locate(family)?;
+    let chosen = locate(family)?;
+    let bytes = match std::sync::Arc::try_unwrap(chosen.bytes) {
+        Ok(FontBytes::Read(bytes)) => bytes,
+        Ok(mapped) => mapped.as_ref().to_vec(),
+        Err(shared) => shared.as_ref().as_ref().to_vec(),
+    };
     Some(Face {
-        bytes: std::fs::read(path).ok()?,
-        index,
+        bytes,
+        index: chosen.index,
     })
 }
 
-/// The file and face index of the face [`find`] would read, for a caller
-/// that maps the file instead, as for fonts too large to copy.
-pub(crate) fn locate(family: &str) -> Option<(PathBuf, u32)> {
-    select(&platform::candidates(family), family)
+/// The face [`find`] would copy, with the very bytes it was chosen from, for a
+/// caller that keeps a mapped font as it is, as for fonts too large to copy.
+pub(crate) fn locate(family: &str) -> Option<Chosen> {
+    select(&platform::candidates(family), family).map(|(_, chosen)| chosen)
+}
+
+/// The face chosen for a family and the bytes it was chosen from, so that a
+/// font rewritten after the choice cannot hand its caller other contents.
+pub(crate) struct Chosen {
+    pub(crate) index: u32,
+    pub(crate) bytes: std::sync::Arc<FontBytes>,
 }
 
 /// Whether nothing rewrites `file` while the system runs, which holds for
@@ -160,10 +172,11 @@ fn rank(font: &FontRef<'_>, family: &str) -> Rank {
     )
 }
 
-fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
+/// The best candidate's file and the face chosen from it.
+fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, Chosen)> {
     let family = family.to_lowercase();
-    let mut best: Option<(Rank, &Path, u32)> = None;
-    let mut loaded: Option<(&Path, FontBytes)> = None;
+    let mut best: Option<(Rank, &Path, u32, std::sync::Arc<FontBytes>)> = None;
+    let mut loaded: Option<(&Path, std::sync::Arc<FontBytes>)> = None;
     for candidate in candidates {
         if loaded
             .as_ref()
@@ -172,10 +185,10 @@ fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
             let Some(data) = load(&candidate.path) else {
                 continue;
             };
-            loaded = Some((&candidate.path, data));
+            loaded = Some((&candidate.path, std::sync::Arc::new(data)));
         }
         let Some((_, data)) = &loaded else { continue };
-        let Some(collection) = swash::FontDataRef::new(data.as_ref()) else {
+        let Some(collection) = swash::FontDataRef::new(data.as_ref().as_ref()) else {
             continue;
         };
         let found = match &candidate.face {
@@ -193,10 +206,10 @@ fn select(candidates: &[Candidate], family: &str) -> Option<(PathBuf, u32)> {
         let Some((index, font)) = found else { continue };
         let rank = rank(&font, &family);
         if best.as_ref().is_none_or(|(at, ..)| rank < *at) {
-            best = Some((rank, &candidate.path, index));
+            best = Some((rank, &candidate.path, index, data.clone()));
         }
     }
-    best.map(|(_, path, index)| (path.to_path_buf(), index))
+    best.map(|(_, path, index, bytes)| (path.to_path_buf(), Chosen { index, bytes }))
 }
 
 #[cfg(target_os = "macos")]
@@ -409,7 +422,7 @@ mod tests {
             return skip();
         };
         assert_eq!(
-            select(&candidates, "UDev Gothic NF"),
+            select(&candidates, "UDev Gothic NF").map(|(path, chosen)| (path, chosen.index)),
             Some((dir.path().join("c-regular.ttf"), 0))
         );
     }
@@ -432,10 +445,10 @@ mod tests {
             face: FaceRef::PostScript(name.into()),
         };
         assert_eq!(
-            select(&[named(&name)], "UDEV Gothic NF"),
+            select(&[named(&name)], "UDEV Gothic NF").map(|(path, chosen)| (path, chosen.index)),
             Some((path.clone(), 0))
         );
-        assert_eq!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF"), None);
+        assert!(select(&[named("NoSuch-Regular")], "UDEV Gothic NF").is_none());
     }
 
     #[test]
@@ -453,7 +466,7 @@ mod tests {
                 face: FaceRef::Index(0),
             },
         ];
-        assert_eq!(select(&candidates, "Anything"), None);
+        assert!(select(&candidates, "Anything").is_none());
     }
 
     #[test]
@@ -513,7 +526,14 @@ mod tests {
             candidates
         };
         // A face without Latin letters still matches its family.
-        assert_eq!(select(&candidates, "Noto Color Emoji"), Some((emoji, 0)));
+        let (path, chosen) = select(&candidates, "Noto Color Emoji").unwrap();
+        assert_eq!((path, chosen.index), (emoji.clone(), 0));
+        // The bytes come from the selection itself, so a font rewritten after
+        // it was chosen cannot hand the caller other contents.
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&emoji, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&emoji, b"").unwrap();
+        assert!(swash::FontRef::from_index(chosen.bytes.as_ref().as_ref(), 0).is_some());
     }
 
     #[cfg(target_os = "macos")]
@@ -547,7 +567,11 @@ mod tests {
     #[test]
     fn coretext_locates_a_color_emoji_font_without_reading_it() {
         // A face without Latin letters still matches its family.
-        let (path, _) = locate("Apple Color Emoji").unwrap();
+        let (path, _) = select(
+            &platform::candidates("Apple Color Emoji"),
+            "Apple Color Emoji",
+        )
+        .unwrap();
         assert_eq!(path.file_name().unwrap(), "Apple Color Emoji.ttc");
     }
 
@@ -571,11 +595,8 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
-        let (path, _) = locate("Apple Color Emoji").unwrap();
-        assert!(
-            matches!(load(&path), Some(FontBytes::Mapped(_))),
-            "{path:?}"
-        );
+        let chosen = locate("Apple Color Emoji").unwrap();
+        assert!(matches!(*chosen.bytes, FontBytes::Mapped(_)));
     }
 
     #[test]

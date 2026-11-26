@@ -385,11 +385,10 @@ fn color_emoji() -> Option<eframe::egui::FontData> {
     ["Apple Color Emoji", "Noto Color Emoji"]
         .into_iter()
         .find_map(|family| {
-            let (path, index) = crate::ui_font::locate(family)?;
-            let font = crate::ui_font::load(&path)?;
+            let chosen = crate::ui_font::locate(family)?;
             Some(eframe::egui::FontData::from_blob(
-                std::sync::Arc::new(font),
-                index,
+                chosen.bytes,
+                chosen.index,
             ))
         })
 }
