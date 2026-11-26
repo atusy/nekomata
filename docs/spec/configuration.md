@@ -108,11 +108,11 @@ dialogs. It never affects terminal text.
   grapheme cluster there takes the presentation Unicode gives it, including
   through an emoji or text presentation selector: emoji are drawn in color
   when a color emoji font is present, otherwise with the bundled monochrome
-  emoji fonts, and a symbol that defaults to text, such as the `✳` Claude Code puts
-  before its titles, is drawn in the text's color by the first face that has
-  it, or the bundled monochrome emoji fonts. Elsewhere, such as in typed
-  text, a symbol the text faces lack is drawn in color when the color emoji
-  font has it.
+  emoji fonts, and a symbol that defaults to text, such as the `✳` Claude
+  Code puts before its titles, is drawn in the text's color by the first face
+  that has it, or the bundled monochrome emoji fonts. Elsewhere, such as in
+  typed text, a symbol the text faces lack is drawn in color when the color
+  emoji font has it.
 - A character none of these faces has is drawn with an installed font that
   has it, which can be a color font even for a symbol that defaults to text.
 - `size_px`: integer or float. Defaults to felis's built-in default terminal
