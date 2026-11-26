@@ -640,7 +640,10 @@ mod tests {
         assert!(identical(known, known));
         assert!(!identical(known, Some((1, 2, 4))));
         assert!(!identical(known, None));
-        assert!(!identical(None, None), "two failed lookups prove nothing");
+        assert!(
+            !identical::<(u64, u64, u64)>(None, None),
+            "two failed lookups prove nothing"
+        );
     }
 
     #[test]
