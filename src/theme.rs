@@ -300,8 +300,9 @@ pub fn tab_button(
             .layout_job(presented(&shown, size, title_line_height(ui, size), color));
     let size = (galley.size() + 2.0 * ui.spacing().button_padding).max(ui.spacing().interact_size);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    response
-        .widget_info(|| WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, title));
+    response.widget_info(|| {
+        WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &shown)
+    });
     if ui.is_rect_visible(rect) {
         let visuals = ui.style().interact(&response);
         ui.painter().rect_filled(
@@ -810,6 +811,26 @@ mod tests {
         })
         .collect();
         assert_eq!(shown, ["build failed  again"]);
+    }
+
+    #[test]
+    fn a_tab_is_named_for_assistive_technology_as_it_is_shown() {
+        use eframe::egui;
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let output = crate::test_support::run(&ctx, egui::RawInput::default(), |ui| {
+            super::tab_button(ui, "build\nfailed", true);
+        });
+        let labels: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .as_ref()
+            .unwrap()
+            .nodes
+            .iter()
+            .filter_map(|(_, node)| node.label().map(str::to_owned))
+            .collect();
+        assert_eq!(labels, ["build failed"]);
     }
 
     #[test]
