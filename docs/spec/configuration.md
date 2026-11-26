@@ -103,7 +103,8 @@ dialogs. It never affects terminal text.
 - A character none of these faces has is next tried in the installed Apple
   Color Emoji or Noto Color Emoji family, found through the OS font matcher,
   which draws its emoji in color, then in egui's bundled monochrome emoji
-  fonts, so an emoji the color font lacks is drawn in the text's color.
+  fonts, which draw in the text's color, then through the system font
+  fallback below.
 - Tab titles and session picker rows show text that programs set, so each
   grapheme cluster there takes the presentation Unicode gives it, including
   through an emoji or text presentation selector. An emoji tries the color
