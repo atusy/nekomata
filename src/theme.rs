@@ -377,52 +377,71 @@ fn color_emoji() -> Option<eframe::egui::FontData> {
         .into_iter()
         .find_map(|family| {
             let (path, index) = crate::ui_font::locate(family)?;
-            let font: eframe::egui::epaint::text::Blob = if immutable_font(&path) {
-                let file = std::fs::File::open(&path).ok()?;
-                // SAFETY: nothing rewrites files on a read-only volume (see
-                // `immutable_font`), so the bytes stay valid for as long as
-                // the process keeps the map.
+            let mut file = std::fs::File::open(&path).ok()?;
+            let font: eframe::egui::epaint::text::Blob = if immutable_font(&path, &file) {
+                // SAFETY: nothing rewrites the file (see `immutable_font`), so
+                // the bytes stay valid for as long as the process keeps the map.
                 std::sync::Arc::new(unsafe { memmap2::Mmap::map(&file) }.ok()?)
             } else {
-                std::sync::Arc::new(std::fs::read(&path).ok()?)
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut file, &mut bytes).ok()?;
+                std::sync::Arc::new(bytes)
             };
             Some(eframe::egui::FontData::from_blob(font, index))
         })
 }
 
-/// Whether `path` lies on a volume nothing writes to while the system runs:
-/// macOS's sealed system volume, or the Nix store.
-fn immutable_font(path: &std::path::Path) -> bool {
+/// Whether nothing rewrites `file`, opened from `path`, while the system
+/// runs: it is in the Nix store, whose paths never change once built, or on a
+/// volume mounted read-only, such as macOS's sealed system volume. A path is
+/// not enough there, since `/System/Volumes/Data` is writable.
+fn immutable_font(path: &std::path::Path, file: &std::fs::File) -> bool {
+    use std::os::fd::AsRawFd as _;
     use std::path::Component;
-    path.is_absolute()
+    let in_nix_store = path.is_absolute()
         && !path
             .components()
             .any(|component| component == Component::ParentDir)
-        && (path.starts_with("/System") || path.starts_with("/nix/store"))
+        && path.starts_with("/nix/store");
+    let mut volume = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `file` is open for the call and `volume` is written in full on
+    // success, the only case in which it is read.
+    in_nix_store
+        || unsafe {
+            libc::fstatvfs(file.as_raw_fd(), volume.as_mut_ptr()) == 0
+                && volume.assume_init().f_flag & libc::ST_RDONLY != 0
+        }
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn only_fonts_on_read_only_volumes_are_kept_mapped() {
+    fn only_fonts_nothing_rewrites_are_kept_mapped() {
         use std::path::Path;
-        for (path, mapped) in [
-            ("/System/Library/Fonts/Apple Color Emoji.ttc", true),
-            (
-                "/nix/store/abc-noto-fonts-color-emoji/NotoColorEmoji.ttf",
-                true,
-            ),
-            ("/usr/share/fonts/noto/NotoColorEmoji.ttf", false),
-            ("/home/me/.local/share/fonts/NotoColorEmoji.ttf", false),
-            ("/Users/me/Library/Fonts/NotoColorEmoji.ttf", false),
-            (
-                "/System/../Users/me/Library/Fonts/NotoColorEmoji.ttf",
-                false,
-            ),
-            ("relative/System/Library/Fonts/a.ttc", false),
+        let writable = tempfile::NamedTempFile::new().unwrap();
+        assert!(
+            !super::immutable_font(writable.path(), writable.as_file()),
+            "a font on a writable volume can be rewritten under a map"
+        );
+        for path in [
+            "/nix/store/abc-noto-fonts-color-emoji/NotoColorEmoji.ttf",
+            "/nix/store/../home/me/.local/share/fonts/NotoColorEmoji.ttf",
+            "relative/nix/store/NotoColorEmoji.ttf",
         ] {
-            assert_eq!(super::immutable_font(Path::new(path)), mapped, "{path}");
+            assert_eq!(
+                super::immutable_font(Path::new(path), writable.as_file()),
+                path.starts_with("/nix/store/abc"),
+                "{path}"
+            );
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_sealed_system_volume_keeps_apple_color_emoji_mapped() {
+        let (path, _) = crate::ui_font::locate("Apple Color Emoji").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        assert!(super::immutable_font(&path, &file), "{path:?}");
     }
 
     #[test]
